@@ -124,9 +124,12 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 				return
 			}
 			c.log.Printf("Received message: User=%s, Channel=%s, Text='%s'", ev.User, ev.Channel, ev.Text)
+
 			// Process direct messages (DMs)
 			// Check if this is a DM channel (starts with 'D')
+			c.log.Printf("DEBUG: Checking if channel %s is a DM channel...", ev.Channel)
 			if len(ev.Channel) > 0 && ev.Channel[0] == 'D' {
+				c.log.Printf("DEBUG: Channel %s is a DM channel, proceeding to call MCP hello tool", ev.Channel)
 				// Add a timeout to the context for the MCP call
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()

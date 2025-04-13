@@ -17,6 +17,7 @@ type Config struct {
 	// MCP Configuration
 	MCPServerListenAddress string `envconfig:"MCP_SERVER_LISTEN_ADDRESS" default:":8080"`
 	MCPTargetServerAddress string `envconfig:"MCP_TARGET_SERVER_ADDRESS" default:"http://localhost:8080"` // Address of MCP server to call
+	MCPMode              string `envconfig:"MCP_MODE" default:"sse"` // Communication mode: stdio, sse, http
 
 	// LLM Configuration (Add more as needed)
 	// OpenaiApiKey string `envconfig:"OPENAI_API_KEY"`

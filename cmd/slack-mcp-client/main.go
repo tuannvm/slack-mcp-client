@@ -56,7 +56,8 @@ func main() {
 	time.Sleep(200 * time.Millisecond)
 
 	// Initialize MCP Client
-	mcpClient, err := mcp.NewClient(cfg, logger)
+	logger.Printf("Initializing MCP client with mode: %s", cfg.MCPMode)
+	mcpClient, err := mcp.NewClient(ctx, cfg, logger)
 	if err != nil {
 		logger.Fatalf("Error initializing MCP client: %v", err)
 	}
