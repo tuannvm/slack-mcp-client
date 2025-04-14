@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+CONTEXT.md
 
 # Test binary, build tags, etc.
 *.test
