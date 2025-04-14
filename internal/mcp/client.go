@@ -1,19 +1,22 @@
 package mcp
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/r3labs/sse/v2"
-	"github.com/tuannvm/slack-mcp-client/internal/config"
+	sse "github.com/r3labs/sse/v2"
 )
 
 // --- JSON-RPC Helper Structs ---
@@ -53,8 +56,15 @@ type MCPTransport interface {
 }
 
 // StdioTransport implements MCPTransport for stdio communication
-type StdioTransport struct{
-	log *log.Logger
+type StdioTransport struct {
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	scanner   *bufio.Scanner
+	log       *log.Logger
+	mu        sync.Mutex // Protects access to stdin/stdout
+	address   string     // Command to execute
+	isRunning bool
 }
 
 func (t *StdioTransport) Initialize(ctx context.Context) error {
@@ -64,188 +74,436 @@ func (t *StdioTransport) Initialize(ctx context.Context) error {
 }
 
 func (t *StdioTransport) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
-	// For stdio transport, we'll implement a simple direct response for demo purposes
-	t.log.Printf("Stdio transport: Calling tool %s with args %v", toolName, args)
-	
-	// For the hello tool, generate a simple greeting
-	if toolName == "hello" {
-		name, _ := args["name"].(string)
-		if name == "" {
-			name = "there"
-		}
-		return fmt.Sprintf("Hello, %s! I'm using the stdio transport.", name), nil
+	if err := t.startProcess(); err != nil {
+		return "", fmt.Errorf("failed to start stdio process: %w", err)
 	}
-	
-	return "", fmt.Errorf("unknown tool: %s", toolName)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if !t.isRunning {
+		return "", fmt.Errorf("stdio process is not running")
+	}
+
+	req := map[string]interface{}{
+		"tool_name": toolName,
+		"arguments": args,
+	}
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal stdio request: %w", err)
+	}
+
+	t.log.Printf("Sending to stdio: %s", string(reqBytes))
+	_, err = fmt.Fprintln(t.stdin, string(reqBytes)) // Add newline
+	if err != nil {
+		// Process might have exited
+		t.isRunning = false
+		return "", fmt.Errorf("failed to write to stdio process stdin: %w", err)
+	}
+
+	// Read response line by line
+	if t.scanner.Scan() {
+		line := t.scanner.Text()
+		t.log.Printf("Received from stdio: %s", line)
+		// Assuming response is a single JSON line
+		var resp map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			return "", fmt.Errorf("failed to unmarshal response from stdio: %w. Raw: %s", err, line)
+		}
+		if errorMsg, ok := resp["error"].(string); ok && errorMsg != "" {
+			return "", fmt.Errorf("stdio server returned error: %s", errorMsg)
+		}
+		if result, ok := resp["result"].(string); ok {
+			return result, nil
+		}
+		return "", fmt.Errorf("unexpected response format from stdio: %s", line)
+	}
+
+	if err := t.scanner.Err(); err != nil {
+		t.isRunning = false
+		return "", fmt.Errorf("error reading from stdio process stdout: %w", err)
+	}
+
+	// If Scan returned false without an error, it means EOF
+	t.isRunning = false
+	return "", fmt.Errorf("stdio process closed connection (EOF)")
 }
 
 func (t *StdioTransport) Close() {
-	t.log.Println("Closing stdio transport...")
-	// For stdio transport, there's not much to clean up
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.cmd != nil && t.cmd.Process != nil {
+		t.log.Printf("Closing stdio transport (PID: %d)...", t.cmd.Process.Pid)
+		// Closing stdin might signal the process to exit gracefully
+		if t.stdin != nil {
+			_ = t.stdin.Close()
+		}
+		// Send SIGTERM signal
+		if err := t.cmd.Process.Signal(os.Interrupt); err != nil {
+			t.log.Printf("Failed to send SIGINT to stdio process: %v. Attempting SIGKILL...", err)
+			_ = t.cmd.Process.Kill()
+		} else {
+			// Give it a moment to shut down
+			go func(p *os.Process) {
+				time.Sleep(2 * time.Second)
+				// Check if it's still running
+				if p.Signal(syscall.Signal(0)) == nil { // Check if process exists
+					t.log.Printf("Stdio process did not exit after SIGINT, sending SIGKILL.")
+					_ = p.Kill()
+				}
+			}(t.cmd.Process)
+		}
+		t.cmd = nil // Prevent further calls
+		t.isRunning = false
+	}
+}
+
+func (t *StdioTransport) startProcess() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.isRunning {
+		return nil // Already running
+	}
+
+	t.log.Printf("Starting stdio process: %s", t.address)
+	parts := strings.Fields(t.address)
+	if len(parts) == 0 {
+		return fmt.Errorf("stdio command is empty")
+	}
+
+	cmd := exec.Command(parts[0], parts[1:]...)
+	// Set environment variables if needed using cmd.Env
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start command '%s': %w", t.address, err)
+	}
+
+	t.cmd = cmd
+	t.stdin = stdin
+	t.stdout = stdout
+	t.scanner = bufio.NewScanner(stdout)
+	t.isRunning = true
+	t.log.Printf("Stdio process started (PID: %d)", cmd.Process.Pid)
+
+	// Goroutine to log stderr and detect process exit
+	go func() {
+		stderr, _ := cmd.StderrPipe()
+		if stderr != nil {
+			scanner := bufio.NewScanner(stderr)
+			for scanner.Scan() {
+				t.log.Printf("STDERR: %s", scanner.Text())
+			}
+		}
+		err := cmd.Wait()
+		t.mu.Lock()
+		t.log.Printf("Stdio process exited (PID: %d). Error: %v", cmd.Process.Pid, err)
+		t.isRunning = false
+		t.cmd = nil
+		t.stdin = nil
+		t.stdout = nil
+		t.scanner = nil
+		t.mu.Unlock()
+	}()
+
+	return nil
 }
 
 // SSETransport implements MCPTransport for SSE communication
 type SSETransport struct {
-	sseClient  *sse.Client
-	serverAddr string
-	log        *log.Logger
+	client  *sse.Client
+	address string
+	log     *log.Logger
+	mu      sync.Mutex
 }
 
 func (t *SSETransport) Initialize(ctx context.Context) error {
 	t.log.Println("Initializing SSE transport...")
-	
-	// Configure SSE client headers
-	t.sseClient.Headers["Accept"] = "text/event-stream"
-	
-	// We don't actually connect/subscribe here
-	// That would happen in a separate StartListener method
+	// For SSE transport, there's not much to initialize
 	return nil
 }
 
 func (t *SSETransport) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
-	// For SSE transport, we'll implement a simple direct response for now
-	// In a real implementation, this would send a message over the SSE connection
-	// and wait for a response
-	t.log.Printf("SSE transport: Calling tool %s with args %v", toolName, args)
-	
-	// For the hello tool, generate a simple greeting
-	if toolName == "hello" {
-		name, _ := args["name"].(string)
-		if name == "" {
-			name = "there"
+	t.mu.Lock() // Protect concurrent calls if the underlying client is not safe
+	defer t.mu.Unlock()
+
+	t.log.Printf("SSE CallTool: %s with args %v", toolName, args)
+
+	// The r3labs/sse client handles connection/reconnection internally.
+	// We need to subscribe to get events.
+
+	// Channel to receive the result or error
+	resultChan := make(chan string, 1)
+	errChan := make(chan error, 1)
+
+	// Create a context for this specific subscription
+	subCtx, cancelSub := context.WithCancel(ctx)
+	defer cancelSub() // Ensure cancellation on exit
+
+	go func() {
+		err := t.client.SubscribeRawWithContext(subCtx, func(msg *sse.Event) {
+			// Assuming the server sends the result as a single JSON message
+			t.log.Printf("SSE Received: Event=%s, Data=%s", string(msg.Event), string(msg.Data))
+
+			// Try to parse the data as the expected result format
+			var resp map[string]interface{}
+			if err := json.Unmarshal(msg.Data, &resp); err != nil {
+				// Might be a non-JSON message or status update, log and continue or error
+				t.log.Printf("Warning: Failed to unmarshal SSE data: %v. Data: %s", err, string(msg.Data))
+				// Depending on protocol, maybe error out:
+				// select {
+				// case errChan <- fmt.Errorf("failed to unmarshal SSE response: %w", err):
+				// default:
+				// }
+				// cancelSub() // Stop subscription on first error?
+				return // Continue listening for other events
+			}
+
+			// Check for application-level errors in the response
+			if errorMsg, ok := resp["error"].(string); ok && errorMsg != "" {
+				t.log.Printf("SSE server returned error: %s", errorMsg)
+				select {
+				case errChan <- fmt.Errorf("SSE server error: %s", errorMsg):
+				default:
+				}
+				cancelSub() // Stop subscription on receiving error
+				return
+			}
+
+			// Check for the expected result
+			if result, ok := resp["result"].(string); ok {
+				t.log.Printf("SSE received successful result.")
+				select {
+				case resultChan <- result:
+				default:
+				}
+				cancelSub() // Stop subscription on receiving result
+				return
+			}
+
+			// Handle other event types or unexpected formats if necessary
+			t.log.Printf("Received unhandled SSE message format: %s", string(msg.Data))
+
+		})
+		if err != nil {
+			// Error during initial connection or subscription setup
+			select {
+			case errChan <- fmt.Errorf("SSE subscription failed: %w", err):
+			default:
+			}
+		} else {
+			// Subscription goroutine finished without initial error
+			// If we haven't received a result/error by now, it means the context was cancelled
+			// or the subscription ended without sending to resultChan/errChan.
+			t.log.Println("SSE subscription finished.")
+			// Ensure an error is sent if nothing else was
+			select {
+			case <-resultChan:
+			case <-errChan:
+			case <-subCtx.Done(): // Check if context caused the finish
+				select {
+				case errChan <- subCtx.Err():
+				default:
+				}
+			default: // Finished for other reasons (e.g. server disconnect)
+				select {
+				case errChan <- fmt.Errorf("SSE subscription ended unexpectedly"):
+				default:
+				}
+			}
 		}
-		return fmt.Sprintf("Hello, %s! I'm using the SSE transport.", name), nil
+	}()
+
+	// TODO: Send the actual request to the SSE server.
+	// The r3labs/sse client is primarily for LISTENING. How do we SEND the request?
+	// The SSE protocol itself doesn't define request/response. Typically, you'd make
+	// a separate HTTP POST request to trigger the action, and then listen for results
+	// on the SSE stream established by SubscribeRawWithContext.
+
+	// Placeholder: Need to implement the request-sending part (e.g., an HTTP POST)
+	// For now, this will likely time out or fail if the server doesn't
+	// spontaneously send the result upon connection.
+	t.log.Println("Warning: SSE request sending logic not implemented yet.")
+
+	// Wait for the result, error, or context cancellation
+	select {
+	case result := <-resultChan:
+		return result, nil
+	case err := <-errChan:
+		return "", err
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
-	
-	return "", fmt.Errorf("unknown tool: %s", toolName)
 }
 
 func (t *SSETransport) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.log.Println("Closing SSE transport...")
-	// Close any active SSE connections
-	// The r3labs/sse client doesn't have an explicit close method,
-	// but we can set a flag to stop any active subscriptions
+	// The r3labs/sse client manages its connection state internally.
+	// Calling Close() might not be necessary or available directly depending on usage.
+	// If we were managing the subscription context, cancelling it would stop listening.
+	// Check library docs for specific cleanup if needed.
 }
 
 // HTTPTransport implements MCPTransport for HTTP communication
 type HTTPTransport struct {
-	httpClient *http.Client
-	serverAddr string
-	log        *log.Logger
+	client  *http.Client
+	address string
+	log     *log.Logger
+	mu      sync.Mutex
 }
 
 func (t *HTTPTransport) Initialize(ctx context.Context) error {
 	t.log.Println("Initializing HTTP transport...")
-	// For HTTP transport, we just need to ensure the client is configured
-	// with appropriate headers, timeouts, etc.
+	// For HTTP transport, there's not much to initialize
 	return nil
 }
 
 func (t *HTTPTransport) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
-	// For HTTP transport, we'll implement a JSON-RPC request to the server
-	t.log.Printf("HTTP transport: Calling tool %s with args %v", toolName, args)
-	
-	// Create a JSON-RPC request
-	requestID := uuid.NewString()
-	rpcReq := jsonRPCRequest{
-		JSONRPC: "2.0",
-		ID:      requestID,
-		Method:  "tools/call",
-		Params: map[string]interface{}{
-			"name": toolName,
-			"arguments": args,
-		},
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	reqPayload := map[string]interface{}{
+		"tool_name": toolName,
+		"arguments": args,
 	}
-	
-	// Marshal the request to JSON (we don't actually use this in the simplified implementation)
-	_, err := json.Marshal(rpcReq)
+	reqBody, err := json.Marshal(reqPayload)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", fmt.Errorf("failed to marshal HTTP request payload: %w", err)
 	}
-	
-	// For now, return a simple response to avoid the 404 error
-	// In a real implementation, this would send the request to the server
-	// and parse the response
-	if toolName == "hello" {
-		name, _ := args["name"].(string)
-		if name == "" {
-			name = "there"
-		}
-		return fmt.Sprintf("Hello, %s! I'm using the HTTP transport.", name), nil
+
+	// Assuming the server expects POST requests to /call/{toolName} or similar
+	// Adjust the URL structure as needed based on the MCP server's HTTP API
+	// For now, using a simple /call path
+	url := t.address
+	if !strings.HasSuffix(url, "/") {
+		url += "/"
 	}
-	
-	return "", fmt.Errorf("unknown tool: %s", toolName)
+	// url += "call/" + toolName // Example: /call/mytool
+	url += "call" // Using a generic /call endpoint
+
+	t.log.Printf("HTTP POST to %s with body: %s", url, string(reqBody))
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+
+	httpResp, err := t.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	respBodyBytes, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read HTTP response body: %w", err)
+	}
+
+	if httpResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP request failed with status %s: %s", httpResp.Status, string(respBodyBytes))
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(respBodyBytes, &resp); err != nil {
+		return "", fmt.Errorf("failed to unmarshal HTTP response: %w. Raw: %s", err, string(respBodyBytes))
+	}
+
+	if errorMsg, ok := resp["error"].(string); ok && errorMsg != "" {
+		return "", fmt.Errorf("HTTP server returned error: %s", errorMsg)
+	}
+
+	if result, ok := resp["result"].(string); ok {
+		return result, nil
+	}
+
+	return "", fmt.Errorf("unexpected response format from HTTP server: %s", string(respBodyBytes))
 }
 
 func (t *HTTPTransport) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.log.Println("Closing HTTP transport...")
-	// Close any idle connections in the HTTP client
-	t.httpClient.CloseIdleConnections()
+	// Standard HTTP client doesn't require explicit closing for connections typically,
+	// but can call CloseIdleConnections if needed.
+	// t.client.CloseIdleConnections()
 }
 
 // Client handles interactions with the MCP server using configurable transport.
 type Client struct {
-	cfg        *config.Config
 	log        *log.Logger
 	transport  MCPTransport
 	serverAddr string
 }
 
 // NewClient creates a new MCP client handler with the configured transport mode.
-func NewClient(ctx context.Context, cfg *config.Config, logger *log.Logger) (*Client, error) {
-	logger.Println("Initializing Custom MCP Client...")
-
-	if cfg.MCPTargetServerAddress == "" {
-		return nil, errors.New("MCP_TARGET_SERVER_ADDRESS is not set")
+func NewClient(mode, address string, logger *log.Logger) (*Client, error) {
+	if logger == nil {
+		logger = log.New(os.Stderr, "MCP_CLIENT: ", log.LstdFlags|log.Lshortfile)
 	}
 
-	// Create client instance
-	c := &Client{
-		cfg:        cfg,
-		log:        logger,
-		serverAddr: cfg.MCPTargetServerAddress,
+	logger.Printf("Creating new MCP client: mode=%s, address=%s", mode, address)
+
+	client := &Client{
+		log: logger,
 	}
 
-	// Create the appropriate transport based on the configured mode
-	switch cfg.MCPMode {
+	var err error
+	var selectedTransport MCPTransport
+
+	switch strings.ToLower(mode) {
 	case "stdio":
-		logger.Println("Using stdio transport mode")
-		c.transport = &StdioTransport{}
+		// For stdio, 'address' is expected to be the command to execute
+		logger.Printf("Initializing Stdio transport with command: %s", address)
+		selectedTransport, err = newStdioTransport(address, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize stdio transport: %w", err)
+		}
+
+	case "sse":
+		// For SSE, 'address' is the base URL of the MCP server
+		logger.Printf("Initializing SSE transport with address: %s", address)
+		selectedTransport, err = newSSETransport(address, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize SSE transport: %w", err)
+		}
 
 	case "http":
-		logger.Println("Using HTTP transport mode")
-		httpClient := &http.Client{
-			Timeout: 30 * time.Second,
-		}
-		c.transport = &HTTPTransport{
-			httpClient: httpClient,
-			log:        logger,
-		}
-
-	case "sse", "": // Default to SSE if not specified
-		logger.Println("Using SSE transport mode")
-		sseClient := sse.NewClient(cfg.MCPTargetServerAddress)
-		c.transport = &SSETransport{
-			sseClient: sseClient,
-			log:       logger,
+		// For HTTP, 'address' is the base URL of the MCP server
+		logger.Printf("Initializing HTTP transport with address: %s", address)
+		selectedTransport, err = newHTTPTransport(address, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize HTTP transport: %w", err)
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported MCP mode: %s", cfg.MCPMode)
+		return nil, fmt.Errorf("unsupported MCP mode: %s. Must be 'stdio', 'sse', or 'http'", mode)
 	}
 
-	// Initialize the transport
-	if err := c.transport.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("failed to initialize %s transport: %w", cfg.MCPMode, err)
+	client.transport = selectedTransport
+
+	// Initialize the transport (e.g., start process for stdio, setup HTTP client)
+	err = client.transport.Initialize(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize transport for mode %s: %w", mode, err)
 	}
 
-	c.log.Printf(
-		"MCP Client setup completed. Listener needs to be started separately. Server target: %s",
-		c.serverAddr,
-	)
-
-	// Return the partially initialized client (listener not started yet)
-	return c, nil
+	logger.Printf("MCP Client initialized successfully with %T transport.", selectedTransport)
+	return client, nil
 }
 
 // StartListener connects to the MCP server and listens for events.
@@ -257,7 +515,7 @@ func (c *Client) StartListener(ctx context.Context) error {
 	// For SSE transport, we need to start the SSE subscription
 	if sseTransport, ok := c.transport.(*SSETransport); ok {
 		// SubscribeRaw handles the connection and retries automatically
-		err := sseTransport.sseClient.SubscribeRawWithContext(ctx, func(msg *sse.Event) {
+		err := sseTransport.client.SubscribeRawWithContext(ctx, func(msg *sse.Event) {
 			// This function will be called for each message received
 			if len(msg.Data) == 0 {
 				// Ignore empty messages (e.g., keep-alives)
@@ -290,75 +548,13 @@ func (c *Client) StartListener(ctx context.Context) error {
 	return nil
 }
 
-// sendMCPRequest is a helper to send JSON-RPC requests via HTTP POST.
-// This is now deprecated and should be removed once all code is migrated to use the transport interface.
-func (c *Client) sendMCPRequest(ctx context.Context, method string, params interface{}) ([]byte, error) {
-	c.log.Printf("WARNING: sendMCPRequest is deprecated, use transport interface instead")
-	
-	// For backward compatibility, we'll use the HTTP transport if available
-	httpTransport, ok := c.transport.(*HTTPTransport)
-	if !ok {
-		return nil, fmt.Errorf("sendMCPRequest requires HTTP transport, but current transport is %T", c.transport)
+// CallTool delegates the tool call to the configured transport.
+func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
+	if c.transport == nil {
+		return "", fmt.Errorf("MCP transport not initialized")
 	}
-	
-	requestID := uuid.NewString()
-	rpcReq := jsonRPCRequest{
-		JSONRPC: "2.0",
-		ID:      requestID,
-		Method:  method,
-		Params:  params,
-	}
-
-	reqBytes, err := json.Marshal(rpcReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request for %s (%s): %w", method, rpcReq.ID, err)
-	}
-
-	// --- Construct the target URL (use base server address) ---
-	targetURL := c.serverAddr // Send to the root path now
-
-	c.log.Printf("Sending MCP Request ID: %s, Method: %s, Size: %d bytes to %s", rpcReq.ID, method, len(reqBytes), targetURL)
-
-	// Send request to the targetURL
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(reqBytes)) // Use bytes.Reader
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http request for %s (%s): %w", method, rpcReq.ID, err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json") // Expect JSON response for POST
-
-	httpResp, err := httpTransport.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("http request failed for %s (%s): %w", method, rpcReq.ID, err)
-	}
-	defer httpResp.Body.Close()
-
-	respBody, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response body for %s (%s): %w", method, rpcReq.ID, err)
-	}
-
-	c.log.Printf("Received MCP Response ID: %s, Status: %s, Size: %d bytes", rpcReq.ID, httpResp.Status, len(respBody))
-	// c.log.Printf("Response Payload: %s", string(respBody)) // Verbose logging if needed
-
-	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
-		return nil, fmt.Errorf("http request for %s (%s) failed with status %s: %s", method, rpcReq.ID, httpResp.Status, string(respBody))
-	}
-
-	return respBody, nil
-}
-
-// CallHelloTool calls the 'hello' tool using the configured transport.
-func (c *Client) CallHelloTool(ctx context.Context, name string) (string, error) {
-	c.log.Printf("DEBUG: CallHelloTool called with name=%s", name)
-
-	// Prepare arguments for the hello tool
-	args := map[string]interface{}{
-		"name": name,
-	}
-
-	// Call the tool using the configured transport
-	return c.transport.CallTool(ctx, "hello", args)
+	c.log.Printf("Client delegating CallTool '%s' to %T transport", toolName, c.transport)
+	return c.transport.CallTool(ctx, toolName, args)
 }
 
 // Close cleans up the MCP client resources.
@@ -369,4 +565,50 @@ func (c *Client) Close() {
 	if c.transport != nil {
 		c.transport.Close()
 	}
+}
+
+// Initialize specific transport implementations
+
+func newStdioTransport(cmdString string, logger *log.Logger) (*StdioTransport, error) {
+	t := &StdioTransport{
+		log:     logger,
+		address: cmdString,
+	}
+	// We don't start the command here, it's started on the first CallTool
+	return t, nil
+}
+
+func newSSETransport(baseURL string, logger *log.Logger) (*SSETransport, error) {
+	client := sse.NewClient(baseURL)
+	// Add configuration like custom HTTP client, headers if needed
+	// client.Connection = &http.Client{ Timeout: 30 * time.Second }
+	return &SSETransport{
+		client:  client,
+		address: baseURL,
+		log:     logger,
+	}, nil
+}
+
+func newHTTPTransport(baseURL string, logger *log.Logger) (*HTTPTransport, error) {
+	return &HTTPTransport{
+		client: &http.Client{
+			Timeout: 60 * time.Second, // Configurable timeout
+		},
+		address: baseURL,
+		log:     logger,
+	}, nil
+}
+
+type mcpMessage struct {
+	Version string                 `json:"version"`
+	Action  string                 `json:"action"`
+	Tool    string                 `json:"tool"`
+	Args    map[string]interface{} `json:"args"`
+	Error   string                 `json:"error"`
+	Result  string                 `json:"result"`
+}
+
+type mcpResult struct {
+	data []byte
+	err  error
 }
