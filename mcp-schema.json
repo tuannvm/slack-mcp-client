@@ -1,0 +1,50 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "MCP Client Configuration Schema",
+    "description": "Schema for defining MCP servers configuration for the MCP client.",
+    "type": "object",
+    "properties": {
+      "mcpServers": {
+        "type": "object",
+        "description": "A collection of MCP server configurations keyed by a unique identifier.",
+        "patternProperties": {
+          "^.*$": {
+            "type": "object",
+            "description": "Configuration for a single MCP server.",
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "The command or executable to start the MCP server."
+              },
+              "args": {
+                "type": "array",
+                "description": "The list of arguments to pass to the command.",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "description": "Environment variables required by the MCP server.",
+                "additionalProperties": {
+                  "type": "string",
+                  "description": "The value for an environment variable."
+                }
+              },
+              "disabled": {
+                "type": "boolean",
+                "description": "Optional flag to disable the server without removing its configuration."
+              }
+            },
+            "required": ["command"],
+            "additionalProperties": false
+          }
+        },
+        "minProperties": 1,
+        "additionalProperties": false
+      }
+    },
+    "required": ["mcpServers"],
+    "additionalProperties": false
+  }
+  

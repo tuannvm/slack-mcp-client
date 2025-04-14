@@ -35,6 +35,28 @@ func NewServer(cfg *config.Config, logger *log.Logger) (*Server, error) {
 		// Add other options like middleware, auth if needed
 	)
 
+	// Register the Ollama tool
+	mcpInstance.AddTool(mcp.NewTool("ollama",
+		mcp.WithDescription("Processes text using Ollama LLM"),
+		mcp.WithString("model",
+			mcp.Description("The Ollama model to use"),
+			mcp.Required(),
+		),
+		mcp.WithString("prompt",
+			mcp.Description("The prompt to send to Ollama"),
+			mcp.Required(),
+		),
+		mcp.WithString("temperature",
+			mcp.Description("Temperature for response generation"),
+		),
+		mcp.WithString("max_tokens",
+			mcp.Description("Maximum number of tokens to generate"),
+		),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return tools.HandleOllamaTool(ctx, req, logger)
+	})
+	logger.Printf("Registered MCP tool: ollama")
+
 	// Register the hello tool
 	mcpInstance.AddTool(mcp.NewTool("hello",
 		mcp.WithDescription("Responds with a greeting."),
