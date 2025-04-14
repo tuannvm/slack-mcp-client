@@ -17,6 +17,7 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/tuannvm/slack-mcp-client/internal/bridge"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use your actual module path
 )
 
@@ -49,6 +50,7 @@ type Client struct {
 	botUserID       string
 	botMentionRgx   *regexp.Regexp
 	mcpClients      map[string]*mcp.Client
+	llmMCPBridge    *bridge.LLMMCPBridge
 	ollamaEndpoint  string // Ollama API endpoint (e.g., http://host:port/api/generate)
 	ollamaModelName string // Name of the Ollama model to use
 	httpClient      *http.Client // HTTP client for Ollama communication
@@ -101,6 +103,22 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		Timeout: 3 * time.Minute, // Increased timeout for potentially long LLM calls
 	}
 
+	// Create the client instance
+	// Initialize the LLM-MCP bridge with the first available MCP client
+	var llmMCPBridge *bridge.LLMMCPBridge
+	if len(mcpClients) > 0 {
+		// Use the first MCP client for the bridge (preferably the filesystem client)
+		var firstMCPClient *mcp.Client
+		for _, client := range mcpClients {
+			firstMCPClient = client
+			break
+		}
+		llmMCPBridge = bridge.NewLLMMCPBridge(firstMCPClient, logger)
+		logger.Printf("LLM-MCP bridge initialized with MCP client")
+	} else {
+		logger.Printf("Warning: No MCP clients available for LLM-MCP bridge")
+	}
+
 	return &Client{
 		log:             logger,
 		api:             api,
@@ -108,6 +126,7 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		botUserID:       botUserID,
 		botMentionRgx:   mentionRegex,
 		mcpClients:      mcpClients,
+		llmMCPBridge:    llmMCPBridge,
 		ollamaEndpoint:  ollamaAPIEndpoint,
 		ollamaModelName: ollamaModelName,
 		httpClient:      httpClient,
@@ -251,11 +270,29 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	ollamaGeneratedText := strings.TrimSpace(ollamaResp.Response)
 	c.log.Printf("Received response from Ollama. Length: %d", len(ollamaGeneratedText))
 
-	// Send the Ollama response back to Slack
-	if ollamaGeneratedText == "" {
+	// Process the LLM response through the LLM-MCP bridge to detect and execute tool calls
+	var finalResponse string
+	if c.llmMCPBridge != nil {
+		c.log.Printf("Processing LLM response through LLM-MCP bridge")
+		ctx := context.Background()
+		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, ollamaGeneratedText, userPrompt)
+		if err != nil {
+			c.log.Printf("Error processing LLM response through bridge: %v", err)
+			// Fall back to original response if bridge processing fails
+			finalResponse = ollamaGeneratedText
+		} else {
+			finalResponse = processedResponse
+		}
+	} else {
+		// No bridge available, use original response
+		finalResponse = ollamaGeneratedText
+	}
+
+	// Send the final response back to Slack
+	if finalResponse == "" {
 		c.postMessage(channelID, threadTS, "(Ollama returned an empty response)")
 	} else {
-		c.postMessage(channelID, threadTS, ollamaGeneratedText)
+		c.postMessage(channelID, threadTS, finalResponse)
 	}
 }
 

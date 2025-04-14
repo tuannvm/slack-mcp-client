@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
-	"syscall"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
@@ -47,24 +49,6 @@ func main() {
 		mode = strings.ToLower(serverConf.Mode)
 		addressOrCommand = serverConf.Address
 
-		// Handle the new schema with command and args
-		if serverConf.Command != "" {
-			// For stdio mode, we need to build the command with its arguments
-			if mode == "stdio" || mode == "" {
-				// If we have a command but no address, use the command as the address
-				if addressOrCommand == "" {
-					addressOrCommand = serverConf.Command
-				}
-				
-				// If we have args, append them to the command
-				if len(serverConf.Args) > 0 {
-					// Convert args to a space-separated string and append to the command
-					argsStr := strings.Join(serverConf.Args, " ")
-					addressOrCommand = addressOrCommand + " " + argsStr
-				}
-			}
-		}
-
 		if addressOrCommand == "" {
 			logger.Printf("Skipping MCP server '%s': No address/command specified.", serverName)
 			continue
@@ -88,6 +72,19 @@ func main() {
 		if err != nil {
 			logger.Fatalf("Failed to create MCP client '%s': %v", serverName, err)
 		}
+		
+		// Explicitly initialize the client before adding it to the map
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		logger.Printf("Explicitly initializing MCP client '%s'...", serverName)
+		if err := mcpClient.Initialize(ctx); err != nil {
+			logger.Printf("Warning: Failed to initialize MCP client '%s': %v", serverName, err)
+			// Continue anyway, as the client will try to initialize on first use
+		} else {
+			logger.Printf("MCP client '%s' successfully initialized", serverName)
+		}
+		
 		mcpClients[serverName] = mcpClient
 
 		// Ensure client is closed on exit
