@@ -47,6 +47,24 @@ func main() {
 		mode = strings.ToLower(serverConf.Mode)
 		addressOrCommand = serverConf.Address
 
+		// Handle the new schema with command and args
+		if serverConf.Command != "" {
+			// For stdio mode, we need to build the command with its arguments
+			if mode == "stdio" || mode == "" {
+				// If we have a command but no address, use the command as the address
+				if addressOrCommand == "" {
+					addressOrCommand = serverConf.Command
+				}
+				
+				// If we have args, append them to the command
+				if len(serverConf.Args) > 0 {
+					// Convert args to a space-separated string and append to the command
+					argsStr := strings.Join(serverConf.Args, " ")
+					addressOrCommand = addressOrCommand + " " + argsStr
+				}
+			}
+		}
+
 		if addressOrCommand == "" {
 			logger.Printf("Skipping MCP server '%s': No address/command specified.", serverName)
 			continue
