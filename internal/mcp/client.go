@@ -298,7 +298,8 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 }
 
 // GetAvailableTools retrieves the list of available tools from the MCP server.
-func (c *Client) GetAvailableTools(ctx context.Context) ([]string, error) {
+// It now returns the full ListToolsResult to include schema information.
+func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, error) {
 	// // Check for premature exit first (only relevant for stdio)
 	// if err := c.didStdioExitPrematurely(); err != nil {
 	// 	return nil, fmt.Errorf("cannot get tools: %w", err)
@@ -355,14 +356,16 @@ func (c *Client) GetAvailableTools(ctx context.Context) ([]string, error) {
 		if err == nil {
 			if listResult == nil {
 				c.log.Printf("Warning: ListTools for %s returned nil result despite nil error", c.serverAddr)
-				return []string{}, nil
+				// Return an empty result struct instead of just nil
+				return &mcp.ListToolsResult{}, nil 
 			}
+			// Extract tool names just for logging here
 			toolNames := make([]string, 0, len(listResult.Tools))
 			for _, toolDef := range listResult.Tools {
 				toolNames = append(toolNames, toolDef.Name)
 			}
 			c.log.Printf("Native ListTools for %s returned %d tools: %v", c.serverAddr, len(toolNames), toolNames)
-			return toolNames, nil
+			return listResult, nil // <-- Return the full result struct
 		}
 		
 		// If we got here, ListTools failed even after potential retry
@@ -376,7 +379,8 @@ func (c *Client) GetAvailableTools(ctx context.Context) ([]string, error) {
 
 	// --- Fallback if client type does not implement ListTools --- 
 	c.log.Printf("Error: Underlying MCP client (%T) for %s does not implement the toolLister interface. Cannot discover tools.", c.client, c.serverAddr)
-	return []string{}, fmt.Errorf("client type %T does not support tool discovery", c.client)
+	// Return nil struct and error
+	return nil, fmt.Errorf("client type %T does not support tool discovery", c.client)
 }
 
 // Close cleans up the MCP client resources.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -14,7 +15,10 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
+	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
+
+// ToolInfo definition is moved to internal/types/types.go
 
 var (
 	// Define command-line flags
@@ -61,7 +65,7 @@ func main() {
 
 	// Initialize MCP Clients and Discover Tools Sequentially
 	mcpClients := make(map[string]*mcp.Client)
-	allDiscoveredTools := make(map[string]string) // Map: toolName -> serverName
+	allDiscoveredTools := make(map[string]types.ToolInfo) // Map: toolName -> types.ToolInfo
 	failedServers := []string{}
 	initializedClientCount := 0
 
@@ -150,28 +154,52 @@ func main() {
 		// --- 3. Discover Tools ---
 		logger.Printf("  Discovering tools from '%s' (timeout: 20s)...", serverName)
 		discoveryCtx, discoveryCancel := context.WithTimeout(context.Background(), 20*time.Second)
-		tools, toolsErr := mcpClient.GetAvailableTools(discoveryCtx)
+		
+		listResult, toolsErr := mcpClient.GetAvailableTools(discoveryCtx)
 		discoveryCancel()
 
 		if toolsErr != nil {
 			logger.Printf("  WARNING: Failed to retrieve tools from initialized server '%s': %v", serverName, toolsErr)
 			failedServers = append(failedServers, serverName+"(tool discovery failed)")
-			// Continue with other servers even if one fails discovery
 			continue 
 		}
 
-		if len(tools) == 0 {
+		if listResult == nil || len(listResult.Tools) == 0 {
 			logger.Printf("  Warning: Server '%s' initialized but returned 0 tools.", serverName)
 			continue
 		}
 
-		logger.Printf("  Discovered %d tools from server '%s': %v", len(tools), serverName, tools)
-		for _, tool := range tools {
-			if existingServer, exists := allDiscoveredTools[tool]; !exists {
-				allDiscoveredTools[tool] = serverName
+		logger.Printf("  Discovered %d tools from server '%s'", len(listResult.Tools), serverName)
+		for _, toolDef := range listResult.Tools {
+			toolName := toolDef.Name
+			if _, exists := allDiscoveredTools[toolName]; !exists {
+				var inputSchemaMap map[string]interface{}
+				// Marshal the ToolInputSchema struct to JSON bytes
+				schemaBytes, err := json.Marshal(toolDef.InputSchema)
+				if err != nil {
+					logger.Printf("    ERROR: Failed to marshal input schema struct for tool '%s': %v", toolName, err)
+					inputSchemaMap = make(map[string]interface{}) // Use empty map on error
+				} else {
+					// Unmarshal the JSON bytes into the map
+					if err := json.Unmarshal(schemaBytes, &inputSchemaMap); err != nil {
+						logger.Printf("    ERROR: Failed to unmarshal input schema JSON for tool '%s': %v", toolName, err)
+						inputSchemaMap = make(map[string]interface{}) // Use empty map on error
+					}
+				}
+
+				// Use types.ToolInfo
+				allDiscoveredTools[toolName] = types.ToolInfo{
+					ServerName:  serverName,
+					Description: toolDef.Description,
+					InputSchema: inputSchemaMap,
+				}
+				if *mcpDebug {
+				    logger.Printf("    Stored tool: '%s' (Desc: %s, Schema: %v)", toolName, toolDef.Description, inputSchemaMap)
+				}
 			} else {
+				existingInfo := allDiscoveredTools[toolName]
 				logger.Printf("  Warning: Tool '%s' is available from multiple servers ('%s' and '%s'). Using the first one found ('%s').",
-					tool, existingServer, serverName, existingServer)
+					toolName, existingInfo.ServerName, serverName, existingInfo.ServerName)
 			}
 		}
 	}
@@ -195,8 +223,8 @@ func main() {
 		cfg.SlackBotToken,
 		cfg.SlackAppToken,
 		slackLogger,
-		mcpClients, // Pass the map of *initialized* clients
-		allDiscoveredTools,
+		mcpClients,         // Pass the map of *initialized* clients
+		allDiscoveredTools, // Pass the map of types.ToolInfo
 		cfg.OllamaAPIEndpoint,
 		cfg.OllamaModelName,
 		string(cfg.LLMProvider),

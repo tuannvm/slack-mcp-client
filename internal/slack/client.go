@@ -19,17 +19,16 @@ import (
 
 	"github.com/tuannvm/slack-mcp-client/internal/bridge"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
 
 // Ollama API Request Structure
 type ollamaRequest struct {
-	Model      string  `json:"model"`
-	Prompt     string  `json:"prompt"`
-	Stream     bool    `json:"stream"` // Ensure we set this to false for a single response
-	Temperature float64 `json:"temperature,omitempty"`
-	MaxTokens   int     `json:"max_tokens,omitempty"`
-	// Add other parameters like system prompt, options if needed
-	// Options map[string]interface{} `json:"options,omitempty"`
+	Model      string                 `json:"model"`
+	Prompt     string                 `json:"prompt"`
+	System     string                 `json:"system,omitempty"`
+	Stream     bool                   `json:"stream"`
+	Options    map[string]interface{} `json:"options,omitempty"`
 }
 
 // Ollama API Response Structure (Simplified for non-streaming)
@@ -59,8 +58,8 @@ type Client struct {
 	// Message history for context (limited per channel)
 	messageHistory  map[string][]Message
 	historyLimit    int
-	// Map of available tools to their server names
-	discoveredTools map[string]string
+	// Use types.ToolInfo
+	discoveredTools map[string]types.ToolInfo
 }
 
 // Message represents a message in the conversation history
@@ -72,7 +71,7 @@ type Message struct {
 
 // NewClient creates a new Slack client instance configured to talk to an Ollama or OpenAI server.
 func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, 
-               discoveredTools map[string]string, ollamaAPIEndpoint, ollamaModelName string,
+               discoveredTools map[string]types.ToolInfo, ollamaAPIEndpoint, ollamaModelName string,
                llmProvider, openaiModelName string) (*Client, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
@@ -143,8 +142,9 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	
 	// Report discovered tools
 	logger.Printf("Available tools (%d):", len(discoveredTools))
-	for toolName, serverName := range discoveredTools {
-		logger.Printf("- %s (from server: %s)", toolName, serverName)
+	for toolName, toolInfo := range discoveredTools {
+		logger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)", 
+			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 	
 	// Initialize the LLM-MCP bridge with all available MCP clients and discovered tools
@@ -301,34 +301,68 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	}
 }
 
+// Function to generate the system prompt string
+func (c *Client) generateToolPrompt() string {
+	if len(c.discoveredTools) == 0 {
+		return "" // No tools available
+	}
+
+	var promptBuilder strings.Builder
+	promptBuilder.WriteString("You have access to the following tools. If you need to use one to fulfill the user's request, respond ONLY with a single JSON object matching the specified format. Do not include any other text, explanation, or conversational filler before or after the JSON object.\n\nAvailable Tools:\n")
+
+	for name, toolInfo := range c.discoveredTools {
+		promptBuilder.WriteString(fmt.Sprintf("\nTool Name: %s\n", name))
+		promptBuilder.WriteString(fmt.Sprintf("  Description: %s\n", toolInfo.Description))
+		// Attempt to marshal the input schema map into a JSON string for display
+		schemaBytes, err := json.MarshalIndent(toolInfo.InputSchema, "  ", "  ")
+		if err != nil {
+			c.log.Printf("Error marshaling schema for tool %s: %v", name, err)
+			promptBuilder.WriteString("  Input Schema: (Error rendering schema)\n")
+		} else {
+			promptBuilder.WriteString(fmt.Sprintf("  Input Schema (JSON):\n  %s\n", string(schemaBytes)))
+		}
+	}
+
+	promptBuilder.WriteString("\nJSON Format for Tool Call:\n")
+	promptBuilder.WriteString("{\n")
+	promptBuilder.WriteString("  \"tool\": \"<tool_name>\",\n")
+	promptBuilder.WriteString("  \"args\": { <arguments matching the tool's input schema> }\n")
+	promptBuilder.WriteString("}\n")
+
+	return promptBuilder.String()
+}
+
 // handleOllamaPrompt sends the user's text to the Ollama API and posts the response.
 func (c *Client) handleOllamaPrompt(userPrompt, channelID, threadTS string) {
 	c.log.Printf("Sending prompt to Ollama (Model: %s): %s", c.ollamaModelName, userPrompt)
 	
-	// Add conversation context if available
+	// Add conversation context
 	conversationContext := c.getContextFromHistory(channelID)
 	fullPrompt := userPrompt
 	if conversationContext != "" {
 		fullPrompt = fmt.Sprintf("%s\n\nCurrent question: %s", conversationContext, userPrompt)
-		c.log.Printf("Added conversation context (%d previous messages)", 
-			len(c.messageHistory[channelID])-1) // -1 because the current message is already in history
 	}
 
-	// Add a "typing" indicator while processing
-	c.api.PostMessage(
-		channelID,
-		slack.MsgOptionText("...", false),
-		slack.MsgOptionTS(threadTS),
-	)
+	// Generate the system prompt with tool info
+	systemPrompt := c.generateToolPrompt()
+	if systemPrompt != "" {
+		c.log.Printf("Adding system prompt with tool instructions")
+	} else {
+		c.log.Printf("No tools available, not adding tool system prompt.")
+	}
 
-	// Prepare the request payload for Ollama /api/generate
+	// Add "typing" indicator
+	c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS))
+
+	// Prepare the request payload
 	reqPayload := ollamaRequest{
-		Model:       c.ollamaModelName,
-		Prompt:      fullPrompt, // Use the prompt with context
-		Stream:      false,      // Request a single complete response
-		Temperature: 0.7,        // Set moderate temperature for some creativity
-		MaxTokens:   1024,       // Limit max output tokens to 1024
+		Model:   c.ollamaModelName,
+		Prompt:  fullPrompt,
+		System:  systemPrompt, // Include the system prompt
+		Stream:  false,
+		Options: map[string]interface{}{"temperature": 0.7, "num_predict": 1024}, // Using Options map
 	}
+	
 	reqBody, err := json.Marshal(reqPayload)
 	if err != nil {
 		c.log.Printf("Error marshalling Ollama request payload: %v", err)
@@ -423,17 +457,25 @@ type openaiResponse struct {
 func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.openaiModelName, userPrompt)
 	
-	// Add a "typing" indicator while processing
-	c.api.PostMessage(
-		channelID,
-		slack.MsgOptionText("...", false),
-		slack.MsgOptionTS(threadTS),
-	)
+	// Add "typing" indicator
+	c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS))
 
-	// Add conversation context if available
+	// Prepare messages for OpenAI
 	messages := []openaiMessage{}
-	
-	// Add conversation history as messages
+
+	// --- Add System Prompt with Tool Info --- 
+	systemPrompt := c.generateToolPrompt()
+	if systemPrompt != "" {
+		c.log.Printf("Adding system prompt with tool instructions")
+		messages = append(messages, openaiMessage{
+			Role:    "system",
+			Content: systemPrompt,
+		})
+	} else {
+		c.log.Printf("No tools available, not adding tool system prompt.")
+	}
+
+	// Add conversation history
 	history, exists := c.messageHistory[channelID]
 	if exists && len(history) > 0 {
 		c.log.Printf("Adding %d messages from conversation history", len(history))
@@ -455,12 +497,12 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 		Content: userPrompt,
 	})
 
-	// Prepare the request payload for OpenAI API
+	// Prepare the request payload
 	reqPayload := openaiRequest{
 		Model:       c.openaiModelName,
 		Messages:    messages,
-		Temperature: 0.7,  // Set moderate temperature for some creativity
-		MaxTokens:   2048, // Limit max output tokens
+		Temperature: 0.7,  
+		MaxTokens:   2048, 
 	}
 	
 	reqBody, err := json.Marshal(reqPayload)
@@ -532,28 +574,77 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 	c.processLLMResponseAndReply(openaiText, userPrompt, channelID, threadTS)
 }
 
-// processLLMResponseAndReply processes the LLM response and sends it to the user
+// processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS string) {
 	// Process the LLM response through the LLM-MCP bridge to detect and execute tool calls
 	var finalResponse string
+	var isToolResult bool = false
+
 	if c.llmMCPBridge != nil {
-		c.log.Printf("Processing LLM response through LLM-MCP bridge")
-		ctx := context.Background()
-		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt)
-		if err != nil {
-			c.log.Printf("Error processing LLM response through bridge: %v", err)
-			// Fall back to original response if bridge processing fails
-			finalResponse = llmResponse
+		c.log.Printf("DEBUG: Processing LLM response through bridge...")
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute) // Timeout for tool execution
+		processedResponse, bridgeErr := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt)
+		cancel()
+
+		if bridgeErr != nil {
+			// Bridge returned an error (e.g., tool execution failed)
+			c.log.Printf("ERROR: LLM-MCP Bridge returned error: %v", bridgeErr)
+			// Inform the user about the tool failure
+			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", bridgeErr)
+			// Don't mark as tool result, just post the error message
+		} else if processedResponse != llmResponse {
+			// Bridge returned a different response, indicating a successful tool call
+			c.log.Printf("DEBUG: Bridge returned tool result. Length: %d", len(processedResponse))
+			finalResponse = processedResponse // This is the raw tool result
+			isToolResult = true
 		} else {
-			finalResponse = processedResponse
+			// Bridge returned the original response, meaning no tool was called
+			c.log.Printf("DEBUG: Bridge did not execute a tool.")
+			finalResponse = llmResponse
 		}
 	} else {
 		// No bridge available, use original response
+		c.log.Printf("DEBUG: LLM-MCP bridge not available.")
 		finalResponse = llmResponse
 	}
 
-	// Add assistant response to history
-	c.addToHistory(channelID, "assistant", finalResponse)
+	// --- Re-prompting Logic --- 
+	if isToolResult {
+		c.log.Printf("DEBUG: Tool executed. Re-prompting LLM with tool result.")
+		// Construct a new prompt incorporating the original prompt and the tool result
+		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a concise and helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
+
+		// Call the appropriate LLM handler AGAIN with the re-prompt
+		// NOTE: This is a simplified re-prompt. It doesn't include previous history or the system prompt again.
+		// A more robust implementation might need a dedicated re-prompt function.
+		
+		// Add assistant's previous turn (the tool call JSON) and the tool result to history 
+		// before calling LLM again
+		c.addToHistory(channelID, "assistant", llmResponse) // Add the JSON tool call itself
+		c.addToHistory(channelID, "tool", finalResponse) // Add the tool result (might need a 'tool' role)
+
+		c.log.Printf("DEBUG: Re-prompting LLM with: %s", rePrompt)
+		
+		if c.llmProvider == "ollama" {
+			// Call Ollama again (need to adapt handleOllamaPrompt or create a helper)
+			// For simplicity here, let's just log and maybe return the raw result for now
+			c.log.Printf("TODO: Re-implement Ollama re-prompt call") 
+			finalResponse = fmt.Sprintf("Tool Result:\n```%s```", finalResponse) // Temporary: show raw result
+			// Ideally: call handleOllamaPrompt(rePrompt, channelID, threadTS) - but this would cause a loop
+			// Need to refactor LLM call logic to handle re-prompting without infinite loops.
+		} else { // openai
+			// Call OpenAI again (need to adapt handleOpenAIPrompt or create a helper)
+			c.log.Printf("TODO: Re-implement OpenAI re-prompt call") 
+			finalResponse = fmt.Sprintf("Tool Result:\n```%s```", finalResponse) // Temporary: show raw result
+		}
+		// After the LLM call completes, 'finalResponse' would be updated with the LLM's summary.
+		// For now, we are just showing the raw tool result as a placeholder.
+		
+	} else {
+		// No tool was executed, or bridge failed. Add the assistant's response to history.
+		c.addToHistory(channelID, "assistant", finalResponse)
+	}
+
 
 	// Send the final response back to Slack
 	if finalResponse == "" {

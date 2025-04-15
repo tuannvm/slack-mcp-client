@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"regexp"
+//	"regexp"
 	"strings"
 
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
 
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
@@ -17,12 +18,12 @@ type LLMMCPBridge struct {
 	mcpClients     map[string]*mcp.Client // Map of MCP clients keyed by server name
 	primaryClient  *mcp.Client            // Default client for tool calls
 	logger         *log.Logger
-	// Tool cache for quick lookup during tool call validation
-	availableTools map[string]string // Map of tool name to server name
+	// Use types.ToolInfo for the tool map
+	availableTools map[string]types.ToolInfo // Map of tool name to server name
 }
 
 // NewLLMMCPBridge creates a new bridge between LLM and MCP with pre-discovered tools.
-func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, discoveredTools map[string]string) *LLMMCPBridge {
+func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, discoveredTools map[string]types.ToolInfo) *LLMMCPBridge {
 	if logger == nil {
 		logger = log.New(log.Writer(), "LLM_MCP_BRIDGE: ", log.LstdFlags|log.Lshortfile)
 	}
@@ -30,7 +31,7 @@ func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, disc
 	bridge := &LLMMCPBridge{
 		mcpClients:     mcpClients,
 		logger:         logger,
-		availableTools: make(map[string]string),
+		availableTools: discoveredTools,
 	}
 
 	// Set the primary client
@@ -40,359 +41,119 @@ func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, disc
 		break
 	}
 
-	// Use the pre-discovered tools instead of querying again
-	if discoveredTools != nil && len(discoveredTools) > 0 {
-		bridge.availableTools = discoveredTools
-		bridge.logger.Printf("Using %d pre-discovered tools", len(discoveredTools))
+	// Log initialization details
+	if bridge.availableTools == nil {
+		bridge.availableTools = make(map[string]types.ToolInfo)
+		logger.Printf("Initialized with %d MCP clients and NO pre-discovered tools.", len(mcpClients))
 	} else {
-		// Fallback to discovering tools if none were provided
-		bridge.logger.Printf("No pre-discovered tools provided, will discover dynamically")
-		bridge.discoverAvailableTools()
+		logger.Printf("Initialized with %d MCP clients and %d pre-discovered tools.", len(mcpClients), len(discoveredTools))
 	}
 
 	return bridge
 }
 
-// discoverAvailableTools queries all MCP servers for available tools
-func (b *LLMMCPBridge) discoverAvailableTools() {
-	ctx := context.Background()
-	
-	for serverName, client := range b.mcpClients {
-		b.logger.Printf("Discovering tools from MCP server '%s'...", serverName)
-		
-		tools, err := client.GetAvailableTools(ctx)
-		if err != nil {
-			b.logger.Printf("Warning: Failed to retrieve available tools from MCP server '%s': %v", serverName, err)
-			continue
-		}
-
-		// Store the available tools in the map for quick lookup
-		for _, tool := range tools {
-			// If a tool is provided by multiple servers, prefer to keep the first one found
-			if existingServer, exists := b.availableTools[tool]; !exists {
-				b.availableTools[tool] = serverName
-				b.logger.Printf("Discovered MCP tool: '%s' from server '%s'", tool, serverName)
-			} else {
-				b.logger.Printf("Tool '%s' already available from server '%s', ignoring from '%s'", 
-					tool, existingServer, serverName)
-			}
-		}
-	}
-	
-	b.logger.Printf("Total discovered tools: %d", len(b.availableTools))
-}
-
-// ProcessLLMResponse processes an LLM response and detects if it should trigger an MCP tool call.
-// If a tool call is detected, it executes the tool and returns the result.
-// If no tool call is detected, it returns the original LLM response.
+// ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
+// It no longer uses natural language detection.
 func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, userPrompt string) (string, error) {
-	b.logger.Printf("Processing LLM response for potential tool calls")
+	b.logger.Printf("Processing LLM response for potential JSON tool call: %s", llmResponse)
 	
-	// Check for JSON tool call format
-	if toolCall := b.detectJSONToolCall(llmResponse); toolCall != nil {
+	// Attempt to detect and parse the specific JSON tool call format
+	if toolCall := b.detectSpecificJSONToolCall(llmResponse); toolCall != nil {
 		b.logger.Printf("Detected JSON tool call: %v", toolCall)
-		return b.executeToolCall(ctx, toolCall)
+		// Execute the tool call
+		toolResult, err := b.executeToolCall(ctx, toolCall)
+		if err != nil {
+			// Return the error to the caller (slack client) to handle
+			// It might inform the user or try to re-prompt the LLM
+			b.logger.Printf("Error executing tool call: %v", err)
+			return "", fmt.Errorf("Error executing tool '%s': %w", toolCall.Tool, err)
+		}
+		// Return the raw tool result (caller will decide how to present/re-prompt)
+		b.logger.Printf("Tool '%s' executed successfully.", toolCall.Tool)
+		return toolResult, nil // Indicate success by returning result and nil error
 	}
 
-	// Check for natural language tool requests
-	if toolRequest := b.detectNaturalLanguageToolRequest(userPrompt, llmResponse); toolRequest != nil {
-		b.logger.Printf("Detected natural language tool request: %v", toolRequest)
-		return b.executeToolCall(ctx, toolRequest)
-	}
-
-	// No tool call detected, return original response
-	b.logger.Printf("No tool call detected in LLM response")
-	return llmResponse, nil
+	// No valid tool call JSON detected, return original LLM response
+	b.logger.Printf("No valid JSON tool call detected.")
+	return llmResponse, nil // Indicate no tool call by returning original response and nil error
 }
 
-// Tool represents a detected tool call
-type Tool struct {
-	Name   string                 `json:"tool"`
-	Action string                 `json:"action,omitempty"`
-	Args   map[string]interface{} `json:"args"`
+// ToolCall represents the expected JSON structure for a tool call from the LLM
+type ToolCall struct {
+	Tool string                 `json:"tool"`
+	Args map[string]interface{} `json:"args"`
 }
 
-// detectJSONToolCall attempts to find and parse a JSON tool call in the LLM response
-func (b *LLMMCPBridge) detectJSONToolCall(response string) *Tool {
-	// Look for JSON patterns like {"tool": "...", "action": "...", "args": {...}}
-	jsonRegex := regexp.MustCompile(`\{[\s\S]*"tool"[\s\S]*\}`)
-	match := jsonRegex.FindString(response)
-
-	if match != "" {
-		var tool Tool
-		if err := json.Unmarshal([]byte(match), &tool); err == nil && tool.Name != "" {
-			// Verify that this tool exists in the available tools
-			if _, exists := b.availableTools[tool.Name]; exists {
-				return &tool
-			} else {
-				b.logger.Printf("Warning: Detected tool '%s' is not available from any MCP server", tool.Name)
-			}
-		}
+// detectSpecificJSONToolCall attempts to find and parse the *specific* JSON tool call structure.
+// It validates the tool name against available tools.
+func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
+	// Trim whitespace and check if it looks like a JSON object
+	trimmedResponse := strings.TrimSpace(response)
+	if !(strings.HasPrefix(trimmedResponse, "{") && strings.HasSuffix(trimmedResponse, "}")) {
+		return nil // Doesn't look like a JSON object
 	}
-	return nil
+
+	var toolCall ToolCall
+	if err := json.Unmarshal([]byte(trimmedResponse), &toolCall); err != nil {
+		b.logger.Printf("DEBUG: Failed to unmarshal potential tool call JSON: %v. JSON: %s", err, trimmedResponse)
+		return nil // Not the expected JSON structure
+	}
+
+	// Check if the essential fields are present
+	if toolCall.Tool == "" || toolCall.Args == nil {
+		b.logger.Printf("DEBUG: Parsed JSON missing 'tool' or 'args' field.")
+		return nil // Missing required fields
+	}
+
+	// *** Validate the tool name against the available tools ***
+	if _, exists := b.availableTools[toolCall.Tool]; !exists {
+		b.logger.Printf("Warning: LLM requested tool '%s', but it is not available.", toolCall.Tool)
+		return nil // Tool not available
+	}
+
+	// If we got here, it's a valid, available tool call
+	return &toolCall
 }
 
-// detectNaturalLanguageToolRequest looks for natural language patterns that might indicate tool usage
-func (b *LLMMCPBridge) detectNaturalLanguageToolRequest(userPrompt, llmResponse string) *Tool {
-	// Check for filesystem list operations
-	if path := b.detectFilesystemListPattern(userPrompt, llmResponse); path != "" && b.isToolAvailable("filesystem") {
-		return &Tool{
-			Name:   "filesystem",
-			Action: "list",
-			Args: map[string]interface{}{
-				"path": path,
-			},
-		}
-	}
-
-	// Check for Ollama requests
-	if params := b.detectOllamaPattern(userPrompt, llmResponse); params != nil && b.isToolAvailable("ollama") {
-		args := map[string]interface{}{
-			"model":  params.Model,
-			"prompt": params.Prompt,
-		}
-
-		if params.Options != nil && len(params.Options) > 0 {
-			args["options"] = params.Options
-		}
-
-		return &Tool{
-			Name: "ollama",
-			Args: args,
-		}
-	}
-
-	// Check for OpenAI requests
-	if params := b.detectOpenAIPattern(userPrompt, llmResponse); params != nil && b.isToolAvailable("openai") {
-		return &Tool{
-			Name: "openai",
-			Args: params,
-		}
-	}
-
-	// Check for GitHub repository operations if github tool is available
-	if repo := b.detectGitHubRepoPattern(userPrompt, llmResponse); repo != "" && b.isToolAvailable("github") {
-		return &Tool{
-			Name: "github",
-			Action: "repo-info",
-			Args: map[string]interface{}{
-				"repo": repo,
-			},
-		}
-	}
-
-	return nil
-}
-
-// isToolAvailable checks if the specified tool is available from any MCP server
+// isToolAvailable checks if the specified tool is available (using the new map)
 func (b *LLMMCPBridge) isToolAvailable(toolName string) bool {
 	_, exists := b.availableTools[toolName]
 	return exists
 }
 
-// getClientForTool returns the appropriate client for a given tool
+// getClientForTool returns the appropriate client for a given tool (using the new map)
 func (b *LLMMCPBridge) getClientForTool(toolName string) *mcp.Client {
-	if serverName, exists := b.availableTools[toolName]; exists {
-		if client, clientExists := b.mcpClients[serverName]; clientExists {
+	if toolInfo, exists := b.availableTools[toolName]; exists {
+		if client, clientExists := b.mcpClients[toolInfo.ServerName]; clientExists {
 			return client
+		} else {
+			b.logger.Printf("Warning: Tool '%s' found, but its server '%s' is not in the client map.", toolName, toolInfo.ServerName)
 		}
 	}
-	// Fallback to primary client if specific client not found
-	return b.primaryClient
+	// Fallback or error handling if tool/server not found
+	b.logger.Printf("Warning: Could not find a specific client for tool '%s'. No fallback configured.", toolName)
+	return nil // Return nil, executeToolCall should handle this
 }
 
-// detectFilesystemListPattern looks for patterns indicating the user wants to list files
-func (b *LLMMCPBridge) detectFilesystemListPattern(userPrompt, llmResponse string) string {
-	// Common patterns for filesystem list requests
-	patterns := []string{
-		`(?i)what(?:'s| is) (?:in|available in|inside) ([/\w\s\.-]+)`,
-		`(?i)list (?:the )?(?:files|contents) (?:in|of|from) ([/\w\s\.-]+)`,
-		`(?i)show (?:me )?(?:the )?(?:files|contents) (?:in|of|from) ([/\w\s\.-]+)`,
-		`(?i)show (?:me )?(?:the )?(?:files|contents) of ([/\w\s\.-]+)`,
-		`(?i)want to see what(?:'s| is) inside ([/\w\s\.-]+)`,
-		`(?i)see what(?:'s| is) inside ([/\w\s\.-]+)`,
-		`(?i)show (?:me )?(?:the )? ([/\w\s\.-]+) directory`,
-		`(?i)use mcp for ([/\w\s\.-]+)`,
-		// Special direct path pattern to catch paths directly
-		`(?i)(?:directory|folder|path)?\s*(/[/\w\s\.-]+)`,
-	}
-
-	b.logger.Printf("Checking user prompt for filesystem patterns: %s", userPrompt)
-	
-	// First check user prompt (higher priority)
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(userPrompt)
-		if len(matches) > 1 {
-			path := strings.TrimSpace(matches[1])
-			b.logger.Printf("Detected filesystem request for path: %s", path)
-			return path
-		}
-	}
-
-	// Then check LLM response
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(llmResponse)
-		if len(matches) > 1 {
-			return strings.TrimSpace(matches[1])
-		}
-	}
-
-	return ""
-}
-
-// detectGitHubRepoPattern looks for patterns indicating GitHub repository requests
-func (b *LLMMCPBridge) detectGitHubRepoPattern(userPrompt, llmResponse string) string {
-	patterns := []string{
-		`(?i)show (?:me )?(?:the )?(?:github )?repo(?:sitory)? ([a-zA-Z0-9\-_]+/[a-zA-Z0-9\-_\.]+)`,
-		`(?i)get info (?:about|on) (?:the )?(?:github )?repo(?:sitory)? ([a-zA-Z0-9\-_]+/[a-zA-Z0-9\-_\.]+)`,
-		`(?i)github\.com/([a-zA-Z0-9\-_]+/[a-zA-Z0-9\-_\.]+)`,
-	}
-	
-	// First check user prompt (higher priority)
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(userPrompt)
-		if len(matches) > 1 {
-			repo := strings.TrimSpace(matches[1])
-			b.logger.Printf("Detected GitHub repository request: %s", repo)
-			return repo
-		}
-	}
-	
-	// Then check LLM response
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(llmResponse)
-		if len(matches) > 1 {
-			return strings.TrimSpace(matches[1])
-		}
-	}
-	
-	return ""
-}
-
-// OllamaParams represents parameters for Ollama tool
-type OllamaParams struct {
-	Model   string                 `json:"model"`
-	Prompt  string                 `json:"prompt"`
-	Options map[string]interface{} `json:"options,omitempty"`
-}
-
-// detectOllamaPattern detects Ollama tool usage patterns
-func (b *LLMMCPBridge) detectOllamaPattern(userPrompt, llmResponse string) *OllamaParams {
-	// Check for explicit Ollama requests in the user prompt
-	ollamaRegex := regexp.MustCompile(`(?i)use ollama(?: model)?[:\s]+([a-zA-Z0-9\-:]+)(?:[:\s]+to)?\s+(.+)`)
-	matches := ollamaRegex.FindStringSubmatch(userPrompt)
-
-	if len(matches) > 2 {
-		return &OllamaParams{
-			Model:  strings.TrimSpace(matches[1]),
-			Prompt: strings.TrimSpace(matches[2]),
-		}
-	}
-
-	// Check for JSON-formatted Ollama requests in LLM response
-	jsonRegex := regexp.MustCompile(`\{[\s\S]*"model"[\s\S]*"prompt"[\s\S]*\}`)
-	match := jsonRegex.FindString(llmResponse)
-
-	if match != "" {
-		var params OllamaParams
-		if err := json.Unmarshal([]byte(match), &params); err == nil && params.Model != "" && params.Prompt != "" {
-			return &params
-		}
-	}
-
-	return nil
-}
-
-// detectOpenAIPattern detects OpenAI tool usage patterns
-func (b *LLMMCPBridge) detectOpenAIPattern(userPrompt, llmResponse string) map[string]interface{} {
-	// Check for explicit OpenAI requests in the user prompt
-	// Format: "use openai gpt-4 to <prompt>" or "ask openai: <prompt>"
-	openaiRegex := regexp.MustCompile(`(?i)(?:use|ask)\s+openai(?:\s+model)?\s*[:\s]?\s*([a-zA-Z0-9\-.]+)?\s+(?:to|about|:)?\s+(.+)`)
-	matches := openaiRegex.FindStringSubmatch(userPrompt)
-
-	if len(matches) > 2 {
-		model := strings.TrimSpace(matches[1])
-		if model == "" {
-			model = "gpt-4" // Default model if not specified
-		}
-		prompt := strings.TrimSpace(matches[2])
-		
-		b.logger.Printf("Detected OpenAI request: model=%s, prompt=%s", model, prompt)
-		
-		return map[string]interface{}{
-			"model": model,
-			"prompt": prompt,
-		}
-	}
-
-	// Check for JSON-formatted OpenAI requests in LLM response
-	jsonRegex := regexp.MustCompile(`\{[\s\S]*"model"[\s\S]*(?:"prompt"|"messages")[\s\S]*\}`)
-	match := jsonRegex.FindString(llmResponse)
-
-	if match != "" {
-		var params map[string]interface{}
-		if err := json.Unmarshal([]byte(match), &params); err == nil {
-			// Only return if we have a valid model and either prompt or messages
-			if modelVal, hasModel := params["model"].(string); hasModel && modelVal != "" {
-				if promptVal, hasPrompt := params["prompt"].(string); hasPrompt && promptVal != "" {
-					return params
-				} else if messagesVal, hasMessages := params["messages"]; hasMessages && messagesVal != nil {
-					return params
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// executeToolCall executes a detected tool call
-func (b *LLMMCPBridge) executeToolCall(ctx context.Context, tool *Tool) (string, error) {
-	// Get the appropriate client for this tool
-	client := b.getClientForTool(tool.Name)
-	
+// executeToolCall executes a detected tool call (using the new ToolCall struct)
+func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) (string, error) {
+	client := b.getClientForTool(toolCall.Tool)
 	if client == nil {
-		return "", fmt.Errorf("no suitable MCP client available for tool '%s'", tool.Name)
+		return "", fmt.Errorf("no MCP client available for tool '%s'", toolCall.Tool)
 	}
 
-	// Check if the tool is available
-	serverName := b.availableTools[tool.Name]
-	if serverName == "" {
-		return "", fmt.Errorf("tool '%s' is not available from any MCP server", tool.Name)
-	}
+	serverName := b.availableTools[toolCall.Tool].ServerName // Get server name for logging
+	b.logger.Printf("Calling MCP tool '%s' on server '%s' with args: %v", toolCall.Tool, serverName, toolCall.Args)
 
-	b.logger.Printf("Calling MCP tool '%s' on server '%s' with args: %v", tool.Name, serverName, tool.Args)
-
-	// Call the tool with the generic CallTool method
-	result, err := client.CallTool(ctx, tool.Name, tool.Args)
+	// Call the tool using the generic CallTool method
+	result, err := client.CallTool(ctx, toolCall.Tool, toolCall.Args)
 	if err != nil {
-		b.logger.Printf("Error calling MCP tool %s: %v", tool.Name, err)
-		return "", fmt.Errorf("failed to execute tool %s: %w", tool.Name, err)
+		b.logger.Printf("Error calling MCP tool %s: %v", toolCall.Tool, err)
+		return "", fmt.Errorf("failed to execute tool %s: %w", toolCall.Tool, err) // Propagate error
 	}
 
-	b.logger.Printf("Successfully executed MCP tool: %s", tool.Name)
+	b.logger.Printf("Successfully executed MCP tool: %s", toolCall.Tool)
 	
-	// Format the result for user consumption
-	formattedResult := b.formatToolResult(tool.Name, result)
-	return formattedResult, nil
-}
-
-// formatToolResult formats the result from a tool call for better readability
-func (b *LLMMCPBridge) formatToolResult(toolName, result string) string {
-	switch toolName {
-	case "filesystem":
-		return fmt.Sprintf("📁 **File System Results**:\n```\n%s\n```", result)
-	case "github":
-		return fmt.Sprintf("🔍 **GitHub Results**:\n```\n%s\n```", result)
-	case "ollama":
-		return fmt.Sprintf("🤖 **Ollama Results**:\n%s", result)
-	case "openai":
-		return fmt.Sprintf("🔮 **OpenAI Results**:\n%s", result)
-	default:
-		return fmt.Sprintf("**Tool Results (%s)**:\n%s", toolName, result)
-	}
+	// Return the raw result string - formatting/re-prompting happens in slack client
+	return result, nil 
 }
