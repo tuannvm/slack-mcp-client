@@ -135,3 +135,151 @@ MCP servers are configured using a JSON file following this structure:
     2.  Call `Initialize`.
     3.  If initialization succeeds, immediately call `GetAvailableTools`.
 *   **Outcome:** This sequential processing eliminated the delay and resolved the `file already closed` errors, allowing `GetAvailableTools` to successfully retrieve tools from the `stdio` servers.
+
+# Slack MCP Client Restructuring
+
+This document outlines the architectural restructuring of the Slack MCP Client for improved maintainability and sustainability.
+
+## Key Changes
+
+### 1. Modular Directory Structure
+
+The codebase has been reorganized with a clear separation of concerns:
+
+```
+internal/
+├── common/               # Shared utilities
+│   ├── errors/           # Error types and handling
+│   ├── http/             # HTTP client with retry logic
+│   └── logging/          # Structured logging
+├── config/               # Configuration loading and validation
+├── handlers/             # Tool implementation
+│   ├── llm/              # LLM-specific handlers (OpenAI, Ollama)
+│   └── system/           # System tool handlers (Hello, etc.)
+├── server/               # MCP server implementation
+├── slack/                # Slack bot client
+├── bridge/               # LLM-MCP Bridge
+└── mcp/                  # MCP client functionality
+```
+
+### 2. Interface-Based Design
+
+- Introduced a `ToolHandler` interface for all tool implementations
+- Created a `BaseHandler` with common functionality
+- Implemented a `Registry` for centralized handler management
+
+### 3. Standardized Error Handling
+
+- Created domain-specific error types for better error context
+- Implemented consistent error wrapping and propagation
+- Added status code to error mapping for HTTP errors
+
+### 4. Robust HTTP Client
+
+- Developed a shared HTTP client with retry functionality
+- Implemented exponential backoff with jitter
+- Added request/response logging and customizable timeouts
+
+### 5. Structured Logging
+
+- Implemented a hierarchical logger with log levels
+- Added context-aware logging with named loggers
+- Maintained compatibility with standard log.Logger
+
+### 6. Server Refactoring
+
+- Moved server logic to dedicated package
+- Implemented handler registration system
+- Improved shutdown handling and error propagation
+
+## Benefits
+
+1. **Maintainability**: Clear separation of concerns makes the codebase easier to understand and maintain
+2. **Scalability**: Interface-based design allows for easy addition of new tool handlers
+3. **Robustness**: Improved error handling and retry mechanisms increase reliability
+4. **Observability**: Structured logging provides better insight into operation
+5. **Testability**: Interface-based design makes unit testing easier
+
+## Implementation Details
+
+### Handler Interface
+
+```go
+// ToolHandler defines the interface for all MCP tool handlers
+type ToolHandler interface {
+    // Handle processes an MCP tool request and returns a result or an error
+    Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+    
+    // GetName returns the name of the tool
+    GetName() string
+    
+    // GetDescription returns a human-readable description of the tool
+    GetDescription() string
+    
+    // GetToolDefinition returns the MCP tool definition
+    GetToolDefinition() mcp.Tool
+}
+```
+
+### Error Handling
+
+```go
+// ServiceError represents an error from a specific service
+type ServiceError struct {
+    Service   string
+    Message   string
+    Code      string
+    Retryable bool
+    Cause     error
+}
+```
+
+### HTTP Client
+
+```go
+// DoRequest performs an HTTP request with retries and logging
+func (c *Client) DoRequest(ctx context.Context, method, url string, body interface{}, headers map[string]string) ([]byte, int, error) {
+    // Implementation with retry logic and error handling
+}
+```
+
+## Migration Guide
+
+When implementing new features:
+
+1. Create new handlers in the appropriate subdirectory of `internal/handlers/`
+2. Implement the `ToolHandler` interface
+3. Register the handler in `internal/server/server.go`
+4. Use structured error handling with the `errors` package
+5. Leverage the common HTTP client for external API calls
+6. Use the structured logger for consistent logging
+
+## Next Steps
+
+To complete the restructuring, the following tasks should be undertaken:
+
+1. **Update Main Application**: 
+   - Modify `cmd/slack-mcp-client/main.go` to use the new server package
+   - Initialize the structured logger
+
+2. **Migrate Configuration Logic**:
+   - Move environment variable loading to a central configuration service
+   - Implement config validation
+
+3. **Refactor Slack Client**:
+   - Use the new structured logger
+   - Integrate with the error handling system
+
+4. **Add Comprehensive Tests**:
+   - Unit tests for handlers
+   - Integration tests for server functionality
+
+5. **Documentation Updates**:
+   - Update `README.md` with the new architecture
+   - Create API documentation for the new interfaces
+
+6. **Monitoring & Observability**:
+   - Add metrics collection
+   - Implement trace context propagation
+
+This new architecture provides a solid foundation for future development and ensures the long-term sustainability of the Slack MCP Client.
