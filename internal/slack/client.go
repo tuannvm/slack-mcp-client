@@ -53,7 +53,9 @@ type Client struct {
 	llmMCPBridge    *bridge.LLMMCPBridge
 	ollamaEndpoint  string // Ollama API endpoint (e.g., http://host:port/api/generate)
 	ollamaModelName string // Name of the Ollama model to use
-	httpClient      *http.Client // HTTP client for Ollama communication
+	openaiModelName string // Name of the OpenAI model to use
+	llmProvider     string // Which LLM provider to use ("ollama" or "openai")
+	httpClient      *http.Client // HTTP client for LLM communication
 	// Message history for context (limited per channel)
 	messageHistory  map[string][]Message
 	historyLimit    int
@@ -68,8 +70,10 @@ type Message struct {
 	Timestamp time.Time // When the message was sent/received
 }
 
-// NewClient creates a new Slack client instance configured to talk to an Ollama server.
-func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]string, ollamaAPIEndpoint, ollamaModelName string) (*Client, error) {
+// NewClient creates a new Slack client instance configured to talk to an Ollama or OpenAI server.
+func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, 
+               discoveredTools map[string]string, ollamaAPIEndpoint, ollamaModelName string,
+               llmProvider, openaiModelName string) (*Client, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
 	}
@@ -82,11 +86,27 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	if mcpClients == nil || len(mcpClients) == 0 {
 		return nil, fmt.Errorf("mcpClients map cannot be nil or empty")
 	}
-	if ollamaAPIEndpoint == "" {
-		return nil, fmt.Errorf("Ollama API Endpoint cannot be empty")
+	
+	// Validate LLM provider settings
+	if llmProvider != "ollama" && llmProvider != "openai" {
+		return nil, fmt.Errorf("llmProvider must be either 'ollama' or 'openai'")
 	}
-	if ollamaModelName == "" {
-		return nil, fmt.Errorf("Ollama Model Name cannot be empty")
+	
+	if llmProvider == "ollama" {
+		if ollamaAPIEndpoint == "" {
+			return nil, fmt.Errorf("Ollama API Endpoint cannot be empty when provider is 'ollama'")
+		}
+		if ollamaModelName == "" {
+			return nil, fmt.Errorf("Ollama Model Name cannot be empty when provider is 'ollama'")
+		}
+	} else { // openai
+		if openaiModelName == "" {
+			return nil, fmt.Errorf("OpenAI Model Name cannot be empty when provider is 'openai'")
+		}
+		// Check if OPENAI_API_KEY is set
+		if os.Getenv("OPENAI_API_KEY") == "" {
+			return nil, fmt.Errorf("OPENAI_API_KEY environment variable must be set when provider is 'openai'")
+		}
 	}
 
 	api := slack.New(
@@ -131,6 +151,14 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	llmMCPBridge := bridge.NewLLMMCPBridge(mcpClients, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
+	// Log which LLM provider will be used
+	logger.Printf("Using LLM provider: %s", llmProvider)
+	if llmProvider == "ollama" {
+		logger.Printf("Ollama model: %s at %s", ollamaModelName, ollamaAPIEndpoint)
+	} else {
+		logger.Printf("OpenAI model: %s", openaiModelName)
+	}
+
 	return &Client{
 		log:             logger,
 		api:             api,
@@ -141,6 +169,8 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		llmMCPBridge:    llmMCPBridge,
 		ollamaEndpoint:  ollamaAPIEndpoint,
 		ollamaModelName: ollamaModelName,
+		openaiModelName: openaiModelName,
+		llmProvider:     llmProvider,
 		httpClient:      httpClient,
 		messageHistory:  make(map[string][]Message),
 		historyLimit:    10, // Store the last 10 messages per channel
@@ -262,8 +292,17 @@ func (c *Client) getContextFromHistory(channelID string) string {
 	return context.String()
 }
 
-// handleUserPrompt sends the user's text to the Ollama API and posts the response.
+// handleUserPrompt sends the user's text to the selected LLM provider and posts the response.
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
+	if c.llmProvider == "ollama" {
+		c.handleOllamaPrompt(userPrompt, channelID, threadTS)
+	} else {
+		c.handleOpenAIPrompt(userPrompt, channelID, threadTS)
+	}
+}
+
+// handleOllamaPrompt sends the user's text to the Ollama API and posts the response.
+func (c *Client) handleOllamaPrompt(userPrompt, channelID, threadTS string) {
 	c.log.Printf("Sending prompt to Ollama (Model: %s): %s", c.ollamaModelName, userPrompt)
 	
 	// Add conversation context if available
@@ -349,22 +388,168 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	ollamaGeneratedText := strings.TrimSpace(ollamaResp.Response)
 	c.log.Printf("Received response from Ollama. Length: %d", len(ollamaGeneratedText))
 
+	// Process the LLM response through the MCP pipeline
+	c.processLLMResponseAndReply(ollamaGeneratedText, userPrompt, channelID, threadTS)
+}
+
+// OpenAI API request and response structures
+type openaiMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type openaiRequest struct {
+	Model       string          `json:"model"`
+	Messages    []openaiMessage `json:"messages"`
+	Temperature float64         `json:"temperature,omitempty"`
+	MaxTokens   int             `json:"max_tokens,omitempty"`
+}
+
+type openaiChoice struct {
+	Index        int           `json:"index"`
+	Message      openaiMessage `json:"message"`
+	FinishReason string        `json:"finish_reason"`
+}
+
+type openaiResponse struct {
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
+	Choices []openaiChoice `json:"choices"`
+}
+
+// handleOpenAIPrompt sends the user's text to the OpenAI API and posts the response.
+func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
+	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.openaiModelName, userPrompt)
+	
+	// Add a "typing" indicator while processing
+	c.api.PostMessage(
+		channelID,
+		slack.MsgOptionText("...", false),
+		slack.MsgOptionTS(threadTS),
+	)
+
+	// Add conversation context if available
+	messages := []openaiMessage{}
+	
+	// Add conversation history as messages
+	history, exists := c.messageHistory[channelID]
+	if exists && len(history) > 0 {
+		c.log.Printf("Adding %d messages from conversation history", len(history))
+		for _, msg := range history {
+			role := "user"
+			if msg.Role == "assistant" {
+				role = "assistant"
+			}
+			messages = append(messages, openaiMessage{
+				Role:    role,
+				Content: msg.Content,
+			})
+		}
+	}
+	
+	// Add the current user prompt
+	messages = append(messages, openaiMessage{
+		Role:    "user",
+		Content: userPrompt,
+	})
+
+	// Prepare the request payload for OpenAI API
+	reqPayload := openaiRequest{
+		Model:       c.openaiModelName,
+		Messages:    messages,
+		Temperature: 0.7,  // Set moderate temperature for some creativity
+		MaxTokens:   2048, // Limit max output tokens
+	}
+	
+	reqBody, err := json.Marshal(reqPayload)
+	if err != nil {
+		c.log.Printf("Error marshalling OpenAI request payload: %v", err)
+		c.postMessage(channelID, threadTS, "Sorry, there was an internal error preparing your request.")
+		return
+	}
+
+	// Create the HTTP request
+	ctx, cancel := context.WithTimeout(context.Background(), c.httpClient.Timeout)
+	defer cancel()
+	
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, 
+		"https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBody))
+	if err != nil {
+		c.log.Printf("Error creating OpenAI HTTP request: %v", err)
+		c.postMessage(channelID, threadTS, "Sorry, there was an internal error preparing your request.")
+		return
+	}
+	
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+os.Getenv("OPENAI_API_KEY"))
+
+	// Send the request to the OpenAI API
+	httpResp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		c.log.Printf("Error sending request to OpenAI API: %v", err)
+		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I couldn't reach the OpenAI API. Error: %v", err))
+		return
+	}
+	defer httpResp.Body.Close()
+
+	// Read the response body
+	respBodyBytes, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		c.log.Printf("Error reading OpenAI response body: %v", err)
+		c.postMessage(channelID, threadTS, "Sorry, there was an error reading the response from the OpenAI API.")
+		return
+	}
+
+	// Check response status code
+	if httpResp.StatusCode != http.StatusOK {
+		c.log.Printf("OpenAI API returned non-OK status: %s. Body: %s", httpResp.Status, string(respBodyBytes))
+		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, the OpenAI API returned an error (Status: %s). Response: ```%s```", httpResp.Status, string(respBodyBytes)))
+		return
+	}
+
+	// Parse the JSON response from OpenAI
+	var openaiResp openaiResponse
+	if err := json.Unmarshal(respBodyBytes, &openaiResp); err != nil {
+		c.log.Printf("Error parsing OpenAI JSON response: %v. Body: %s", err, string(respBodyBytes))
+		c.postMessage(channelID, threadTS, "Sorry, I received an unexpected response format from the OpenAI API.")
+		return
+	}
+
+	// Check if we have choices in the response
+	if len(openaiResp.Choices) == 0 {
+		c.log.Printf("OpenAI API returned no choices in response")
+		c.postMessage(channelID, threadTS, "Sorry, OpenAI provided no response.")
+		return
+	}
+
+	// Extract the text from the first choice
+	openaiText := strings.TrimSpace(openaiResp.Choices[0].Message.Content)
+	c.log.Printf("Received response from OpenAI. Length: %d", len(openaiText))
+
+	// Process the LLM response through the MCP pipeline
+	c.processLLMResponseAndReply(openaiText, userPrompt, channelID, threadTS)
+}
+
+// processLLMResponseAndReply processes the LLM response and sends it to the user
+func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS string) {
 	// Process the LLM response through the LLM-MCP bridge to detect and execute tool calls
 	var finalResponse string
 	if c.llmMCPBridge != nil {
 		c.log.Printf("Processing LLM response through LLM-MCP bridge")
 		ctx := context.Background()
-		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, ollamaGeneratedText, userPrompt)
+		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt)
 		if err != nil {
 			c.log.Printf("Error processing LLM response through bridge: %v", err)
 			// Fall back to original response if bridge processing fails
-			finalResponse = ollamaGeneratedText
+			finalResponse = llmResponse
 		} else {
 			finalResponse = processedResponse
 		}
 	} else {
 		// No bridge available, use original response
-		finalResponse = ollamaGeneratedText
+		finalResponse = llmResponse
 	}
 
 	// Add assistant response to history
@@ -372,7 +557,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 
 	// Send the final response back to Slack
 	if finalResponse == "" {
-		c.postMessage(channelID, threadTS, "(Ollama returned an empty response)")
+		c.postMessage(channelID, threadTS, "(LLM returned an empty response)")
 	} else {
 		c.postMessage(channelID, threadTS, finalResponse)
 	}
