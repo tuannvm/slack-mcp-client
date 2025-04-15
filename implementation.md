@@ -119,3 +119,19 @@ MCP servers are configured using a JSON file following this structure:
 5. **Conversation Context Management**
    - Maintain context between messages for more coherent interactions
    - Allow tools to access previous conversation history when relevant
+
+### Debugging Stdio Transport Issues
+
+*   **Problem:** Significant challenges were encountered with `stdio` transport mode. While `stdio` clients (like `github`, `mcp-trino`) would often successfully complete the initial `Initialize` handshake, subsequent calls like `GetAvailableTools` or `CallTool` would consistently fail with `file already closed` errors.
+*   **Initial Investigation:**
+    *   Code analysis initially focused on the `GetAvailableTools` implementation in `internal/mcp/client.go`, correcting flawed logic that checked for a non-existent `sendRequest` method on the library's `StdioMCPClient`.
+    *   Analysis of the `mcp-go` library's `client/stdio.go` confirmed that `StdioMCPClient` *does* implement the standard `ListTools` method, but doesn't have obvious internal idle timeouts.
+*   **Manual Testing:**
+    *   Running server commands (e.g., `github-mcp-server stdio`) manually and piping `initialize` followed immediately by `tools/list` JSON-RPC requests worked correctly.
+    *   Running the server command manually and letting it sit idle showed it did *not* exit automatically after a short period.
+*   **Hypothesis:** The issue wasn't an inherent server crash or timeout, but rather the *delay* between the successful `Initialize` call and the subsequent `GetAvailableTools` call in the original application flow (where all clients were initialized first, then all tools were discovered). This gap seemed to cause the library or the server to close the stdio pipes.
+*   **Resolution:** The `main` function in `cmd/slack-mcp-client/main.go` was refactored. Instead of separate loops for initialization and discovery, a single loop now processes each server sequentially: 
+    1.  Create client instance.
+    2.  Call `Initialize`.
+    3.  If initialization succeeds, immediately call `GetAvailableTools`.
+*   **Outcome:** This sequential processing eliminated the delay and resolved the `file already closed` errors, allowing `GetAvailableTools` to successfully retrieve tools from the `stdio` servers.
