@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -27,22 +28,24 @@ type OpenAIMessage struct {
 
 // OpenAICompletionRequest represents a request to the OpenAI API
 type OpenAICompletionRequest struct {
-	Model       string                 `json:"model"`
-	Messages    []OpenAIMessage        `json:"messages,omitempty"`
-	Prompt      string                 `json:"prompt,omitempty"`
-	MaxTokens   int                    `json:"max_tokens,omitempty"`
-	Temperature float64                `json:"temperature,omitempty"`
-	Stream      bool                   `json:"stream,omitempty"`
-	Options     map[string]interface{} `json:"options,omitempty"`
+	Model               string                 `json:"model"`
+	Messages            []OpenAIMessage        `json:"messages,omitempty"`
+	Prompt              string                 `json:"prompt,omitempty"`
+	MaxTokens           int                    `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int                    `json:"max_completion_tokens,omitempty"`
+	Temperature         float64                `json:"temperature,omitempty"`
+	Stream              bool                   `json:"stream,omitempty"`
+	Options             map[string]interface{} `json:"options,omitempty"`
 }
 
 // OpenAIChatRequest represents a request to the OpenAI chat completions API
 type OpenAIChatRequest struct {
-	Model       string         `json:"model"`
-	Messages    []OpenAIMessage `json:"messages"`
-	Temperature float64        `json:"temperature,omitempty"`
-	MaxTokens   int            `json:"max_tokens,omitempty"`
-	Stream      bool           `json:"stream,omitempty"`
+	Model               string         `json:"model"`
+	Messages            []OpenAIMessage `json:"messages"`
+	Temperature         float64        `json:"temperature,omitempty"`
+	MaxTokens           int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
+	Stream              bool           `json:"stream,omitempty"`
 }
 
 // OpenAIChatResponseChoice represents a choice in the OpenAI API response
@@ -145,7 +148,13 @@ func HandleOpenAIToolLegacy(params map[string]interface{}) (string, error) {
 
 	// Apply optional parameters
 	if maxTokens, ok := params["max_tokens"].(float64); ok {
-		reqBody.MaxTokens = int(maxTokens)
+		// Use appropriate token parameter based on model type
+		if strings.Contains(model, "o3-") {
+			openaiLogger.Printf("Using max_completion_tokens for o3 model: %s", model)
+			reqBody.MaxCompletionTokens = int(maxTokens)
+		} else {
+			reqBody.MaxTokens = int(maxTokens)
+		}
 	}
 	if temperature, ok := params["temperature"].(float64); ok {
 		reqBody.Temperature = temperature
@@ -286,7 +295,13 @@ func HandleOpenAITool(ctx context.Context, req mcp.CallToolRequest, logger *log.
 	}
 
 	if maxTokens, ok := args["max_tokens"].(float64); ok {
-		chatReq.MaxTokens = int(maxTokens)
+		// Use appropriate token parameter based on model type
+		if strings.Contains(model, "o3-") {
+			logger.Printf("Using max_completion_tokens for o3 model: %s", model)
+			chatReq.MaxCompletionTokens = int(maxTokens)
+		} else {
+			chatReq.MaxTokens = int(maxTokens)
+		}
 	}
 
 	// Convert request to JSON

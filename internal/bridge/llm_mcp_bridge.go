@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-//	"regexp"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
@@ -87,32 +88,102 @@ type ToolCall struct {
 // detectSpecificJSONToolCall attempts to find and parse the *specific* JSON tool call structure.
 // It validates the tool name against available tools.
 func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
-	// Trim whitespace and check if it looks like a JSON object
+	b.logger.Printf("DEBUG: Beginning JSON tool call detection")
+	
+	// Step 1: Try direct JSON parsing first (simple case)
 	trimmedResponse := strings.TrimSpace(response)
-	if !(strings.HasPrefix(trimmedResponse, "{") && strings.HasSuffix(trimmedResponse, "}")) {
-		return nil // Doesn't look like a JSON object
+	if strings.HasPrefix(trimmedResponse, "{") && strings.HasSuffix(trimmedResponse, "}") {
+		var toolCall ToolCall
+		if err := json.Unmarshal([]byte(trimmedResponse), &toolCall); err == nil {
+			// Validate the tool call
+			if toolCall.Tool != "" && toolCall.Args != nil {
+				if _, exists := b.availableTools[toolCall.Tool]; exists {
+					b.logger.Printf("DEBUG: Direct JSON parsing successful")
+					return &toolCall
+				} else {
+					b.logger.Printf("Warning: LLM requested tool '%s', but it is not available.", toolCall.Tool)
+				}
+			}
+		} else {
+			b.logger.Printf("DEBUG: Direct JSON parsing failed: %v", err)
+		}
+	}
+	
+	// Step 2: Look for JSON in code blocks (```json ... ```)
+	b.logger.Printf("DEBUG: Searching for JSON in code blocks")
+	codeBlockRegex := regexp.MustCompile("```(?:json)?\\s*({[\\s\\S]*?})\\s*```")
+	codeBlockMatches := codeBlockRegex.FindAllStringSubmatch(response, -1)
+	
+	for _, match := range codeBlockMatches {
+		if len(match) >= 2 {
+			jsonContent := match[1]
+			b.logger.Printf("DEBUG: Found potential JSON in code block: %s", jsonContent)
+			
+			var toolCall ToolCall
+			if err := json.Unmarshal([]byte(jsonContent), &toolCall); err == nil {
+				// Validate the tool call
+				if toolCall.Tool != "" && toolCall.Args != nil {
+					if _, exists := b.availableTools[toolCall.Tool]; exists {
+						b.logger.Printf("DEBUG: JSON code block parsing successful")
+						return &toolCall
+					} else {
+						b.logger.Printf("Warning: LLM requested tool '%s' in code block, but it is not available.", toolCall.Tool)
+					}
+				}
+			} else {
+				b.logger.Printf("DEBUG: JSON code block parsing failed: %v", err)
+			}
+		}
+	}
+	
+	// Step 3: Look for standalone JSON objects that match our pattern anywhere in text
+	b.logger.Printf("DEBUG: Searching for JSON objects in text")
+	// More lenient regex that can handle various JSON formats with the key elements we need
+	jsonRegex := regexp.MustCompile("(?i)[\\{\\s]*[\"']?tool[\"']?\\s*[\\:\\=]\\s*[\"']([^\"']+)[\"']\\s*[\\,\\s]*[\"']?args[\"']?\\s*[\\:\\=]\\s*\\{([\\s\\S]*?)\\}[\\s\\}]*")
+	jsonMatches := jsonRegex.FindAllStringSubmatch(response, -1)
+
+	for _, match := range jsonMatches {
+		if len(match) >= 3 {
+			toolName := match[1]
+			argsJSON := "{" + match[2] + "}"  // Ensure it's wrapped in braces
+			
+			b.logger.Printf("DEBUG: Found potential JSON object: tool=%s, args=%s", toolName, argsJSON)
+			
+			// Try to construct the tool call manually
+			var args map[string]interface{}
+			if err := json.Unmarshal([]byte(argsJSON), &args); err == nil {
+				toolCall := &ToolCall{
+					Tool: toolName,
+					Args: args,
+				}
+				
+				if _, exists := b.availableTools[toolCall.Tool]; exists {
+					b.logger.Printf("DEBUG: Manual JSON construction successful")
+					return toolCall
+				} else {
+					b.logger.Printf("Warning: LLM requested tool '%s' in regex match, but it is not available.", toolCall.Tool)
+				}
+			} else {
+				b.logger.Printf("DEBUG: JSON args parsing failed: %v", err)
+				
+				// Try even more lenient approach - extract key-value pairs
+				if simpleArgs, ok := b.extractSimpleKeyValuePairs(argsJSON); ok && len(simpleArgs) > 0 {
+					toolCall := &ToolCall{
+						Tool: toolName,
+						Args: simpleArgs,
+					}
+					
+					if _, exists := b.availableTools[toolCall.Tool]; exists {
+						b.logger.Printf("DEBUG: Simplified key-value extraction successful")
+						return toolCall
+					}
+				}
+			}
+		}
 	}
 
-	var toolCall ToolCall
-	if err := json.Unmarshal([]byte(trimmedResponse), &toolCall); err != nil {
-		b.logger.Printf("DEBUG: Failed to unmarshal potential tool call JSON: %v. JSON: %s", err, trimmedResponse)
-		return nil // Not the expected JSON structure
-	}
-
-	// Check if the essential fields are present
-	if toolCall.Tool == "" || toolCall.Args == nil {
-		b.logger.Printf("DEBUG: Parsed JSON missing 'tool' or 'args' field.")
-		return nil // Missing required fields
-	}
-
-	// *** Validate the tool name against the available tools ***
-	if _, exists := b.availableTools[toolCall.Tool]; !exists {
-		b.logger.Printf("Warning: LLM requested tool '%s', but it is not available.", toolCall.Tool)
-		return nil // Tool not available
-	}
-
-	// If we got here, it's a valid, available tool call
-	return &toolCall
+	b.logger.Printf("DEBUG: No valid JSON tool call detected")
+	return nil
 }
 
 // isToolAvailable checks if the specified tool is available (using the new map)
@@ -156,4 +227,40 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 	
 	// Return the raw result string - formatting/re-prompting happens in slack client
 	return result, nil 
+}
+
+// extractSimpleKeyValuePairs attempts to extract simple key-value pairs from text
+// that might look like JSON but not be valid JSON syntax
+func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]interface{}, bool) {
+	result := make(map[string]interface{})
+	
+	// Look for patterns like "key": "value" or "key": 123
+	kvRegex := regexp.MustCompile("\"([^\"]+)\"\\s*\\:\\s*(\"[^\"]*\"|\\d+|true|false)")
+	matches := kvRegex.FindAllStringSubmatch(text, -1)
+	
+	for _, match := range matches {
+		if len(match) >= 3 {
+			key := match[1]
+			valueStr := match[2]
+			
+			// Try to determine the value type
+			if strings.HasPrefix(valueStr, "\"") && strings.HasSuffix(valueStr, "\"") {
+				// It's a string
+				result[key] = valueStr[1 : len(valueStr)-1] // Remove quotes
+			} else if valueStr == "true" {
+				result[key] = true
+			} else if valueStr == "false" {
+				result[key] = false
+			} else {
+				// Try to parse as number
+				if num, err := strconv.ParseFloat(valueStr, 64); err == nil {
+					result[key] = num
+				} else {
+					result[key] = valueStr // Keep as string if all else fails
+				}
+			}
+		}
+	}
+	
+	return result, len(result) > 0
 }
