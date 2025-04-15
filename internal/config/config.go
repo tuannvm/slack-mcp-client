@@ -28,20 +28,14 @@ type LLMProvider string
 const (
 	// ProviderOpenAI uses OpenAI models
 	ProviderOpenAI LLMProvider = "openai"
-	// ProviderOllama uses Ollama models
-	ProviderOllama LLMProvider = "ollama"
-	// Default Ollama API endpoint
-	defaultOllamaAPIEndpoint = "http://localhost:11434/api/generate"
 )
 
 // Config holds the application configuration.
 type Config struct {
 	SlackBotToken     string                     `json:"-"` // Loaded from env
 	SlackAppToken     string                     `json:"-"` // Loaded from env
-	OllamaAPIEndpoint string                     `json:"-"` // Loaded from env, with default
-	OllamaModelName   string                     `json:"-"` // Loaded from env
 	OpenAIModelName   string                     `json:"-"` // Loaded from env
-	LLMProvider       LLMProvider               `json:"-"` // Which LLM provider to use
+	LLMProvider       LLMProvider               `json:"-"` // Will always be OpenAI now
 	Servers           map[string]ServerConfig    `json:"servers"` // Map of server configs by name
 }
 
@@ -70,31 +64,22 @@ func LoadConfig(configFilePath string) (*Config, error) {
 	return cfg, nil
 }
 
-// loadConfigFromEnv creates a config from environment variables
+// loadConfigFromEnv creates a config from environment variables. Assumes OpenAI is the provider.
 func loadConfigFromEnv() (*Config, error) {
-	// Set default Ollama endpoint if not specified
-	ollamaEndpoint := os.Getenv("OLLAMA_API_ENDPOINT")
-	if ollamaEndpoint == "" {
-		ollamaEndpoint = defaultOllamaAPIEndpoint
-		fmt.Printf("Warning: OLLAMA_API_ENDPOINT not set, defaulting to %s\n", defaultOllamaAPIEndpoint)
-	}
-
-	// Determine the LLM provider
-	llmProvider := LLMProvider(strings.ToLower(os.Getenv("LLM_PROVIDER")))
-	if llmProvider != ProviderOpenAI && llmProvider != ProviderOllama {
-		llmProvider = ProviderOpenAI
-		fmt.Printf("Warning: LLM_PROVIDER not set or invalid, defaulting to %s\n", llmProvider)
-	}
-
-	// Create the config object
+	// Initialize cfg fields, setting provider directly to OpenAI
 	cfg := &Config{
 		SlackBotToken:     os.Getenv("SLACK_BOT_TOKEN"),
 		SlackAppToken:     os.Getenv("SLACK_APP_TOKEN"),
-		OllamaAPIEndpoint: ollamaEndpoint,
-		OllamaModelName:   os.Getenv("OLLAMA_MODEL"),
-		OpenAIModelName:   os.Getenv("OPENAI_MODEL"),
-		LLMProvider:       llmProvider,
+		LLMProvider:       ProviderOpenAI, // Set directly
 		Servers:           make(map[string]ServerConfig),
+	}
+
+	// Load OpenAI model environment variable
+	cfg.OpenAIModelName = os.Getenv("OPENAI_MODEL")
+	// Validate OpenAI model (and set default)
+	if cfg.OpenAIModelName == "" {
+		cfg.OpenAIModelName = "gpt-4o"
+		fmt.Printf("Warning: OPENAI_MODEL not set, defaulting to %s\n", cfg.OpenAIModelName)
 	}
 
 	// Validate essential Slack credentials
@@ -103,15 +88,6 @@ func loadConfigFromEnv() (*Config, error) {
 	}
 	if cfg.SlackAppToken == "" {
 		return nil, fmt.Errorf("SLACK_APP_TOKEN environment variable not set")
-	}
-
-	// Validate model settings based on provider
-	if cfg.LLMProvider == ProviderOllama && cfg.OllamaModelName == "" {
-		return nil, fmt.Errorf("OLLAMA_MODEL environment variable not set (e.g., 'llama3')")
-	}
-	if cfg.LLMProvider == ProviderOpenAI && cfg.OpenAIModelName == "" {
-		cfg.OpenAIModelName = "gpt-4o"
-		fmt.Printf("Warning: OPENAI_MODEL not set, defaulting to %s\n", cfg.OpenAIModelName)
 	}
 
 	return cfg, nil

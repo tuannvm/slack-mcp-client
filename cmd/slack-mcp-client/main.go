@@ -25,9 +25,7 @@ var (
 	configFile = flag.String("config", "", "Path to the MCP server configuration JSON file")
 	debug      = flag.Bool("debug", false, "Enable debug logging")
 	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
-	llmProvider = flag.String("llm", "", "LLM provider to use: 'openai' (default) or 'ollama'")
-	openaiModel = flag.String("openai-model", "", "OpenAI model to use (only if --llm=openai)")
-	ollamaModel = flag.String("ollama-model", "", "Ollama model to use (only if --llm=ollama)")
+	openaiModel = flag.String("openai-model", "", "OpenAI model to use (overrides config/env)")
 )
 
 func main() {
@@ -41,19 +39,26 @@ func main() {
 	logger := log.New(os.Stdout, "slack-mcp-client: ", logFlags)
 	logger.Printf("Starting Slack MCP Client (debug=%v)", *debug)
 
-	// Setup LLM provider
-	setupLLMProvider(logger)
-
 	// Load configuration
 	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
 		logger.Fatalf("Failed to load configuration: %v", err)
 	}
-	applyModelOverrides(logger, cfg)
+
+	// Force provider to OpenAI in config loaded, as client only supports OpenAI directly now
+	if cfg.LLMProvider != config.ProviderOpenAI {
+		logger.Printf("Warning: Config/Env specified LLM provider '%s', but client is hardcoded for OpenAI. Forcing OpenAI.", cfg.LLMProvider)
+		cfg.LLMProvider = config.ProviderOpenAI
+	}
+
+	// Apply command-line overrides AFTER loading config
+	if err := applyCommandLineOverrides(logger, cfg); err != nil {
+		logger.Fatalf("Error applying command-line flags: %v", err)
+	}
 
 	logger.Printf("Configuration loaded. Slack Bot Token Present: %t, Slack App Token Present: %t",
 		cfg.SlackBotToken != "", cfg.SlackAppToken != "")
-	logger.Printf("LLM Provider: %s", cfg.LLMProvider)
+	logger.Printf("Final LLM Provider: %s", cfg.LLMProvider) // Will always be OpenAI now
 	logLLMSettings(logger, cfg)
 	logger.Printf("MCP Servers Configured (in file): %d", len(cfg.Servers))
 
@@ -136,8 +141,8 @@ func main() {
 		}(serverName, mcpClient)
 
 		// --- 2. Initialize Client ---
-		initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		logger.Printf("  Attempting to initialize MCP client '%s' (timeout: 15s)...", serverName)
+		initCtx, initCancel := context.WithTimeout(context.Background(), 1*time.Second)
+		logger.Printf("  Attempting to initialize MCP client '%s' (timeout: 1s)...", serverName)
 		initErr := mcpClient.Initialize(initCtx)
 		initCancel()
 
@@ -225,10 +230,7 @@ func main() {
 		slackLogger,
 		mcpClients,         // Pass the map of *initialized* clients
 		allDiscoveredTools, // Pass the map of types.ToolInfo
-		cfg.OllamaAPIEndpoint,
-		cfg.OllamaModelName,
-		string(cfg.LLMProvider),
-		cfg.OpenAIModelName,
+		cfg,                // Pass the whole config object
 	)
 	if err != nil {
 		logger.Fatalf("Failed to initialize Slack client: %v", err)
@@ -238,63 +240,26 @@ func main() {
 	startSlackClient(logger, client)
 }
 
-// setupLLMProvider validates and applies LLM provider settings from command line
-func setupLLMProvider(logger *log.Logger) {
-	if *llmProvider != "" {
-		if *llmProvider != "openai" && *llmProvider != "ollama" {
-			logger.Fatalf("Invalid LLM provider: %s. Must be 'openai' or 'ollama'", *llmProvider)
+// applyCommandLineOverrides applies command-line flags directly to the loaded config
+func applyCommandLineOverrides(logger *log.Logger, cfg *config.Config) error {
+	// Provider is now forced to OpenAI earlier, so only check for OpenAI model override.
+	if *openaiModel != "" {
+		// Ensure the provider in config is actually OpenAI before overriding model
+		// (This should always be true due to the check in main, but good for safety)
+		if cfg.LLMProvider == config.ProviderOpenAI {
+			logger.Printf("Overriding OpenAI model from command line: %s", *openaiModel)
+			cfg.OpenAIModelName = *openaiModel
+		} else {
+			// This case should technically not be reachable anymore
+			logger.Printf("Warning: --openai-model flag provided, but configured provider is not OpenAI ('%s'). Flag ignored.", cfg.LLMProvider)
 		}
-		
-		// Validate model flags match the provider
-		if *llmProvider == "openai" && *ollamaModel != "" {
-			logger.Fatalf("Ollama model specified with OpenAI provider. Use --openai-model instead")
-		}
-		if *llmProvider == "ollama" && *openaiModel != "" {
-			logger.Fatalf("OpenAI model specified with Ollama provider. Use --ollama-model instead")
-		}
-		
-		os.Setenv("LLM_PROVIDER", *llmProvider)
-		logger.Printf("Setting LLM provider from command line: %s", *llmProvider)
-		
-		// Set the model if specified
-		if *llmProvider == "openai" && *openaiModel != "" {
-			os.Setenv("OPENAI_MODEL", *openaiModel)
-			logger.Printf("Using OpenAI model: %s", *openaiModel)
-		} else if *llmProvider == "ollama" && *ollamaModel != "" {
-			os.Setenv("OLLAMA_MODEL", *ollamaModel)
-			logger.Printf("Using Ollama model: %s", *ollamaModel)
-		}
-	}
-}
-
-// applyModelOverrides applies command-line model overrides to the config
-func applyModelOverrides(logger *log.Logger, cfg *config.Config) {
-	if *llmProvider == "openai" && *openaiModel != "" {
-		cfg.OpenAIModelName = *openaiModel
-		logger.Printf("Overriding OpenAI model from command line: %s", *openaiModel)
-	} else if *llmProvider == "ollama" && *ollamaModel != "" {
-		cfg.OllamaModelName = *ollamaModel
-		logger.Printf("Overriding Ollama model from command line: %s", *ollamaModel)
-	}
-
-	// Ensure only one model (provider) is used
-	if cfg.LLMProvider == config.ProviderOllama {
-		// Clear OpenAI settings to avoid confusion
-		cfg.OpenAIModelName = ""
-	} else {
-		// Clear Ollama settings to avoid confusion
-		cfg.OllamaModelName = ""
-		cfg.OllamaAPIEndpoint = ""
-	}
+	} 
+	return nil // No errors
 }
 
 // logLLMSettings logs the current LLM configuration
 func logLLMSettings(logger *log.Logger, cfg *config.Config) {
-	if cfg.LLMProvider == config.ProviderOllama {
-		logger.Printf("Ollama Endpoint: %s, Ollama Model: %s", cfg.OllamaAPIEndpoint, cfg.OllamaModelName)
-	} else {
-		logger.Printf("OpenAI Model: %s", cfg.OpenAIModelName)
-	}
+	logger.Printf("OpenAI Model: %s", cfg.OpenAIModelName)
 }
 
 // startSlackClient starts the Slack client and handles shutdown

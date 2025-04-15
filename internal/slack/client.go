@@ -18,28 +18,10 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/tuannvm/slack-mcp-client/internal/bridge"
+	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
-
-// Ollama API Request Structure
-type ollamaRequest struct {
-	Model      string                 `json:"model"`
-	Prompt     string                 `json:"prompt"`
-	System     string                 `json:"system,omitempty"`
-	Stream     bool                   `json:"stream"`
-	Options    map[string]interface{} `json:"options,omitempty"`
-}
-
-// Ollama API Response Structure (Simplified for non-streaming)
-type ollamaResponse struct {
-	Model     string    `json:"model"`
-	CreatedAt time.Time `json:"created_at"`
-	Response  string    `json:"response"`
-	Done      bool      `json:"done"`
-	// Context   []int     `json:"context,omitempty"` // Add if needed for context handling
-	// Other fields like total_duration, load_duration etc. are ignored for now
-}
 
 // Client represents the Slack client application.
 type Client struct {
@@ -50,10 +32,7 @@ type Client struct {
 	botMentionRgx   *regexp.Regexp
 	mcpClients      map[string]*mcp.Client
 	llmMCPBridge    *bridge.LLMMCPBridge
-	ollamaEndpoint  string // Ollama API endpoint (e.g., http://host:port/api/generate)
-	ollamaModelName string // Name of the Ollama model to use
-	openaiModelName string // Name of the OpenAI model to use
-	llmProvider     string // Which LLM provider to use ("ollama" or "openai")
+	cfg             *config.Config // Holds the application configuration
 	httpClient      *http.Client // HTTP client for LLM communication
 	// Message history for context (limited per channel)
 	messageHistory  map[string][]Message
@@ -69,10 +48,9 @@ type Message struct {
 	Timestamp time.Time // When the message was sent/received
 }
 
-// NewClient creates a new Slack client instance configured to talk to an Ollama or OpenAI server.
+// NewClient creates a new Slack client instance.
 func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, 
-               discoveredTools map[string]types.ToolInfo, ollamaAPIEndpoint, ollamaModelName string,
-               llmProvider, openaiModelName string) (*Client, error) {
+               discoveredTools map[string]types.ToolInfo, cfg *config.Config) (*Client, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
 	}
@@ -85,31 +63,29 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	if mcpClients == nil || len(mcpClients) == 0 {
 		return nil, fmt.Errorf("mcpClients map cannot be nil or empty")
 	}
-	
-	// Validate LLM provider settings
-	if llmProvider != "ollama" && llmProvider != "openai" {
-		return nil, fmt.Errorf("llmProvider must be either 'ollama' or 'openai'")
+	if cfg == nil {
+		return nil, fmt.Errorf("config cannot be nil")
 	}
 	
-	if llmProvider == "ollama" {
-		if ollamaAPIEndpoint == "" {
-			return nil, fmt.Errorf("Ollama API Endpoint cannot be empty when provider is 'ollama'")
-		}
-		if ollamaModelName == "" {
-			return nil, fmt.Errorf("Ollama Model Name cannot be empty when provider is 'ollama'")
-		}
-	} else { // openai
-		if openaiModelName == "" {
-			return nil, fmt.Errorf("OpenAI Model Name cannot be empty when provider is 'openai'")
-		}
-		// Check if OPENAI_API_KEY is set
-		if os.Getenv("OPENAI_API_KEY") == "" {
-			return nil, fmt.Errorf("OPENAI_API_KEY environment variable must be set when provider is 'openai'")
-		}
+	// Basic validation of essential LLM config 
+	// We now assume OpenAI is the ONLY provider the client will directly use.
+	if cfg.LLMProvider != config.ProviderOpenAI {
+		// but we will force OpenAI path later anyway.
+		logger.Printf("Warning: Configured LLM provider is '%s', but this client is hardcoded to use OpenAI directly.", cfg.LLMProvider)
+		// We will force the provider to OpenAI for internal logic consistency, 
+		// assuming the intention is to *only* use OpenAI via this client.
+		cfg.LLMProvider = config.ProviderOpenAI 
 	}
-
+	if cfg.OpenAIModelName == "" {
+		return nil, fmt.Errorf("OpenAIModelName is empty in config")
+	}
+	if os.Getenv("OPENAI_API_KEY") == "" {
+		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+	}
+	
+	// --- Slack API setup --- 
 	api := slack.New(
-		botToken,
+		botToken, 
 		slack.OptionDebug(false),
 		slack.OptionLog(log.New(os.Stdout, "slack-api: ", log.Lshortfile|log.LstdFlags)),
 		slack.OptionAppLevelToken(appToken),
@@ -134,31 +110,26 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		Timeout: 3 * time.Minute, // Increased timeout for potentially long LLM calls
 	}
 
-	// List available MCP servers
+	// --- MCP/Bridge setup --- 
 	logger.Printf("Available MCP servers (%d):", len(mcpClients))
 	for name := range mcpClients {
 		logger.Printf("- %s", name)
 	}
 	
-	// Report discovered tools
 	logger.Printf("Available tools (%d):", len(discoveredTools))
 	for toolName, toolInfo := range discoveredTools {
 		logger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)", 
 			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 	
-	// Initialize the LLM-MCP bridge with all available MCP clients and discovered tools
 	llmMCPBridge := bridge.NewLLMMCPBridge(mcpClients, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
-	// Log which LLM provider will be used
-	logger.Printf("Using LLM provider: %s", llmProvider)
-	if llmProvider == "ollama" {
-		logger.Printf("Ollama model: %s at %s", ollamaModelName, ollamaAPIEndpoint)
-	} else {
-		logger.Printf("OpenAI model: %s", openaiModelName)
-	}
+	// --- Log final config (always OpenAI now for this client) --- 
+	logger.Printf("Client configured to use LLM provider: %s", cfg.LLMProvider)
+	logger.Printf("OpenAI model: %s", cfg.OpenAIModelName)
 
+	// --- Create and return Client instance --- 
 	return &Client{
 		log:             logger,
 		api:             api,
@@ -167,10 +138,7 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		botMentionRgx:   mentionRegex,
 		mcpClients:      mcpClients,
 		llmMCPBridge:    llmMCPBridge,
-		ollamaEndpoint:  ollamaAPIEndpoint,
-		ollamaModelName: ollamaModelName,
-		openaiModelName: openaiModelName,
-		llmProvider:     llmProvider,
+		cfg:             cfg, // Store the config object
 		httpClient:      httpClient,
 		messageHistory:  make(map[string][]Message),
 		historyLimit:    10, // Store the last 10 messages per channel
@@ -278,27 +246,37 @@ func (c *Client) getContextFromHistory(channelID string) string {
 		return ""
 	}
 	
-	var context strings.Builder
-	context.WriteString("Previous conversation:\n")
+	var contextBuilder strings.Builder
+	contextBuilder.WriteString("Previous conversation context:\n---\n") // Clearer start marker
 	
 	for _, msg := range history {
 		prefix := "User"
 		if msg.Role == "assistant" {
 			prefix = "Assistant"
+		} else if msg.Role == "tool" { // Add handling for tool results in history
+			prefix = "Tool Result"
 		}
-		context.WriteString(fmt.Sprintf("%s: %s\n", prefix, msg.Content))
+		// Sanitize content slightly for logging/prompting (remove potential newlines)
+		sanitizedContent := strings.ReplaceAll(msg.Content, "\n", " \\n ") 
+		contextBuilder.WriteString(fmt.Sprintf("%s: %s\n", prefix, sanitizedContent))
 	}
+	contextBuilder.WriteString("---\n") // Clearer end marker
 	
-	return context.String()
+	contextString := contextBuilder.String()
+	c.log.Printf("DEBUG: Built conversation context for channel %s:\n%s", channelID, contextString) // Log the built context
+	return contextString
 }
 
-// handleUserPrompt sends the user's text to the selected LLM provider and posts the response.
+// handleUserPrompt ALWAYS sends the user's text to the OpenAI provider.
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
-	if c.llmProvider == "ollama" {
-		c.handleOllamaPrompt(userPrompt, channelID, threadTS)
-	} else {
-		c.handleOpenAIPrompt(userPrompt, channelID, threadTS)
-	}
+	// Log the provider value (will likely be OpenAI now)
+	c.log.Printf("DEBUG: handleUserPrompt - Configured LLM provider: '%s'", c.cfg.LLMProvider)
+
+	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
+
+	// Route based on the configured LLM provider - ALWAYS GO TO OPENAI NOW
+	c.log.Printf("DEBUG: handleUserPrompt - Forcing branch to OpenAI")
+	c.handleOpenAIPrompt(userPrompt, channelID, threadTS)
 }
 
 // Function to generate the system prompt string
@@ -308,7 +286,12 @@ func (c *Client) generateToolPrompt() string {
 	}
 
 	var promptBuilder strings.Builder
-	promptBuilder.WriteString("You have access to the following tools. If you need to use one to fulfill the user's request, respond ONLY with a single JSON object matching the specified format. Do not include any other text, explanation, or conversational filler before or after the JSON object.\n\nAvailable Tools:\n")
+	promptBuilder.WriteString("You have access to the following tools. Analyze the user's request to determine if a tool is needed.\n")
+	promptBuilder.WriteString("**If** a tool is appropriate and you can extract **all** required arguments from the user's request based on the tool's Input Schema, respond ONLY with a single JSON object matching the specified format. Do not include any other text, explanation, or conversational filler before or after the JSON object.\n")
+	promptBuilder.WriteString("**If** a tool seems appropriate but the user's request is missing necessary arguments, **do not** generate the JSON. Instead, ask the user clarifying questions to obtain the missing information.\n")
+	promptBuilder.WriteString("**If** no tool is needed, respond naturally to the user.\n\n")
+	
+	promptBuilder.WriteString("Available Tools:\n")
 
 	for name, toolInfo := range c.discoveredTools {
 		promptBuilder.WriteString(fmt.Sprintf("\nTool Name: %s\n", name))
@@ -323,107 +306,13 @@ func (c *Client) generateToolPrompt() string {
 		}
 	}
 
-	promptBuilder.WriteString("\nJSON Format for Tool Call:\n")
+	promptBuilder.WriteString("\nJSON Format for Tool Call (use ONLY if tool is needed AND all arguments are available):\n")
 	promptBuilder.WriteString("{\n")
 	promptBuilder.WriteString("  \"tool\": \"<tool_name>\",\n")
 	promptBuilder.WriteString("  \"args\": { <arguments matching the tool's input schema> }\n")
 	promptBuilder.WriteString("}\n")
 
 	return promptBuilder.String()
-}
-
-// handleOllamaPrompt sends the user's text to the Ollama API and posts the response.
-func (c *Client) handleOllamaPrompt(userPrompt, channelID, threadTS string) {
-	c.log.Printf("Sending prompt to Ollama (Model: %s): %s", c.ollamaModelName, userPrompt)
-	
-	// Add conversation context
-	conversationContext := c.getContextFromHistory(channelID)
-	fullPrompt := userPrompt
-	if conversationContext != "" {
-		fullPrompt = fmt.Sprintf("%s\n\nCurrent question: %s", conversationContext, userPrompt)
-	}
-
-	// Generate the system prompt with tool info
-	systemPrompt := c.generateToolPrompt()
-	if systemPrompt != "" {
-		c.log.Printf("Adding system prompt with tool instructions")
-	} else {
-		c.log.Printf("No tools available, not adding tool system prompt.")
-	}
-
-	// Add "typing" indicator
-	c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS))
-
-	// Prepare the request payload
-	reqPayload := ollamaRequest{
-		Model:   c.ollamaModelName,
-		Prompt:  fullPrompt,
-		System:  systemPrompt, // Include the system prompt
-		Stream:  false,
-		Options: map[string]interface{}{"temperature": 0.7, "num_predict": 1024}, // Using Options map
-	}
-	
-	reqBody, err := json.Marshal(reqPayload)
-	if err != nil {
-		c.log.Printf("Error marshalling Ollama request payload: %v", err)
-		c.postMessage(channelID, threadTS, "Sorry, there was an internal error preparing your request.")
-		return
-	}
-
-	// Create the HTTP request
-	ctx, cancel := context.WithTimeout(context.Background(), c.httpClient.Timeout)
-	defer cancel()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.ollamaEndpoint, bytes.NewBuffer(reqBody))
-	if err != nil {
-		c.log.Printf("Error creating Ollama HTTP request: %v", err)
-		c.postMessage(channelID, threadTS, "Sorry, there was an internal error preparing your request.")
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json") // Ollama responds with JSON
-
-	// Send the request to the Ollama server
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		c.log.Printf("Error sending request to Ollama server at %s: %v", c.ollamaEndpoint, err)
-		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I couldn't reach the Ollama server. Please ensure it's running and accessible. Error: %v", err))
-		return
-	}
-	defer httpResp.Body.Close()
-
-	// Read the response body
-	respBodyBytes, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		c.log.Printf("Error reading Ollama response body: %v", err)
-		c.postMessage(channelID, threadTS, "Sorry, there was an error reading the response from the Ollama server.")
-		return
-	}
-
-	// Check response status code
-	if httpResp.StatusCode != http.StatusOK {
-		c.log.Printf("Ollama server returned non-OK status: %s. Body: %s", httpResp.Status, string(respBodyBytes))
-		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, the Ollama server returned an error (Status: %s). Response: ```%s```", httpResp.Status, string(respBodyBytes)))
-		return
-	}
-
-	// Parse the JSON response from Ollama
-	var ollamaResp ollamaResponse
-	if err := json.Unmarshal(respBodyBytes, &ollamaResp); err != nil {
-		c.log.Printf("Error parsing Ollama JSON response: %v. Body: %s", err, string(respBodyBytes))
-		c.postMessage(channelID, threadTS, "Sorry, I received an unexpected response format from the Ollama server.")
-		return
-	}
-
-	if !ollamaResp.Done {
-		c.log.Printf("Warning: Ollama response indicated 'done: false', but we expected a complete response (stream: false). Response: %s", ollamaResp.Response)
-		// Proceed anyway, but this might indicate an issue or incomplete response
-	}
-
-	ollamaGeneratedText := strings.TrimSpace(ollamaResp.Response)
-	c.log.Printf("Received response from Ollama. Length: %d", len(ollamaGeneratedText))
-
-	// Process the LLM response through the MCP pipeline
-	c.processLLMResponseAndReply(ollamaGeneratedText, userPrompt, channelID, threadTS)
 }
 
 // OpenAI API request and response structures
@@ -455,7 +344,7 @@ type openaiResponse struct {
 
 // handleOpenAIPrompt sends the user's text to the OpenAI API and posts the response.
 func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
-	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.openaiModelName, userPrompt)
+	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.cfg.OpenAIModelName, userPrompt)
 	
 	// Add "typing" indicator
 	c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS))
@@ -499,7 +388,7 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 
 	// Prepare the request payload
 	reqPayload := openaiRequest{
-		Model:       c.openaiModelName,
+		Model:       c.cfg.OpenAIModelName,
 		Messages:    messages,
 		Temperature: 0.7,  
 		MaxTokens:   2048, 
@@ -614,37 +503,20 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 		// Construct a new prompt incorporating the original prompt and the tool result
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a concise and helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
 
-		// Call the appropriate LLM handler AGAIN with the re-prompt
-		// NOTE: This is a simplified re-prompt. It doesn't include previous history or the system prompt again.
-		// A more robust implementation might need a dedicated re-prompt function.
-		
-		// Add assistant's previous turn (the tool call JSON) and the tool result to history 
-		// before calling LLM again
-		c.addToHistory(channelID, "assistant", llmResponse) // Add the JSON tool call itself
-		c.addToHistory(channelID, "tool", finalResponse) // Add the tool result (might need a 'tool' role)
+		// Add history
+		c.addToHistory(channelID, "assistant", llmResponse) 
+		c.addToHistory(channelID, "tool", finalResponse) 
 
 		c.log.Printf("DEBUG: Re-prompting LLM with: %s", rePrompt)
 		
-		if c.llmProvider == "ollama" {
-			// Call Ollama again (need to adapt handleOllamaPrompt or create a helper)
-			// For simplicity here, let's just log and maybe return the raw result for now
-			c.log.Printf("TODO: Re-implement Ollama re-prompt call") 
-			finalResponse = fmt.Sprintf("Tool Result:\n```%s```", finalResponse) // Temporary: show raw result
-			// Ideally: call handleOllamaPrompt(rePrompt, channelID, threadTS) - but this would cause a loop
-			// Need to refactor LLM call logic to handle re-prompting without infinite loops.
-		} else { // openai
-			// Call OpenAI again (need to adapt handleOpenAIPrompt or create a helper)
-			c.log.Printf("TODO: Re-implement OpenAI re-prompt call") 
-			finalResponse = fmt.Sprintf("Tool Result:\n```%s```", finalResponse) // Temporary: show raw result
-		}
-		// After the LLM call completes, 'finalResponse' would be updated with the LLM's summary.
-		// For now, we are just showing the raw tool result as a placeholder.
+		// Always assume OpenAI path for re-prompting (or handle generic re-prompt)
+		c.log.Printf("TODO: Re-implement OpenAI re-prompt call") 
+		finalResponse = fmt.Sprintf("Tool Result:\n```%s```", finalResponse) // Temporary: show raw result
 		
 	} else {
-		// No tool was executed, or bridge failed. Add the assistant's response to history.
+		// No tool was executed, add assistant response to history
 		c.addToHistory(channelID, "assistant", finalResponse)
 	}
-
 
 	// Send the final response back to Slack
 	if finalResponse == "" {
