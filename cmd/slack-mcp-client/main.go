@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/tuannvm/slack-mcp-client/internal/config"
-	"github.com/tuannvm/slack-mcp-client/internal/logger"
+	"github.com/tuannvm/slack-mcp-client/internal/common"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
-	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
 
-// ToolInfo definition is moved to internal/types/types.go
+// ToolInfo definition is moved to internal/common/types.go
 
 var (
 	// Define command-line flags
@@ -32,24 +32,13 @@ var (
 func main() {
 	flag.Parse()
 
-	// Setup logging with our custom logger
-	logFlags := log.LstdFlags | log.Lshortfile
+	// Setup logging with structured logger
+	logLevel := logging.LevelInfo
 	if *debug {
-		logFlags |= log.Lmicroseconds
+		logLevel = logging.LevelDebug
 	}
 	
-	// Create logger options
-	loggerOptions := logger.LoggerOptions{
-		EnableColors: true,
-		MinLevel:     logger.LevelInfo,
-	}
-	
-	// Set minimum log level based on debug flag
-	if *debug {
-		loggerOptions.MinLevel = logger.LevelDebug
-	}
-	
-	appLogger := logger.NewWithOptions(os.Stdout, "slack-mcp-client: ", logFlags, loggerOptions)
+	appLogger := logging.New("slack-mcp-client", logLevel)
 	appLogger.Info("Starting Slack MCP Client (debug=%v)", *debug)
 
 	// Load configuration
@@ -83,7 +72,7 @@ func main() {
 
 	// Initialize MCP Clients and Discover Tools Sequentially
 	mcpClients := make(map[string]*mcp.Client)
-	allDiscoveredTools := make(map[string]types.ToolInfo) // Map: toolName -> types.ToolInfo
+	allDiscoveredTools := make(map[string]common.ToolInfo) // Map: toolName -> common.ToolInfo
 	failedServers := []string{}
 	initializedClientCount := 0
 
@@ -98,7 +87,7 @@ func main() {
 		}
 
 		// Create a component-specific logger for this server
-		serverLogger := appLogger.WithComponent(serverName)
+		serverLogger := appLogger.WithName(serverName)
 
 		// Determine mode
 		mode := strings.ToLower(serverConf.Mode)
@@ -115,7 +104,7 @@ func main() {
 
 		// Create dedicated logger for this MCP client
 		// Continue using standard logger for MCP clients for now, as they expect *log.Logger
-		mcpLoggerStd := log.New(os.Stdout, fmt.Sprintf("mcp-%s: ", strings.ToLower(serverName)), logFlags)
+		mcpLoggerStd := log.New(os.Stdout, fmt.Sprintf("mcp-%s: ", strings.ToLower(serverName)), log.LstdFlags)
 
 		// --- 1. Create Client Instance ---
 		var mcpClient *mcp.Client
@@ -150,7 +139,7 @@ func main() {
 		serverLogger.Info("Successfully created MCP client instance")
 
 		// Defer client closure immediately after successful creation
-		defer func(name string, client *mcp.Client, sLogger *logger.Logger) {
+		defer func(name string, client *mcp.Client, sLogger *logging.Logger) {
 			if client != nil {
 				sLogger.Info("Closing MCP client")
 				client.Close()
@@ -209,8 +198,8 @@ func main() {
 					}
 				}
 
-				// Use types.ToolInfo
-				allDiscoveredTools[toolName] = types.ToolInfo{
+				// Use common.ToolInfo
+				allDiscoveredTools[toolName] = common.ToolInfo{
 					ServerName:  serverName,
 					Description: toolDef.Description,
 					InputSchema: inputSchemaMap,
@@ -255,13 +244,13 @@ func main() {
 	// slackAppLogger := logger.New(os.Stdout, "slack: ", logFlags, slackLoggerLevel)
 	
 	// Continue using standard logger for Slack client for now, as it expects *log.Logger
-	slackLogger := log.New(os.Stdout, "slack: ", logFlags)
+	slackLogger := log.New(os.Stdout, "slack: ", log.LstdFlags)
 	client, err := slackbot.NewClient(
 		cfg.SlackBotToken,
 		cfg.SlackAppToken,
 		slackLogger,
 		mcpClients,         // Pass the map of *initialized* clients
-		allDiscoveredTools, // Pass the map of types.ToolInfo
+		allDiscoveredTools, // Pass the map of common.ToolInfo
 		cfg,                // Pass the whole config object
 	)
 	if err != nil {
@@ -273,7 +262,7 @@ func main() {
 }
 
 // applyCommandLineOverrides applies command-line flags directly to the loaded config
-func applyCommandLineOverrides(logger *logger.Logger, cfg *config.Config) error {
+func applyCommandLineOverrides(logger *logging.Logger, cfg *config.Config) error {
 	// Provider is now forced to OpenAI earlier, so only check for OpenAI model override.
 	if *openaiModel != "" {
 		// Ensure the provider in config is actually OpenAI before overriding model
@@ -290,12 +279,12 @@ func applyCommandLineOverrides(logger *logger.Logger, cfg *config.Config) error 
 }
 
 // logLLMSettings logs the current LLM configuration
-func logLLMSettings(logger *logger.Logger, cfg *config.Config) {
+func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 	logger.Info("OpenAI Model: %s", cfg.OpenAIModelName)
 }
 
 // startSlackClient starts the Slack client and handles shutdown
-func startSlackClient(logger *logger.Logger, client *slackbot.Client) {
+func startSlackClient(logger *logging.Logger, client *slackbot.Client) {
 	logger.Info("Starting Slack client...")
 
 	// Start listening for Slack events in a separate goroutine

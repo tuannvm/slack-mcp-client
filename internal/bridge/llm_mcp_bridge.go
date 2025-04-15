@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/tuannvm/slack-mcp-client/internal/common"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
-	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
 
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
@@ -19,12 +19,12 @@ type LLMMCPBridge struct {
 	mcpClients     map[string]*mcp.Client // Map of MCP clients keyed by server name
 	primaryClient  *mcp.Client            // Default client for tool calls
 	logger         *log.Logger
-	// Use types.ToolInfo for the tool map
-	availableTools map[string]types.ToolInfo // Map of tool name to server name
+	// Use common.ToolInfo for the tool map
+	availableTools map[string]common.ToolInfo // Map of tool name to server name
 }
 
 // NewLLMMCPBridge creates a new bridge between LLM and MCP with pre-discovered tools.
-func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, discoveredTools map[string]types.ToolInfo) *LLMMCPBridge {
+func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
 	if logger == nil {
 		logger = log.New(log.Writer(), "LLM_MCP_BRIDGE: ", log.LstdFlags|log.Lshortfile)
 	}
@@ -44,7 +44,7 @@ func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, disc
 
 	// Log initialization details
 	if bridge.availableTools == nil {
-		bridge.availableTools = make(map[string]types.ToolInfo)
+		bridge.availableTools = make(map[string]common.ToolInfo)
 		logger.Printf("Initialized with %d MCP clients and NO pre-discovered tools.", len(mcpClients))
 	} else {
 		logger.Printf("Initialized with %d MCP clients and %d pre-discovered tools.", len(mcpClients), len(discoveredTools))

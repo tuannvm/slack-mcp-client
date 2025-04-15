@@ -18,9 +18,9 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/tuannvm/slack-mcp-client/internal/bridge"
+	"github.com/tuannvm/slack-mcp-client/internal/common"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
-	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
 
 // Client represents the Slack client application.
@@ -37,8 +37,8 @@ type Client struct {
 	// Message history for context (limited per channel)
 	messageHistory  map[string][]Message
 	historyLimit    int
-	// Use types.ToolInfo
-	discoveredTools map[string]types.ToolInfo
+	// Use common.ToolInfo
+	discoveredTools map[string]common.ToolInfo
 }
 
 // Message represents a message in the conversation history
@@ -50,7 +50,7 @@ type Message struct {
 
 // NewClient creates a new Slack client instance.
 func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, 
-               discoveredTools map[string]types.ToolInfo, cfg *config.Config) (*Client, error) {
+               discoveredTools map[string]common.ToolInfo, cfg *config.Config) (*Client, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
 	}

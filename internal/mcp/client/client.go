@@ -1,4 +1,4 @@
-package mcp
+package client
 
 import (
 	"context"
@@ -120,46 +120,6 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 	return wrapperClient, nil
 }
 
-// // monitorStdioProcess waits for the stdio process to exit and signals if it happens prematurely.
-// func (c *Client) monitorStdioProcess() {
-// 	 c.log.Printf("DEBUG: [%s] Starting stdio process monitor", c.serverAddr)
-// 	 exitErr := c.stdioCmd.Wait()
-// 	 c.closeMu.Lock()
-// 	 // Check if Close() has already been called and closed the channel
-// 	 select {
-// 	 case <-c.stdioExited:
-// 	 	 // Already closed by Close(), expected exit
-// 	 	 c.log.Printf("DEBUG: [%s] Stdio process monitor detected expected exit (err: %v)", c.serverAddr, exitErr)
-// 	 default:
-// 	 	 // Not closed yet, means premature exit
-// 	 	 c.log.Printf("ERROR: [%s] Stdio process exited prematurely! Error: %v", c.serverAddr, exitErr)
-// 	 	 c.stdioExitErr = exitErr
-// 	 	 if c.stdioExitErr == nil {
-// 	 	 	 c.stdioExitErr = fmt.Errorf("stdio process exited prematurely without error")
-// 	 	 }
-// 	 	 close(c.stdioExited) // Signal premature exit
-// 	 }
-// 	 c.closeMu.Unlock()
-// }
-
-// // Helper to check if the stdio process has exited prematurely
-// func (c *Client) didStdioExitPrematurely() error {
-// 	 if c.stdioCmd == nil { // Not a stdio client
-// 	 	 return nil
-// 	 }
-// 	 select {
-// 	 case <-c.stdioExited:
-// 	 	 c.log.Printf("DEBUG: [%s] Detected premature exit signal", c.serverAddr)
-// 	 	 if c.stdioExitErr != nil {
-// 	 	 	 return fmt.Errorf("stdio process exited prematurely: %w", c.stdioExitErr)
-// 	 	 }
-// 	 	 return fmt.Errorf("stdio process exited prematurely")
-// 	 default:
-// 	 	 // Not exited prematurely
-// 	 	 return nil
-// 	 }
-// }
-
 // StartListener connects to the MCP server and listens for events.
 // This should be run in a goroutine.
 func (c *Client) StartListener(ctx context.Context) error {
@@ -173,11 +133,6 @@ func (c *Client) StartListener(ctx context.Context) error {
 // Initialize explicitly initializes the MCP client.
 // This should be called before making any tool calls.
 func (c *Client) Initialize(ctx context.Context) error {
-	// // Check for premature exit first (only relevant for stdio)
-	// if err := c.didStdioExitPrematurely(); err != nil {
-	// 	return fmt.Errorf("cannot initialize: %w", err)
-	// }
-
 	if c.client == nil {
 		return fmt.Errorf("MCP client is nil")
 	}
@@ -231,11 +186,6 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 // CallTool delegates the tool call to the official MCP client.
 func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
-	// // Check for premature exit first (only relevant for stdio)
-	// if err := c.didStdioExitPrematurely(); err != nil {
-	// 	return "", fmt.Errorf("cannot call tool: %w", err)
-	// }
-
 	if c.client == nil {
 		return "", fmt.Errorf("MCP client reference is nil")
 	}
@@ -300,11 +250,6 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 // GetAvailableTools retrieves the list of available tools from the MCP server.
 // It now returns the full ListToolsResult to include schema information.
 func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, error) {
-	// // Check for premature exit first (only relevant for stdio)
-	// if err := c.didStdioExitPrematurely(); err != nil {
-	// 	return nil, fmt.Errorf("cannot get tools: %w", err)
-	// }
-
 	c.log.Printf("Attempting to get available tools from %s", c.serverAddr)
 
 	// Ensure the client is initialized. Attempt once with a longer timeout if not.
@@ -525,5 +470,4 @@ func (c *Client) runNetworkDiagnostics(ctx context.Context, serverAddr string) e
 	
 	c.log.Printf("Diagnostics complete for %s", serverAddr)
 	return nil
-}
-
+} 

@@ -1,4 +1,4 @@
-package types
+package common
 
 // ToolInfo holds detailed information about a discovered tool
 type ToolInfo struct {

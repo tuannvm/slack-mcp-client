@@ -283,3 +283,33 @@ To complete the restructuring, the following tasks should be undertaken:
    - Implement trace context propagation
 
 This new architecture provides a solid foundation for future development and ensures the long-term sustainability of the Slack MCP Client.
+
+## Code Duplication Removal
+
+As part of the restructuring, several duplicated components have been identified and removed:
+
+1. **Removed Duplicate Documentation**:
+   - `RESTRUCTURING.md` was merged into `implementation.md` to maintain a single source of documentation
+
+2. **Consolidated Logging System**:
+   - Removed the older logger implementation in `internal/logger`
+   - Standardized on the structured logger in `internal/common/logging`
+   - Updated all imports and function signatures across the codebase
+
+3. **Consolidated LLM Handlers**:
+   - Removed duplicate LLM handler implementations in `internal/llms` 
+   - Standardized on the handler-based implementation in `internal/handlers/llm`
+
+4. **Server Implementation Consolidation**:
+   - Removed the old server implementation in `internal/mcp/server.go`
+   - Now using the new implementation from `internal/server/server.go`
+   - Created a thin re-export layer in `internal/mcp/server.go` for backward compatibility
+   - This maintains the public API while using the new internal structure
+
+5. **Client Implementation Relocation**:
+   - Moved the client implementation from `internal/mcp/client.go` to `internal/client/client.go`
+   - Updated the package name from `mcp` to `client` for consistency
+   - Added re-export in `internal/mcp/server.go` to maintain backward compatibility
+   - The client still uses the current implementation but is now in the correct package structure
+
+By removing these duplications, the codebase is now more maintainable, with clear responsibilities for each component and a consistent approach to common concerns like logging, error handling, and HTTP requests.
