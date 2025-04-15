@@ -25,11 +25,11 @@ const defaultOllamaAPIEndpoint = "http://localhost:11434/api/generate"
 
 // Config holds the application configuration.
 type Config struct {
-	SlackBotToken    string         `json:"-"` // Loaded from env
-	SlackAppToken    string         `json:"-"` // Loaded from env
-	OllamaAPIEndpoint string         `json:"-"` // Loaded from env, with default
-	OllamaModelName  string         `json:"-"` // Loaded from env
-	Servers          []ServerConfig `json:"servers"` // Loaded from JSON config file
+	SlackBotToken     string                     `json:"-"` // Loaded from env
+	SlackAppToken     string                     `json:"-"` // Loaded from env
+	OllamaAPIEndpoint string                     `json:"-"` // Loaded from env, with default
+	OllamaModelName   string                     `json:"-"` // Loaded from env
+	Servers           map[string]ServerConfig    `json:"servers"` // Map of server configs by name
 }
 
 // LoadConfig loads configuration from environment variables and a JSON file.
@@ -44,11 +44,11 @@ func LoadConfig(configFilePath string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		SlackBotToken:    os.Getenv("SLACK_BOT_TOKEN"),
-		SlackAppToken:    os.Getenv("SLACK_APP_TOKEN"),
+		SlackBotToken:     os.Getenv("SLACK_BOT_TOKEN"),
+		SlackAppToken:     os.Getenv("SLACK_APP_TOKEN"),
 		OllamaAPIEndpoint: ollamaEndpoint,
-		OllamaModelName:  os.Getenv("OLLAMA_MODEL"),
-		Servers:          []ServerConfig{}, // Initialize empty slice
+		OllamaModelName:   os.Getenv("OLLAMA_MODEL"),
+		Servers:           make(map[string]ServerConfig), // Initialize empty map
 	}
 
 	if cfg.SlackBotToken == "" {
@@ -71,68 +71,39 @@ func LoadConfig(configFilePath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to read config file '%s': %w", configFilePath, err)
 	}
 
-	// First try to unmarshal using the new schema with mcpServers
-	var servers []ServerConfig
-
-	// Try the new format first (mcpServers object)
-	tempConfigNew := struct {
+	// Try the new format with mcpServers object
+	tempConfig := struct {
 		McpServers map[string]ServerConfig `json:"mcpServers"`
 	}{}
 
-	err = json.Unmarshal(configFileBytes, &tempConfigNew)
-	if err == nil && len(tempConfigNew.McpServers) > 0 {
-		// Convert the map to a slice of ServerConfig
-		for name, server := range tempConfigNew.McpServers {
-			// Set the name field from the map key
-			server.Name = name
-			servers = append(servers, server)
-		}
-	} else {
-		// Fall back to the old format (servers array)
-		tempConfigOld := struct {
-			Servers []ServerConfig `json:"servers"`
-		}{}
-
-		err = json.Unmarshal(configFileBytes, &tempConfigOld)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse JSON config file '%s': %w", configFilePath, err)
-		}
-
-		servers = tempConfigOld.Servers
+	if err := json.Unmarshal(configFileBytes, &tempConfig); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON config file '%s': %w", configFilePath, err)
 	}
 
-	// Validate loaded server configurations
-	if len(servers) == 0 {
-		return nil, fmt.Errorf("no servers defined in config file '%s'", configFilePath)
+	// No servers defined in config file
+	if len(tempConfig.McpServers) == 0 {
+		return nil, fmt.Errorf("no MCP servers defined in config file '%s'", configFilePath)
 	}
 
-	serverNames := make(map[string]bool)
-	for i, server := range servers {
+	// Process and validate each server
+	for name, server := range tempConfig.McpServers {
 		// Skip disabled servers
 		if server.Disabled {
 			continue
 		}
 
-		if server.Name == "" {
-			return nil, fmt.Errorf("server definition at index %d in '%s' is missing a 'name'", i, configFilePath)
-		}
-		if serverNames[server.Name] {
-			return nil, fmt.Errorf("duplicate server name '%s' found in '%s'", server.Name, configFilePath)
-		}
-		serverNames[server.Name] = true
-
-		// For new schema servers, derive mode and address from command/env if needed
+		// Set the name from the key in the map
+		server.Name = name
+		
+		// For stdio mode servers, derive mode and address from command/env if needed
 		if server.Command != "" {
 			// If mode is not set but we have a command, default to stdio mode
 			if server.Mode == "" {
 				server.Mode = "stdio"
+				server.Address = server.Command
 			}
-			
-			// Always set the address to the command for the stdio mode
-			// This ensures backward compatibility with the main.go file
-			server.Address = server.Command
 		} else if server.Address == "" {
-			return nil, fmt.Errorf("server '%s' in '%s' is missing both 'command' and 'address'", server.Name, configFilePath)
+			return nil, fmt.Errorf("server '%s' in '%s' is missing both 'command' and 'address'", name, configFilePath)
 		}
 
 		// Check for mode
@@ -141,19 +112,27 @@ func LoadConfig(configFilePath string) (*Config, error) {
 			if mcpMode, exists := server.Env["MCP_MODE"]; exists && mcpMode != "" {
 				server.Mode = mcpMode
 			} else {
-				return nil, fmt.Errorf("server '%s' in '%s' is missing a 'mode'", server.Name, configFilePath)
+				// Default to stdio if not specified
+				server.Mode = "stdio"
 			}
 		}
 
+		// Validate mode
 		switch server.Mode {
 		case "http", "sse", "stdio":
 			// Valid mode
 		default:
-			return nil, fmt.Errorf("server '%s' in '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'", server.Name, configFilePath, server.Mode)
+			return nil, fmt.Errorf("server '%s' in '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'", name, configFilePath, server.Mode)
 		}
+
+		// Add the validated server to the config
+		cfg.Servers[name] = server
 	}
 
-	cfg.Servers = servers // Assign validated servers to the main config
+	// Ensure we have at least one enabled server
+	if len(cfg.Servers) == 0 {
+		return nil, fmt.Errorf("no enabled MCP servers found in config file '%s'", configFilePath)
+	}
 
 	return cfg, nil
 }

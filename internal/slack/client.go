@@ -18,7 +18,7 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/tuannvm/slack-mcp-client/internal/bridge"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use your actual module path
+	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
 
 // Ollama API Request Structure
@@ -54,10 +54,22 @@ type Client struct {
 	ollamaEndpoint  string // Ollama API endpoint (e.g., http://host:port/api/generate)
 	ollamaModelName string // Name of the Ollama model to use
 	httpClient      *http.Client // HTTP client for Ollama communication
+	// Message history for context (limited per channel)
+	messageHistory  map[string][]Message
+	historyLimit    int
+	// Map of available tools to their server names
+	discoveredTools map[string]string
+}
+
+// Message represents a message in the conversation history
+type Message struct {
+	Role      string    // "user" or "assistant"
+	Content   string    // The message content
+	Timestamp time.Time // When the message was sent/received
 }
 
 // NewClient creates a new Slack client instance configured to talk to an Ollama server.
-func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, ollamaAPIEndpoint, ollamaModelName string) (*Client, error) {
+func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]string, ollamaAPIEndpoint, ollamaModelName string) (*Client, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
 	}
@@ -103,21 +115,21 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		Timeout: 3 * time.Minute, // Increased timeout for potentially long LLM calls
 	}
 
-	// Create the client instance
-	// Initialize the LLM-MCP bridge with the first available MCP client
-	var llmMCPBridge *bridge.LLMMCPBridge
-	if len(mcpClients) > 0 {
-		// Use the first MCP client for the bridge (preferably the filesystem client)
-		var firstMCPClient *mcp.Client
-		for _, client := range mcpClients {
-			firstMCPClient = client
-			break
-		}
-		llmMCPBridge = bridge.NewLLMMCPBridge(firstMCPClient, logger)
-		logger.Printf("LLM-MCP bridge initialized with MCP client")
-	} else {
-		logger.Printf("Warning: No MCP clients available for LLM-MCP bridge")
+	// List available MCP servers
+	logger.Printf("Available MCP servers (%d):", len(mcpClients))
+	for name := range mcpClients {
+		logger.Printf("- %s", name)
 	}
+	
+	// Report discovered tools
+	logger.Printf("Available tools (%d):", len(discoveredTools))
+	for toolName, serverName := range discoveredTools {
+		logger.Printf("- %s (from server: %s)", toolName, serverName)
+	}
+	
+	// Initialize the LLM-MCP bridge with all available MCP clients and discovered tools
+	llmMCPBridge := bridge.NewLLMMCPBridge(mcpClients, logger, discoveredTools)
+	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
 	return &Client{
 		log:             logger,
@@ -130,6 +142,9 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		ollamaEndpoint:  ollamaAPIEndpoint,
 		ollamaModelName: ollamaModelName,
 		httpClient:      httpClient,
+		messageHistory:  make(map[string][]Message),
+		historyLimit:    10, // Store the last 10 messages per channel
+		discoveredTools: discoveredTools,
 	}, nil
 }
 
@@ -175,6 +190,8 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 		case *slackevents.AppMentionEvent:
 			c.log.Printf("Received app mention in channel %s from user %s: %s", ev.Channel, ev.User, ev.Text)
 			messageText := c.botMentionRgx.ReplaceAllString(ev.Text, "")
+			 // Add to message history
+			c.addToHistory(ev.Channel, "user", messageText)
 			// Use handleUserPrompt for app mentions too, for consistency
 			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp)
 
@@ -186,6 +203,8 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.log.Printf("Received direct message in channel %s from user %s: %s", ev.Channel, ev.User, ev.Text)
+				// Add to message history
+				c.addToHistory(ev.Channel, "user", ev.Text)
 				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp) // Use goroutine to avoid blocking event loop
 			} else if !isDirectMessage {
 				// Log other messages if needed, but don't process
@@ -199,17 +218,77 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 	}
 }
 
+// addToHistory adds a message to the channel history
+func (c *Client) addToHistory(channelID, role, content string) {
+	history, exists := c.messageHistory[channelID]
+	if !exists {
+		history = []Message{}
+	}
+	
+	// Add the new message
+	message := Message{
+		Role:      role,
+		Content:   content,
+		Timestamp: time.Now(),
+	}
+	history = append(history, message)
+	
+	// Limit history size
+	if len(history) > c.historyLimit {
+		history = history[len(history)-c.historyLimit:]
+	}
+	
+	c.messageHistory[channelID] = history
+}
+
+// getContextFromHistory builds a context string from message history
+func (c *Client) getContextFromHistory(channelID string) string {
+	history, exists := c.messageHistory[channelID]
+	if !exists || len(history) == 0 {
+		return ""
+	}
+	
+	var context strings.Builder
+	context.WriteString("Previous conversation:\n")
+	
+	for _, msg := range history {
+		prefix := "User"
+		if msg.Role == "assistant" {
+			prefix = "Assistant"
+		}
+		context.WriteString(fmt.Sprintf("%s: %s\n", prefix, msg.Content))
+	}
+	
+	return context.String()
+}
+
 // handleUserPrompt sends the user's text to the Ollama API and posts the response.
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	c.log.Printf("Sending prompt to Ollama (Model: %s): %s", c.ollamaModelName, userPrompt)
+	
+	// Add conversation context if available
+	conversationContext := c.getContextFromHistory(channelID)
+	fullPrompt := userPrompt
+	if conversationContext != "" {
+		fullPrompt = fmt.Sprintf("%s\n\nCurrent question: %s", conversationContext, userPrompt)
+		c.log.Printf("Added conversation context (%d previous messages)", 
+			len(c.messageHistory[channelID])-1) // -1 because the current message is already in history
+	}
+
+	// Add a "typing" indicator while processing
+	c.api.PostMessage(
+		channelID,
+		slack.MsgOptionText("...", false),
+		slack.MsgOptionTS(threadTS),
+	)
 
 	// Prepare the request payload for Ollama /api/generate
 	reqPayload := ollamaRequest{
 		Model:       c.ollamaModelName,
-		Prompt:      userPrompt,
-		Stream:      false, // Request a single complete response
-		Temperature: 0.0,   // Set temperature to 0 for deterministic responses
-		MaxTokens:   1024,  // Limit max output tokens to 1024
+		Prompt:      fullPrompt, // Use the prompt with context
+		Stream:      false,      // Request a single complete response
+		Temperature: 0.7,        // Set moderate temperature for some creativity
+		MaxTokens:   1024,       // Limit max output tokens to 1024
 	}
 	reqBody, err := json.Marshal(reqPayload)
 	if err != nil {
@@ -288,6 +367,9 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 		finalResponse = ollamaGeneratedText
 	}
 
+	// Add assistant response to history
+	c.addToHistory(channelID, "assistant", finalResponse)
+
 	// Send the final response back to Slack
 	if finalResponse == "" {
 		c.postMessage(channelID, threadTS, "(Ollama returned an empty response)")
@@ -302,7 +384,23 @@ func (c *Client) postMessage(channelID, threadTS, text string) {
 		c.log.Println("Attempted to send empty message, skipping.")
 		return
 	}
-	_, _, err := c.api.PostMessage(
+	
+	// Delete "typing" indicator messages if any
+	// This is a simplistic approach - more sophisticated approaches might track message IDs
+	history, err := c.api.GetConversationHistory(&slack.GetConversationHistoryParameters{
+		ChannelID: channelID,
+		Limit:     10,
+	})
+	if err == nil && history != nil {
+		for _, msg := range history.Messages {
+			if msg.User == c.botUserID && msg.Text == "..." {
+				c.api.DeleteMessage(channelID, msg.Timestamp)
+				break // Just delete the most recent one
+			}
+		}
+	}
+	
+	_, _, err = c.api.PostMessage(
 		channelID,
 		slack.MsgOptionText(text, false),
 		slack.MsgOptionTS(threadTS),
