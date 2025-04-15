@@ -110,7 +110,7 @@ The client supports three transport modes that can be configured via the `MCP_MO
 
 To add a new MCP tool:
 
-1. Create a new tool definition in `internal/tools/`
+1. Create a new tool definition in `internal/llms/`
 2. Register the tool in `internal/mcp/server.go`
 3. Implement the tool call logic in the appropriate transport implementation
 

@@ -18,9 +18,9 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/tuannvm/slack-mcp-client/internal/bridge"
+	"github.com/tuannvm/slack-mcp-client/internal/common"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
-	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
 
 // Client represents the Slack client application.
@@ -37,8 +37,8 @@ type Client struct {
 	// Message history for context (limited per channel)
 	messageHistory  map[string][]Message
 	historyLimit    int
-	// Use types.ToolInfo
-	discoveredTools map[string]types.ToolInfo
+	// Use common.ToolInfo
+	discoveredTools map[string]common.ToolInfo
 }
 
 // Message represents a message in the conversation history
@@ -50,7 +50,7 @@ type Message struct {
 
 // NewClient creates a new Slack client instance.
 func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, 
-               discoveredTools map[string]types.ToolInfo, cfg *config.Config) (*Client, error) {
+               discoveredTools map[string]common.ToolInfo, cfg *config.Config) (*Client, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
 	}
@@ -271,6 +271,7 @@ func (c *Client) getContextFromHistory(channelID string) string {
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	// Log the provider value (will likely be OpenAI now)
 	c.log.Printf("DEBUG: handleUserPrompt - Configured LLM provider: '%s'", c.cfg.LLMProvider)
+	c.log.Printf("DEBUG: User prompt: '%s'", userPrompt)
 
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
@@ -286,10 +287,15 @@ func (c *Client) generateToolPrompt() string {
 	}
 
 	var promptBuilder strings.Builder
-	promptBuilder.WriteString("You have access to the following tools. Analyze the user's request to determine if a tool is needed.\n")
-	promptBuilder.WriteString("**If** a tool is appropriate and you can extract **all** required arguments from the user's request based on the tool's Input Schema, respond ONLY with a single JSON object matching the specified format. Do not include any other text, explanation, or conversational filler before or after the JSON object.\n")
-	promptBuilder.WriteString("**If** a tool seems appropriate but the user's request is missing necessary arguments, **do not** generate the JSON. Instead, ask the user clarifying questions to obtain the missing information.\n")
-	promptBuilder.WriteString("**If** no tool is needed, respond naturally to the user.\n\n")
+	promptBuilder.WriteString("You have access to the following tools. Analyze the user's request to determine if a tool is needed.\n\n")
+	
+	// Clear instructions on how to format the JSON response
+	promptBuilder.WriteString("TOOL USAGE INSTRUCTIONS:\n")
+	promptBuilder.WriteString("1. If a tool is appropriate AND you have ALL required arguments from the user's request, respond with ONLY the JSON object.\n")
+	promptBuilder.WriteString("2. The JSON MUST be properly formatted with no additional text before or after.\n")
+	promptBuilder.WriteString("3. Do NOT include explanations, markdown formatting, or extra text with the JSON.\n")
+	promptBuilder.WriteString("4. If any required arguments are missing, do NOT generate the JSON. Instead, ask the user for the missing information.\n")
+	promptBuilder.WriteString("5. If no tool is needed, respond naturally to the user's request.\n\n")
 	
 	promptBuilder.WriteString("Available Tools:\n")
 
@@ -306,11 +312,23 @@ func (c *Client) generateToolPrompt() string {
 		}
 	}
 
-	promptBuilder.WriteString("\nJSON Format for Tool Call (use ONLY if tool is needed AND all arguments are available):\n")
+	// Add example formats for clarity
+	promptBuilder.WriteString("\nEXACT JSON FORMAT FOR TOOL CALLS:\n")
 	promptBuilder.WriteString("{\n")
 	promptBuilder.WriteString("  \"tool\": \"<tool_name>\",\n")
 	promptBuilder.WriteString("  \"args\": { <arguments matching the tool's input schema> }\n")
-	promptBuilder.WriteString("}\n")
+	promptBuilder.WriteString("}\n\n")
+	
+	// Add a concrete example
+	promptBuilder.WriteString("EXAMPLE:\n")
+	promptBuilder.WriteString("If the user asks 'Show me the files in the current directory' and 'list_dir' is an available tool:\n")
+	promptBuilder.WriteString("{\n")
+	promptBuilder.WriteString("  \"tool\": \"list_dir\",\n")
+	promptBuilder.WriteString("  \"args\": { \"relative_workspace_path\": \".\" }\n")
+	promptBuilder.WriteString("}\n\n")
+	
+	// Emphasize again to help model handle this correctly
+	promptBuilder.WriteString("IMPORTANT: Return ONLY the raw JSON object with no explanations or formatting when using a tool.\n")
 
 	return promptBuilder.String()
 }
@@ -322,10 +340,11 @@ type openaiMessage struct {
 }
 
 type openaiRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openaiMessage `json:"messages"`
-	Temperature float64         `json:"temperature,omitempty"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
+	Model               string          `json:"model"`
+	Messages            []openaiMessage `json:"messages"`
+	Temperature         float64         `json:"temperature,omitempty"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
 }
 
 type openaiChoice struct {
@@ -386,13 +405,36 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 		Content: userPrompt,
 	})
 
-	// Prepare the request payload
+	// Prepare the basic request payload
 	reqPayload := openaiRequest{
-		Model:       c.cfg.OpenAIModelName,
-		Messages:    messages,
-		Temperature: 0.7,  
-		MaxTokens:   2048, 
+		Model:    c.cfg.OpenAIModelName,
+		Messages: messages,
 	}
+	
+	// DEBUG: Log detailed model information
+	c.log.Printf("DEBUG: Model name being used: '%s'", c.cfg.OpenAIModelName)
+	
+	// Use model-specific parameters
+	if strings.Contains(c.cfg.OpenAIModelName, "o3-") {
+		// o3 models require max_completion_tokens and don't support temperature
+		c.log.Printf("DEBUG: Detected o3 model - Using max_completion_tokens=2048 and NO temperature")
+		reqPayload.MaxCompletionTokens = 2048
+		// Temperature is intentionally omitted for o3 models
+	} else if strings.Contains(c.cfg.OpenAIModelName, "gpt-4o") {
+		// gpt-4o also requires max_completion_tokens
+		c.log.Printf("DEBUG: Detected gpt-4o model - Using max_completion_tokens=2048 and temperature=0.7")
+		reqPayload.MaxCompletionTokens = 2048
+		reqPayload.Temperature = 0.7
+	} else {
+		// Other models use max_tokens and temperature
+		c.log.Printf("DEBUG: Using standard parameters (max_tokens=2048, temperature=0.7)")
+		reqPayload.MaxTokens = 2048
+		reqPayload.Temperature = 0.7
+	}
+	
+	// Log the final request payload for debugging
+	payloadBytes, _ := json.MarshalIndent(reqPayload, "", "  ")
+	c.log.Printf("DEBUG: Final OpenAI request payload: %s", string(payloadBytes))
 	
 	reqBody, err := json.Marshal(reqPayload)
 	if err != nil {
@@ -465,6 +507,9 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS string) {
+	// Log the raw LLM response for debugging
+	c.log.Printf("DEBUG: Raw LLM response (first 500 chars): %s", truncateForLog(llmResponse, 500))
+	
 	// Process the LLM response through the LLM-MCP bridge to detect and execute tool calls
 	var finalResponse string
 	var isToolResult bool = false
@@ -484,6 +529,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 		} else if processedResponse != llmResponse {
 			// Bridge returned a different response, indicating a successful tool call
 			c.log.Printf("DEBUG: Bridge returned tool result. Length: %d", len(processedResponse))
+			c.log.Printf("DEBUG: Tool result (first 500 chars): %s", truncateForLog(processedResponse, 500))
 			finalResponse = processedResponse // This is the raw tool result
 			isToolResult = true
 		} else {
@@ -524,6 +570,14 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 	} else {
 		c.postMessage(channelID, threadTS, finalResponse)
 	}
+}
+
+// truncateForLog truncates a string for log output
+func truncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // postMessage sends a message back to Slack, replying in a thread if threadTS is provided.

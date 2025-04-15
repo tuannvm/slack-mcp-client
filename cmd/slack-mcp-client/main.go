@@ -13,12 +13,13 @@ import (
 	"time"
 
 	"github.com/tuannvm/slack-mcp-client/internal/config"
+	"github.com/tuannvm/slack-mcp-client/internal/common"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
-	"github.com/tuannvm/slack-mcp-client/internal/types"
 )
 
-// ToolInfo definition is moved to internal/types/types.go
+// ToolInfo definition is moved to internal/common/types.go
 
 var (
 	// Define command-line flags
@@ -31,58 +32,62 @@ var (
 func main() {
 	flag.Parse()
 
-	// Setup logging
-	logFlags := log.LstdFlags | log.Lshortfile
+	// Setup logging with structured logger
+	logLevel := logging.LevelInfo
 	if *debug {
-		logFlags |= log.Lmicroseconds
+		logLevel = logging.LevelDebug
 	}
-	logger := log.New(os.Stdout, "slack-mcp-client: ", logFlags)
-	logger.Printf("Starting Slack MCP Client (debug=%v)", *debug)
+	
+	appLogger := logging.New("slack-mcp-client", logLevel)
+	appLogger.Info("Starting Slack MCP Client (debug=%v)", *debug)
 
 	// Load configuration
 	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
-		logger.Fatalf("Failed to load configuration: %v", err)
+		appLogger.Fatal("Failed to load configuration: %v", err)
 	}
 
 	// Force provider to OpenAI in config loaded, as client only supports OpenAI directly now
 	if cfg.LLMProvider != config.ProviderOpenAI {
-		logger.Printf("Warning: Config/Env specified LLM provider '%s', but client is hardcoded for OpenAI. Forcing OpenAI.", cfg.LLMProvider)
+		appLogger.Warn("Config/Env specified LLM provider '%s', but client is hardcoded for OpenAI. Forcing OpenAI.", cfg.LLMProvider)
 		cfg.LLMProvider = config.ProviderOpenAI
 	}
 
 	// Apply command-line overrides AFTER loading config
-	if err := applyCommandLineOverrides(logger, cfg); err != nil {
-		logger.Fatalf("Error applying command-line flags: %v", err)
+	if err := applyCommandLineOverrides(appLogger, cfg); err != nil {
+		appLogger.Fatal("Error applying command-line flags: %v", err)
 	}
 
-	logger.Printf("Configuration loaded. Slack Bot Token Present: %t, Slack App Token Present: %t",
+	appLogger.Info("Configuration loaded. Slack Bot Token Present: %t, Slack App Token Present: %t",
 		cfg.SlackBotToken != "", cfg.SlackAppToken != "")
-	logger.Printf("Final LLM Provider: %s", cfg.LLMProvider) // Will always be OpenAI now
-	logLLMSettings(logger, cfg)
-	logger.Printf("MCP Servers Configured (in file): %d", len(cfg.Servers))
+	appLogger.Info("Final LLM Provider: %s", cfg.LLMProvider) // Will always be OpenAI now
+	logLLMSettings(appLogger, cfg)
+	appLogger.Info("MCP Servers Configured (in file): %d", len(cfg.Servers))
 
 	// If mcpDebug flag is set, enable library debug output
 	if *mcpDebug {
 		os.Setenv("MCP_DEBUG", "true")
-		logger.Printf("MCP_DEBUG environment variable set to true")
+		appLogger.Info("MCP_DEBUG environment variable set to true")
 	}
 
 	// Initialize MCP Clients and Discover Tools Sequentially
 	mcpClients := make(map[string]*mcp.Client)
-	allDiscoveredTools := make(map[string]types.ToolInfo) // Map: toolName -> types.ToolInfo
+	allDiscoveredTools := make(map[string]common.ToolInfo) // Map: toolName -> common.ToolInfo
 	failedServers := []string{}
 	initializedClientCount := 0
 
-	logger.Println("--- Starting MCP Client Initialization and Tool Discovery --- ")
+	appLogger.Info("--- Starting MCP Client Initialization and Tool Discovery --- ")
 	for serverName, serverConf := range cfg.Servers {
-		logger.Printf("Processing server: '%s'", serverName)
+		appLogger.Info("Processing server: '%s'", serverName)
 
 		// Skip disabled servers
 		if serverConf.Disabled {
-			logger.Printf("  Skipping disabled server '%s'", serverName)
+			appLogger.Info("  Skipping disabled server '%s'", serverName)
 			continue
 		}
+
+		// Create a component-specific logger for this server
+		serverLogger := appLogger.WithName(serverName)
 
 		// Determine mode
 		mode := strings.ToLower(serverConf.Mode)
@@ -92,89 +97,90 @@ func main() {
 			} else {
 				mode = "http"
 			}
-			logger.Printf("  WARNING: No mode specified for server '%s', defaulting to '%s'", serverName, mode)
+			serverLogger.Warn("No mode specified, defaulting to '%s'", mode)
 		} else {
-			logger.Printf("  Mode: '%s'", mode)
+			serverLogger.Debug("Mode: '%s'", mode)
 		}
 
 		// Create dedicated logger for this MCP client
-		mcpLogger := log.New(os.Stdout, fmt.Sprintf("mcp-%s: ", strings.ToLower(serverName)), logFlags)
+		// Continue using standard logger for MCP clients for now, as they expect *log.Logger
+		mcpLoggerStd := log.New(os.Stdout, fmt.Sprintf("mcp-%s: ", strings.ToLower(serverName)), log.LstdFlags)
 
 		// --- 1. Create Client Instance ---
 		var mcpClient *mcp.Client
 		var createErr error
 		if mode == "stdio" {
 			if serverConf.Command == "" {
-				logger.Printf("  ERROR: Skipping stdio server '%s': 'command' field is required.", serverName)
+				serverLogger.Error("Skipping stdio server: 'command' field is required")
 				failedServers = append(failedServers, serverName+"(create: missing command)")
 				continue
 			}
-			logger.Printf("  Creating stdio MCP client for command: '%s' with args: %v", serverConf.Command, serverConf.Args)
-			mcpClient, createErr = mcp.NewClient(mode, serverConf.Command, serverConf.Args, serverConf.Env, mcpLogger)
+			serverLogger.Info("Creating stdio MCP client for command: '%s' with args: %v", serverConf.Command, serverConf.Args)
+			mcpClient, createErr = mcp.NewClient(mode, serverConf.Command, serverConf.Args, serverConf.Env, mcpLoggerStd)
 		} else { // http or sse
 			address := serverConf.Address
 			if address == "" && serverConf.URL != "" {
-				logger.Printf("  Using 'url' field as address for %s server '%s': %s", mode, serverName, serverConf.URL)
+				serverLogger.Info("Using 'url' field as address: %s", serverConf.URL)
 				address = serverConf.URL
 			} else if address == "" {
-				logger.Printf("  ERROR: Skipping %s server '%s': No 'address' or 'url' specified.", mode, serverName)
+				serverLogger.Error("Skipping %s server: No 'address' or 'url' specified", mode)
 				failedServers = append(failedServers, serverName+"(create: missing address/url)")
 				continue
 			}
-			logger.Printf("  Creating %s MCP client for address: %s", mode, address)
-			mcpClient, createErr = mcp.NewClient(mode, address, nil, serverConf.Env, mcpLogger) // Pass nil for args
+			serverLogger.Info("Creating %s MCP client for address: %s", mode, address)
+			mcpClient, createErr = mcp.NewClient(mode, address, nil, serverConf.Env, mcpLoggerStd) // Pass nil for args
 		}
 
 		if createErr != nil {
-			logger.Printf("  ERROR: Failed to create MCP client instance for '%s': %v", serverName, createErr)
+			serverLogger.Error("Failed to create MCP client instance: %v", createErr)
 			failedServers = append(failedServers, serverName+"(create failed)")
 			continue // Cannot proceed with this server
 		}
-		logger.Printf("  Successfully created MCP client instance for '%s'", serverName)
+		serverLogger.Info("Successfully created MCP client instance")
 
 		// Defer client closure immediately after successful creation
-		defer func(name string, client *mcp.Client) {
+		defer func(name string, client *mcp.Client, sLogger *logging.Logger) {
 			if client != nil {
-				logger.Printf("Closing MCP client: %s", name)
+				sLogger.Info("Closing MCP client")
 				client.Close()
 			}
-		}(serverName, mcpClient)
+		}(serverName, mcpClient, serverLogger)
 
 		// --- 2. Initialize Client ---
 		initCtx, initCancel := context.WithTimeout(context.Background(), 1*time.Second)
-		logger.Printf("  Attempting to initialize MCP client '%s' (timeout: 1s)...", serverName)
+		serverLogger.Info("Attempting to initialize MCP client (timeout: 1s)...")
 		initErr := mcpClient.Initialize(initCtx)
 		initCancel()
 
 		if initErr != nil {
-			logger.Printf("  WARNING: Failed to initialize MCP client '%s': %v", serverName, initErr)
-			logger.Printf("  Client '%s' will not be used for tool discovery or execution.", serverName)
+			serverLogger.Warn("Failed to initialize MCP client: %v", initErr)
+			serverLogger.Warn("Client will not be used for tool discovery or execution")
 			failedServers = append(failedServers, serverName+"(initialize failed)")
 			continue // Cannot discover tools if init fails
 		}
-		logger.Printf("  MCP client '%s' successfully initialized.", serverName)
+		serverLogger.Info("MCP client successfully initialized")
 		mcpClients[serverName] = mcpClient // Store successfully initialized client
 		initializedClientCount++
 
 		// --- 3. Discover Tools ---
-		logger.Printf("  Discovering tools from '%s' (timeout: 20s)...", serverName)
+		serverLogger.Info("Discovering tools (timeout: 20s)...")
 		discoveryCtx, discoveryCancel := context.WithTimeout(context.Background(), 20*time.Second)
 		
 		listResult, toolsErr := mcpClient.GetAvailableTools(discoveryCtx)
 		discoveryCancel()
 
 		if toolsErr != nil {
-			logger.Printf("  WARNING: Failed to retrieve tools from initialized server '%s': %v", serverName, toolsErr)
+			serverLogger.Warn("Failed to retrieve tools: %v", toolsErr)
 			failedServers = append(failedServers, serverName+"(tool discovery failed)")
 			continue 
 		}
 
 		if listResult == nil || len(listResult.Tools) == 0 {
-			logger.Printf("  Warning: Server '%s' initialized but returned 0 tools.", serverName)
+			serverLogger.Warn("Server initialized but returned 0 tools")
 			continue
 		}
 
-		logger.Printf("  Discovered %d tools from server '%s'", len(listResult.Tools), serverName)
+		serverLogger.Info("Discovered %d tools", len(listResult.Tools))
 		for _, toolDef := range listResult.Tools {
 			toolName := toolDef.Name
 			if _, exists := allDiscoveredTools[toolName]; !exists {
@@ -182,105 +188,120 @@ func main() {
 				// Marshal the ToolInputSchema struct to JSON bytes
 				schemaBytes, err := json.Marshal(toolDef.InputSchema)
 				if err != nil {
-					logger.Printf("    ERROR: Failed to marshal input schema struct for tool '%s': %v", toolName, err)
+					serverLogger.Error("    Failed to marshal input schema struct for tool '%s': %v", toolName, err)
 					inputSchemaMap = make(map[string]interface{}) // Use empty map on error
 				} else {
 					// Unmarshal the JSON bytes into the map
 					if err := json.Unmarshal(schemaBytes, &inputSchemaMap); err != nil {
-						logger.Printf("    ERROR: Failed to unmarshal input schema JSON for tool '%s': %v", toolName, err)
+						serverLogger.Error("    Failed to unmarshal input schema JSON for tool '%s': %v", toolName, err)
 						inputSchemaMap = make(map[string]interface{}) // Use empty map on error
 					}
 				}
 
-				// Use types.ToolInfo
-				allDiscoveredTools[toolName] = types.ToolInfo{
+				// Use common.ToolInfo
+				allDiscoveredTools[toolName] = common.ToolInfo{
 					ServerName:  serverName,
 					Description: toolDef.Description,
 					InputSchema: inputSchemaMap,
 				}
 				if *mcpDebug {
-				    logger.Printf("    Stored tool: '%s' (Desc: %s, Schema: %v)", toolName, toolDef.Description, inputSchemaMap)
+				    serverLogger.Debug("Stored tool: '%s' (Desc: %s)", toolName, toolDef.Description)
+				    if *debug {
+				        // Only log the full schema if debug mode is enabled
+				        schemaJSON, _ := json.MarshalIndent(inputSchemaMap, "", "  ")
+				        serverLogger.Debug("Tool schema: %s", string(schemaJSON))
+				    }
 				}
 			} else {
 				existingInfo := allDiscoveredTools[toolName]
-				logger.Printf("  Warning: Tool '%s' is available from multiple servers ('%s' and '%s'). Using the first one found ('%s').",
+				serverLogger.Warn("Tool '%s' is available from multiple servers ('%s' and '%s'). Using the first one found ('%s').",
 					toolName, existingInfo.ServerName, serverName, existingInfo.ServerName)
 			}
 		}
 	}
-	logger.Println("--- Finished MCP Client Initialization and Tool Discovery --- ")
+	appLogger.Info("--- Finished MCP Client Initialization and Tool Discovery --- ")
 
 	// Log summary
-	logger.Printf("Successfully initialized %d MCP clients: %v", initializedClientCount, getMapKeys(mcpClients))
+	appLogger.Info("Successfully initialized %d MCP clients: %v", initializedClientCount, getMapKeys(mcpClients))
 	if len(failedServers) > 0 {
-		logger.Printf("Failed to fully initialize/get tools from %d servers: %v", len(failedServers), failedServers)
+		appLogger.Info("Failed to fully initialize/get tools from %d servers: %v", len(failedServers), failedServers)
 	}
-	logger.Printf("Total unique discovered tools across all initialized servers: %d", len(allDiscoveredTools))
+	appLogger.Info("Total unique discovered tools across all initialized servers: %d", len(allDiscoveredTools))
 
 	// Check if we have at least one usable client
 	if initializedClientCount == 0 {
-		logger.Fatalf("No MCP clients could be successfully initialized. Check configuration and server status.")
+		appLogger.Fatal("No MCP clients could be successfully initialized. Check configuration and server status.")
 	}
 	
 	// Initialize Slack Bot Client using the successfully initialized clients and discovered tools
-	slackLogger := log.New(os.Stdout, "slack: ", logFlags)
+	// Create a custom logger for the slack client
+	// Note: We'll fully integrate our custom logger with the Slack client in a future update
+	// For now we'll continue using the standard logger as it expects *log.Logger
+	// slackLoggerLevel := logger.LevelInfo
+	// if *debug {
+	//	slackLoggerLevel = logger.LevelDebug
+	// }
+	// slackAppLogger := logger.New(os.Stdout, "slack: ", logFlags, slackLoggerLevel)
+	
+	// Continue using standard logger for Slack client for now, as it expects *log.Logger
+	slackLogger := log.New(os.Stdout, "slack: ", log.LstdFlags)
 	client, err := slackbot.NewClient(
 		cfg.SlackBotToken,
 		cfg.SlackAppToken,
 		slackLogger,
 		mcpClients,         // Pass the map of *initialized* clients
-		allDiscoveredTools, // Pass the map of types.ToolInfo
+		allDiscoveredTools, // Pass the map of common.ToolInfo
 		cfg,                // Pass the whole config object
 	)
 	if err != nil {
-		logger.Fatalf("Failed to initialize Slack client: %v", err)
+		appLogger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
 	// Start the Slack client
-	startSlackClient(logger, client)
+	startSlackClient(appLogger, client)
 }
 
 // applyCommandLineOverrides applies command-line flags directly to the loaded config
-func applyCommandLineOverrides(logger *log.Logger, cfg *config.Config) error {
+func applyCommandLineOverrides(logger *logging.Logger, cfg *config.Config) error {
 	// Provider is now forced to OpenAI earlier, so only check for OpenAI model override.
 	if *openaiModel != "" {
 		// Ensure the provider in config is actually OpenAI before overriding model
 		// (This should always be true due to the check in main, but good for safety)
 		if cfg.LLMProvider == config.ProviderOpenAI {
-			logger.Printf("Overriding OpenAI model from command line: %s", *openaiModel)
+			logger.Info("Overriding OpenAI model from command line: %s", *openaiModel)
 			cfg.OpenAIModelName = *openaiModel
 		} else {
 			// This case should technically not be reachable anymore
-			logger.Printf("Warning: --openai-model flag provided, but configured provider is not OpenAI ('%s'). Flag ignored.", cfg.LLMProvider)
+			logger.Warn("Warning: --openai-model flag provided, but configured provider is not OpenAI ('%s'). Flag ignored.", cfg.LLMProvider)
 		}
 	} 
 	return nil // No errors
 }
 
 // logLLMSettings logs the current LLM configuration
-func logLLMSettings(logger *log.Logger, cfg *config.Config) {
-	logger.Printf("OpenAI Model: %s", cfg.OpenAIModelName)
+func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
+	logger.Info("OpenAI Model: %s", cfg.OpenAIModelName)
 }
 
 // startSlackClient starts the Slack client and handles shutdown
-func startSlackClient(logger *log.Logger, client *slackbot.Client) {
-	logger.Println("Starting Slack client...")
+func startSlackClient(logger *logging.Logger, client *slackbot.Client) {
+	logger.Info("Starting Slack client...")
 
 	// Start listening for Slack events in a separate goroutine
 	go func() {
 		if err := client.Run(); err != nil {
-			logger.Fatalf("Slack client error: %v", err)
+			logger.Fatal("Slack client error: %v", err)
 		}
 	}()
 
-	logger.Println("Slack MCP Client is now running. Press Ctrl+C to exit.")
+	logger.Info("Slack MCP Client is now running. Press Ctrl+C to exit.")
 
 	// Wait for termination signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigChan
 
-	logger.Printf("Received signal %v, shutting down...", sig)
+	logger.Info("Received signal %v, shutting down...", sig)
 	// Client closures are handled by defer statements
 }
 
