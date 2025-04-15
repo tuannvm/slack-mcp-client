@@ -162,6 +162,14 @@ func (b *LLMMCPBridge) detectNaturalLanguageToolRequest(userPrompt, llmResponse 
 		}
 	}
 
+	// Check for OpenAI requests
+	if params := b.detectOpenAIPattern(userPrompt, llmResponse); params != nil && b.isToolAvailable("openai") {
+		return &Tool{
+			Name: "openai",
+			Args: params,
+		}
+	}
+
 	// Check for GitHub repository operations if github tool is available
 	if repo := b.detectGitHubRepoPattern(userPrompt, llmResponse); repo != "" && b.isToolAvailable("github") {
 		return &Tool{
@@ -299,6 +307,49 @@ func (b *LLMMCPBridge) detectOllamaPattern(userPrompt, llmResponse string) *Olla
 	return nil
 }
 
+// detectOpenAIPattern detects OpenAI tool usage patterns
+func (b *LLMMCPBridge) detectOpenAIPattern(userPrompt, llmResponse string) map[string]interface{} {
+	// Check for explicit OpenAI requests in the user prompt
+	// Format: "use openai gpt-4 to <prompt>" or "ask openai: <prompt>"
+	openaiRegex := regexp.MustCompile(`(?i)(?:use|ask)\s+openai(?:\s+model)?\s*[:\s]?\s*([a-zA-Z0-9\-.]+)?\s+(?:to|about|:)?\s+(.+)`)
+	matches := openaiRegex.FindStringSubmatch(userPrompt)
+
+	if len(matches) > 2 {
+		model := strings.TrimSpace(matches[1])
+		if model == "" {
+			model = "gpt-4" // Default model if not specified
+		}
+		prompt := strings.TrimSpace(matches[2])
+		
+		b.logger.Printf("Detected OpenAI request: model=%s, prompt=%s", model, prompt)
+		
+		return map[string]interface{}{
+			"model": model,
+			"prompt": prompt,
+		}
+	}
+
+	// Check for JSON-formatted OpenAI requests in LLM response
+	jsonRegex := regexp.MustCompile(`\{[\s\S]*"model"[\s\S]*(?:"prompt"|"messages")[\s\S]*\}`)
+	match := jsonRegex.FindString(llmResponse)
+
+	if match != "" {
+		var params map[string]interface{}
+		if err := json.Unmarshal([]byte(match), &params); err == nil {
+			// Only return if we have a valid model and either prompt or messages
+			if modelVal, hasModel := params["model"].(string); hasModel && modelVal != "" {
+				if promptVal, hasPrompt := params["prompt"].(string); hasPrompt && promptVal != "" {
+					return params
+				} else if messagesVal, hasMessages := params["messages"]; hasMessages && messagesVal != nil {
+					return params
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 // executeToolCall executes a detected tool call
 func (b *LLMMCPBridge) executeToolCall(ctx context.Context, tool *Tool) (string, error) {
 	// Get the appropriate client for this tool
@@ -339,6 +390,8 @@ func (b *LLMMCPBridge) formatToolResult(toolName, result string) string {
 		return fmt.Sprintf("🔍 **GitHub Results**:\n```\n%s\n```", result)
 	case "ollama":
 		return fmt.Sprintf("🤖 **Ollama Results**:\n%s", result)
+	case "openai":
+		return fmt.Sprintf("🔮 **OpenAI Results**:\n%s", result)
 	default:
 		return fmt.Sprintf("**Tool Results (%s)**:\n%s", toolName, result)
 	}
