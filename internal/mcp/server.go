@@ -12,7 +12,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
-	"github.com/tuannvm/slack-mcp-client/internal/tools"
+	"github.com/tuannvm/slack-mcp-client/internal/llms"
 )
 
 // Server manages the MCP server endpoint.
@@ -53,7 +53,7 @@ func NewServer(cfg *config.Config, logger *log.Logger) (*Server, error) {
 			mcp.Description("Maximum number of tokens to generate"),
 		),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return tools.HandleOllamaTool(ctx, req, logger)
+		return llms.HandleOllamaTool(ctx, req, logger)
 	})
 	logger.Printf("Registered MCP tool: ollama")
 
@@ -66,7 +66,7 @@ func NewServer(cfg *config.Config, logger *log.Logger) (*Server, error) {
 		),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Pass the logger into the handler
-		return tools.HandleHelloTool(ctx, req, logger)
+		return llms.HandleHelloTool(ctx, req, logger)
 	})
 	logger.Printf("Registered MCP tool: hello")
 
