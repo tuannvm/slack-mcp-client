@@ -1,0 +1,174 @@
+name: Build & Verify Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".gitignore"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".gitignore"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write # Required for SLSA provenance
+  security-events: write # Required for uploading security results
+  pull-requests: read
+  checks: write
+
+env:
+  GO_VERSION: "1.24"
+  REGISTRY: ghcr.io
+
+jobs:
+  # Static analysis and code quality check
+  verify:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+          check-latest: true
+
+      - name: Install dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Check Go mod tidy
+        run: |
+          go mod tidy
+          if ! git diff --quiet go.mod go.sum; then
+            echo "go.mod or go.sum is not tidy, run 'go mod tidy'"
+            git diff go.mod go.sum
+            exit 1
+          fi
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: Check formatting
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "The following files are not formatted properly:"
+            gofmt -l .
+            exit 1
+          fi
+
+  # Security vulnerability scanning and SBOM generation
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run Go Vulnerability Check
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Run dependency scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM"
+          ignore-unfixed: true
+          timeout: "10m"
+
+      - name: Upload security scan results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Generate SBOM
+        uses: CycloneDX/gh-gomod-generate-sbom@v1
+        with:
+          version: v1
+          args: mod -licenses -json -output bom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: bom.json
+          retention-days: 30
+
+  # Run unit and integration tests with code coverage
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.txt
+          flags: unittests
+          fail_ci_if_error: false
+
+  # Simple build verification (for PRs and non-main branches)
+  build:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    needs: [verify, security]
+    # Only run for PRs or pushes to non-main branches
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref != 'refs/heads/main')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        run: go build -v ./... 

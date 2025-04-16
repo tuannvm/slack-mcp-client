@@ -1,18 +1,118 @@
-name: Release
+name: Release Pipeline
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_run:
+    workflows: ["Build & Verify Pipeline"]
+    branches: [main]
+    types:
+      - completed
 
 permissions:
   contents: write
   packages: write
-  id-token: write # Needed for SLSA provenance
+  issues: write
+  pull-requests: write
 
 jobs:
-  goreleaser:
-    name: Release with GoReleaser
+  semantic-release:
+    name: Semantic Release
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract_version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run semantic-release
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          semantic-release
+
+      - name: Extract version from git tag
+        id: extract_version
+        if: steps.semantic.outcome == 'success'
+        run: |
+          VERSION=$(git describe --tags --abbrev=0)
+          VERSION=${VERSION#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Released version: $VERSION"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        if: steps.extract_version.outcome == 'success'
+        with:
+          version: v1.18.2
+          distribution: goreleaser
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GORELEASER_CURRENT_TAG: v${{ steps.extract_version.outputs.version }}
+
+      # Fallback manual release in case of failure
+      - name: Build Binaries Manually (Fallback)
+        id: manual_build
+        if: failure() && steps.extract_version.outcome == 'success'
+        run: |
+          echo "GoReleaser may have failed, building binaries manually as fallback"
+          mkdir -p dist/binaries
+          GOOS=linux GOARCH=amd64 go build -o dist/binaries/slack-mcp-client-linux-amd64 ./cmd/slack-mcp-client
+          GOOS=darwin GOARCH=amd64 go build -o dist/binaries/slack-mcp-client-darwin-amd64 ./cmd/slack-mcp-client
+          GOOS=windows GOARCH=amd64 go build -o dist/binaries/slack-mcp-client-windows-amd64.exe ./cmd/slack-mcp-client
+          cd dist/binaries
+          tar -czf slack-mcp-client-linux-amd64.tar.gz slack-mcp-client-linux-amd64
+          tar -czf slack-mcp-client-darwin-amd64.tar.gz slack-mcp-client-darwin-amd64
+          zip slack-mcp-client-windows-amd64.zip slack-mcp-client-windows-amd64.exe
+          cd ../..
+          echo "manual_build=true" >> $GITHUB_OUTPUT
+
+      - name: Create Manual GitHub Release (Fallback)
+        if: steps.manual_build.outputs.manual_build == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: v${{ steps.extract_version.outputs.version }}
+          name: Release v${{ steps.extract_version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/binaries/slack-mcp-client-linux-amd64.tar.gz
+            dist/binaries/slack-mcp-client-darwin-amd64.tar.gz
+            dist/binaries/slack-mcp-client-windows-amd64.zip
+
+  # Build and publish Docker image with semantic version tags
+  publish-docker-image:
+    name: Publish Docker Image
+    needs: semantic-release
+    if: needs.semantic-release.outputs.version != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -23,41 +123,42 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.semantic-release.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.semantic-release.outputs.version }}
+            type=semver,pattern={{major}},value=v${{ needs.semantic-release.outputs.version }}
+            latest
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Generate SBOM
-        uses: CycloneDX/gh-gomod-generate-sbom@v1
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          version: v1
-          args: mod -licenses -json -output bom.json
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
         with:
-          distribution: goreleaser
-          version: latest
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
 
-      # SLSA provenance
-      - name: Generate SLSA provenance
-        uses: slsa-framework/slsa-github-generator@v1.9.0
-        with:
-          attestation-name: multiple
-          base64-subjects-file: checksums.txt.sha256
-          provenance-name: slsa-provenance.intoto.jsonl 
+env:
+  GO_VERSION: "1.24"
+  REGISTRY: ghcr.io 
