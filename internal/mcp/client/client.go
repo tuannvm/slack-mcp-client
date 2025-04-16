@@ -3,7 +3,6 @@ package client
 
 import (
 	"context"
-	//	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -25,12 +24,8 @@ type Client struct {
 	serverAddr  string
 	initialized bool // Track if the client has been successfully initialized
 
-	// Fields specific to stdio mode for monitoring the subprocess
-	stdioCmd     *exec.Cmd     // Store the command for stdio clients
-	stdioExited  chan struct{} // Closed when the stdio process exits prematurely
-	stdioExitErr error         //nolint:unused // Stores the exit error if premature
-	closeOnce    sync.Once     // Ensures close logic runs only once
-	closeMu      sync.Mutex    // Protects access during close
+	closeOnce sync.Once  // Ensures close logic runs only once
+	closeMu   sync.Mutex // Protects access during close
 }
 
 // NewClient creates a new MCP client handler.
@@ -43,81 +38,44 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 
 	logger.Printf("Creating new MCP client: mode='%s'", mode)
 
+	// Create underlying MCP client based on mode
+	modeLower := strings.ToLower(mode)
 	var mcpClient client.MCPClient
 	var err error
-	var stdioCmd *exec.Cmd // Variable to hold the command if stdio mode
-	clientMode := strings.ToLower(mode)
-
-	switch clientMode {
-	case "http", "sse": // Treat http and sse similarly for client creation
-		url := addressOrCommand
-		logger.Printf("Using SSEMCPClient for %s mode with URL: %s", clientMode, url)
-		mcpClient, err = client.NewSSEMCPClient(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create SSEMCPClient for %s: %w", url, err)
-		}
-
+	switch modeLower {
 	case "stdio":
-		command := addressOrCommand
-		logger.Printf("Using StdioMCPClient for stdio mode with command: '%s', args: %v", command, args)
-
-		// Construct the environment slice for the subprocess
+		// Build environment slice
 		processEnv := os.Environ()
 		envMap := make(map[string]string)
-		for _, entry := range processEnv {
-			parts := strings.SplitN(entry, "=", 2)
+		for _, e := range processEnv {
+			parts := strings.SplitN(e, "=", 2)
 			if len(parts) == 2 {
 				envMap[parts[0]] = parts[1]
 			}
 		}
-		for key, value := range env {
-			envMap[key] = value // Override or add from config
+		for k, v := range env {
+			envMap[k] = v
 		}
 		finalEnv := make([]string, 0, len(envMap))
-		for key, value := range envMap {
-			finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", key, value))
+		for k, v := range envMap {
+			finalEnv = append(finalEnv, fmt.Sprintf("%s=%s", k, v))
 		}
-
-		if len(env) > 0 {
-			logger.Printf("Passing %d specific environment variables to stdio process '%s'", len(env), command)
-		}
-
-		// Use the library function but capture the *exec.Cmd it creates indirectly
-		// We need to ensure the library function still gets called correctly.
-		// Unfortunately, the library's NewStdioMCPClient doesn't return the cmd.
-		// We might need to re-implement parts of NewStdioMCPClient here or modify the lib.
-		// For now, let's assume we *can* get the cmd somehow, or proceed knowing this is a limitation.
-
-		// *** Placeholder: Assuming we could get the cmd ***
-		// stdioCmd = createAndStartStdioCmd(command, finalEnv, args...)
-		// mcpClient, err = client.NewStdioMCPClientFromCmd(stdioCmd) // Hypothetical library change
-
-		// *** Sticking with the current library call ***
-		mcpClient, err = client.NewStdioMCPClient(command, finalEnv, args...)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create stdio client for command '%s': %w", command, err)
-		}
-		// PROBLEM: We cannot get the *exec.Cmd from the library's NewStdioMCPClient
-		// Therefore, we cannot implement the cmd.Wait() monitoring goroutine without library changes.
-		logger.Printf("WARNING: Cannot monitor stdio subprocess exit status without library modification to expose exec.Cmd.")
-
+		mcpClient, err = client.NewStdioMCPClient(addressOrCommand, finalEnv, args...)
+	case "http", "sse":
+		mcpClient, err = client.NewSSEMCPClient(addressOrCommand)
 	default:
-		return nil, fmt.Errorf("unsupported MCP mode: %s. Must be 'stdio', 'sse', or 'http'", mode)
+		return nil, fmt.Errorf("unsupported MCP mode: %s", mode)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create MCP client for %s: %w", addressOrCommand, err)
 	}
 
 	// Create the wrapper client
 	wrapperClient := &Client{
-		log:         logger,
-		client:      mcpClient,
-		serverAddr:  addressOrCommand,
-		stdioCmd:    stdioCmd,            // Will be nil if not stdio or if we couldn't get it
-		stdioExited: make(chan struct{}), // Initialize the channel
+		log:        logger,
+		client:     mcpClient,
+		serverAddr: addressOrCommand,
 	}
-
-	// // Start the monitoring goroutine ONLY if we have the stdioCmd
-	// if wrapperClient.stdioCmd != nil {
-	// 	go wrapperClient.monitorStdioProcess()
-	// }
 
 	return wrapperClient, nil
 }
@@ -151,19 +109,8 @@ func (c *Client) Initialize(ctx context.Context) error {
 	initReq := mcp.InitializeRequest{}
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 
-	// Call the underlying library's Initialize method
-	switch typedClient := c.client.(type) {
-	case *client.SSEMCPClient:
-		c.log.Printf("DEBUG: Calling library Initialize for SSE/HTTP client")
-		_, initErr = typedClient.Initialize(ctx, initReq)
-	case *client.StdioMCPClient:
-		c.log.Printf("DEBUG: Calling library Initialize for Stdio client")
-		_, initErr = typedClient.Initialize(ctx, initReq)
-	default:
-		// Fallback for unknown client types - try pinging
-		c.log.Printf("Warning: Unknown MCP client type (%T), attempting generic ping for initialization check.", c.client)
-		initErr = c.client.Ping(ctx)
-	}
+	// Call Initialize on the underlying MCP client
+	_, initErr = c.client.Initialize(ctx, initReq)
 
 	// Handle the result
 	if initErr != nil {
@@ -217,10 +164,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	result, err := c.client.CallTool(ctx, req)
 	if err != nil {
 		c.log.Printf("Error calling tool '%s': %v", toolName, err)
-		// Add specific hint for stdio clients if CallTool fails with file closed
-		if _, isStdio := c.client.(*client.StdioMCPClient); isStdio && strings.Contains(err.Error(), "file already closed") {
-			c.log.Printf("  Hint: Stdio process likely exited after Initialize or previous call. Check server command/args/env and logs.")
-		}
+		// Optional: add transport-specific hints here
 		return "", fmt.Errorf("failed to call tool '%s': %w", toolName, err)
 	}
 
@@ -266,10 +210,6 @@ func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, e
 		if err := c.Initialize(initCtx); err != nil {
 			cancel()
 			c.log.Printf("ERROR: Initialization attempt failed during GetAvailableTools: %v", err)
-			// Add specific hint for stdio clients if init fails here
-			if _, isStdio := c.client.(*client.StdioMCPClient); isStdio {
-				c.log.Printf("  Hint: Stdio process might have exited. Check server command/args/env and logs.")
-			}
 			return nil, fmt.Errorf("client not initialized before GetAvailableTools: %w", err)
 		}
 		cancel()
@@ -322,10 +262,6 @@ func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, e
 
 		// If we got here, ListTools failed even after potential retry
 		c.log.Printf("ERROR: Failed to get tools via native ListTools method for %s: %v", c.serverAddr, err)
-		// Add specific hint for stdio clients if ListTools fails
-		if _, isStdio := c.client.(*client.StdioMCPClient); isStdio && strings.Contains(err.Error(), "file already closed") {
-			c.log.Printf("  Hint: Stdio process likely exited after Initialize or during ListTools. Check server command/args/env and logs.")
-		}
 		return nil, fmt.Errorf("failed to get tools via native ListTools method: %w", err)
 	}
 
@@ -343,13 +279,6 @@ func (c *Client) Close() {
 	c.closeOnce.Do(func() {
 		c.log.Printf("Closing MCP client resources for %s...", c.serverAddr)
 
-		// Signal that the closure is intentional for the monitor goroutine
-		select {
-		case <-c.stdioExited: // Already closed (prematurely or by another Close call)
-		default:
-			close(c.stdioExited) // Signal normal closure
-		}
-
 		// Close the underlying library client if possible
 		if closer, ok := c.client.(io.Closer); ok {
 			if err := closer.Close(); err != nil {
@@ -360,21 +289,6 @@ func (c *Client) Close() {
 			c.log.Printf("Underlying client type %T does not implement io.Closer", c.client)
 		}
 
-		// Ensure the process is terminated if it's stdio and we managed to get the cmd
-		// Note: library's Close() likely handles this, but belt-and-suspenders
-		if c.stdioCmd != nil {
-			c.log.Printf("DEBUG: [%s] Ensuring stdio process is terminated...", c.serverAddr)
-			if c.stdioCmd.Process != nil {
-				// Try gentle signal first, then kill
-				_ = c.stdioCmd.Process.Signal(os.Interrupt)
-				time.Sleep(100 * time.Millisecond) // Give it a moment
-				_ = c.stdioCmd.Process.Kill()
-			}
-			// Wait for the monitor goroutine to finish processing the exit
-			// If cmd.Wait() was already done, this is quick
-			<-c.stdioExited // Wait for signal confirming exit processing is done
-			c.log.Printf("DEBUG: [%s] Stdio process termination confirmed.", c.serverAddr)
-		}
 		c.log.Printf("Finished closing MCP client for %s.", c.serverAddr)
 	})
 }
@@ -413,54 +327,6 @@ func (c *Client) PrintEnvironment() {
 			c.log.Printf("  mcp-trino found at: %s", path)
 		}
 	}
-}
-
-// SetEnvironment sets environment variables for the MCP client (only effective for stdio mode).
-func (c *Client) SetEnvironment(env map[string]string) {
-	if len(env) == 0 {
-		return
-	}
-
-	// This method only has an effect if the client is using stdio mode
-	_, ok := c.client.(*client.StdioMCPClient)
-	if !ok {
-		c.log.Printf("Warning: SetEnvironment called on non-stdio client - ignoring")
-		return
-	}
-
-	// For stdio, the environment is actually set during NewClient now.
-	// This function mainly exists for logging/debugging.
-	c.log.Printf("DEBUG: Environment variables were configured for '%s' during client creation:", c.serverAddr)
-	for key, value := range env {
-		// Redact passwords
-		if strings.Contains(strings.ToLower(key), "password") {
-			c.log.Printf("  %s: <redacted>", key)
-		} else {
-			c.log.Printf("  %s: %s", key, value)
-		}
-	}
-}
-
-// SetArguments sets command-line arguments for the MCP client (only effective for stdio mode).
-func (c *Client) SetArguments(args []string) {
-	if len(args) == 0 {
-		return
-	}
-
-	// This method only has an effect if the client is using stdio mode
-	_, ok := c.client.(*client.StdioMCPClient)
-	if !ok {
-		c.log.Printf("Warning: SetArguments called on non-stdio client - ignoring")
-		return
-	}
-
-	// For stdio, set the arguments directly on the client
-	// Since the internal MCP client doesn't expose a way to set arguments after creation,
-	// we'll log this limitation for now
-	c.log.Printf("Note: Arguments can only be set when creating a stdio client")
-
-	// For future implementations, if the client library is updated to support setting args after creation:
-	// stdioClient.SetArgs(args)
 }
 
 // runNetworkDiagnostics performs basic network checks to diagnose connection issues
