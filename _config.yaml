@@ -1,6 +1,6 @@
 theme: jekyll-theme-cayman
 title: Slack MCP Client
-description: A Model Context Protocol (MCP) client for Slack implemented in Go
+description: A Slack bot client that bridges Slack and MCP servers, enabling AI models to interact with Slack and execute tools through standardized Model Context Protocol connections.
 show_downloads: true
 github:
   repository_url: https://github.com/tuannvm/slack-mcp-client
@@ -9,4 +9,13 @@ github:
   # Custom links for platform-specific binaries
   another_url: https://github.com/tuannvm/slack-mcp-client/releases/latest/download/slack-mcp-client-darwin-amd64
   zip_url: https://github.com/tuannvm/slack-mcp-client/releases/latest
-  tar_url: https://github.com/tuannvm/slack-mcp-client/releases 
+  tar_url: https://github.com/tuannvm/slack-mcp-client/releases
+
+# Make README.md the index page
+include:
+  - README.md
+
+# Tell Jekyll to read README.md as the home page content
+readme_index:
+  enabled: true
+  remove_originals: false 
