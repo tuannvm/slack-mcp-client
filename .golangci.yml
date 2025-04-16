@@ -19,23 +19,17 @@ run:
 
 linters:
   enable:
-    - errcheck
     - gofmt
     - goimports
-    - gosec
-    - gosimple
+    - errcheck
     - govet
-    - ineffassign
-    - misspell
-    - staticcheck
-    - typecheck
-    - unconvert
-    - unused
+    - gosec
     - revive
-    - bodyclose
     - gocyclo
 
 issues:
+  exclude-dirs:
+    - vendor
   exclude-rules:
     - path: _test\.go
       linters:

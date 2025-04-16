@@ -74,15 +74,15 @@ func NewOpenAIHandler(logger *logging.Logger) *OpenAIHandler {
 	// Set up HTTP client with logging
 	options := httpClient.DefaultOptions()
 	options.Timeout = 60 * 1000000000 // 60 seconds
-	options.RequestLogger = func(method, url string, body []byte) {
+	options.RequestLogger = func(method, url string, _ []byte) {
 		logger.Debug("OpenAI API Request: %s %s", method, url)
 	}
-	options.ResponseLogger = func(statusCode int, body []byte, err error) {
+	options.ResponseLogger = func(_ int, _ []byte, err error) {
 		if err != nil {
 			logger.Error("OpenAI API Response error: %v", err)
 			return
 		}
-		logger.Debug("OpenAI API Response: status=%d, body_length=%d", statusCode, len(body))
+		logger.Debug("OpenAI API Response received successfully")
 	}
 
 	// Create tool definition
@@ -133,13 +133,31 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 	args := request.Params.Arguments
 	h.Logger.Debug("Received arguments: %+v", args)
 
-	// Get required parameters
+	// Get required model parameter
 	model, ok := args["model"].(string)
 	if !ok {
 		return nil, customErrors.ErrBadRequest
 	}
 
-	// Handle messages parameter
+	// Process messages and other parameters
+	chatReq, err := h.buildChatRequest(model, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Make the API request
+	chatResp, err := h.makeAPIRequest(ctx, chatReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create and return MCP tool response
+	return h.createToolResponse(chatResp)
+}
+
+// buildChatRequest constructs the OpenAI API request
+func (h *OpenAIHandler) buildChatRequest(model string, args map[string]interface{}) (OpenAIChatRequest, error) {
+	// Build the chat request
 	var messages []OpenAIMessage
 
 	// First, check if there's a simple "prompt" parameter as a shortcut
@@ -152,25 +170,12 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 		}
 	} else if rawMessages, ok := args["messages"].([]interface{}); ok {
 		// Process array of message objects
-		for _, rawMsg := range rawMessages {
-			if msgMap, ok := rawMsg.(map[string]interface{}); ok {
-				role, _ := msgMap["role"].(string)
-				content, _ := msgMap["content"].(string)
-
-				if role == "" || content == "" {
-					return nil, customErrors.ErrBadRequest
-				}
-
-				messages = append(messages, OpenAIMessage{
-					Role:    role,
-					Content: content,
-				})
-			} else {
-				return nil, customErrors.ErrBadRequest
-			}
+		messages = h.processMessageArray(rawMessages)
+		if len(messages) == 0 {
+			return OpenAIChatRequest{}, customErrors.ErrBadRequest
 		}
 	} else {
-		return nil, customErrors.ErrBadRequest
+		return OpenAIChatRequest{}, customErrors.ErrBadRequest
 	}
 
 	// Build the request
@@ -180,11 +185,45 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 		Stream:   false,
 	}
 
-	// Optional parameters
+	// Apply optional parameters
+	h.applyOptionalParameters(&chatReq, args, model)
+
+	return chatReq, nil
+}
+
+// processMessageArray converts a raw message array to OpenAIMessages
+func (h *OpenAIHandler) processMessageArray(rawMessages []interface{}) []OpenAIMessage {
+	var messages []OpenAIMessage
+
+	for _, rawMsg := range rawMessages {
+		if msgMap, ok := rawMsg.(map[string]interface{}); ok {
+			role, _ := msgMap["role"].(string)
+			content, _ := msgMap["content"].(string)
+
+			if role == "" || content == "" {
+				return nil // Invalid message format
+			}
+
+			messages = append(messages, OpenAIMessage{
+				Role:    role,
+				Content: content,
+			})
+		} else {
+			return nil // Invalid message format
+		}
+	}
+
+	return messages
+}
+
+// applyOptionalParameters adds optional parameters to the request
+func (h *OpenAIHandler) applyOptionalParameters(chatReq *OpenAIChatRequest, args map[string]interface{}, model string) {
+	// Handle temperature
 	if temp, ok := args["temperature"].(float64); ok {
 		chatReq.Temperature = temp
 	}
 
+	// Handle token limits based on model type
 	if maxTokens, ok := args["max_tokens"].(float64); ok {
 		// Use appropriate token parameter based on model type
 		if strings.Contains(model, "o3-") {
@@ -194,7 +233,10 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 			chatReq.MaxTokens = int(maxTokens)
 		}
 	}
+}
 
+// makeAPIRequest sends the request to the OpenAI API
+func (h *OpenAIHandler) makeAPIRequest(ctx context.Context, chatReq OpenAIChatRequest) (OpenAIChatResponse, error) {
 	// Prepare headers
 	headers := map[string]string{
 		"Content-Type":  "application/json",
@@ -208,19 +250,24 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 	if err != nil {
 		h.Logger.Error("OpenAI API request failed: %v", err)
 		if customErrors.Is(err, customErrors.ErrTooManyRequests) {
-			return nil, customErrors.NewOpenAIError("Rate limit exceeded", "rate_limit_exceeded", err)
+			return OpenAIChatResponse{}, customErrors.NewOpenAIError("Rate limit exceeded", "rate_limit_exceeded", err)
 		}
-		return nil, customErrors.NewOpenAIError("API request failed", "request_failed", err)
+		return OpenAIChatResponse{}, customErrors.NewOpenAIError("API request failed", "request_failed", err)
 	}
 
 	if statusCode != 200 {
-		return nil, customErrors.NewOpenAIError(
+		return OpenAIChatResponse{}, customErrors.NewOpenAIError(
 			fmt.Sprintf("API returned error status: %d", statusCode),
 			"api_error",
 			customErrors.StatusCodeToError(statusCode),
 		)
 	}
 
+	return chatResp, nil
+}
+
+// createToolResponse creates an MCP tool response from the API response
+func (h *OpenAIHandler) createToolResponse(chatResp OpenAIChatResponse) (*mcp.CallToolResult, error) {
 	// Check if we have choices in the response
 	if len(chatResp.Choices) == 0 {
 		return nil, customErrors.NewOpenAIError("API returned no choices", "no_choices", nil)

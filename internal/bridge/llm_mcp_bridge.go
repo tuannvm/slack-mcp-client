@@ -57,7 +57,7 @@ func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, disc
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
 // It no longer uses natural language detection.
-func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, userPrompt string) (string, error) {
+func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, _ string) (string, error) {
 	b.logger.Printf("Processing LLM response for potential JSON tool call: %s", llmResponse)
 
 	// Attempt to detect and parse the specific JSON tool call format
@@ -93,15 +93,15 @@ func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
 	b.logger.Printf("DEBUG: Beginning JSON tool call detection")
 
 	// Try different parsing strategies in order
-	if toolCall := b.tryDirectJsonParsing(response); toolCall != nil {
+	if toolCall := b.tryDirectJSONParsing(response); toolCall != nil {
 		return toolCall
 	}
 
-	if toolCall := b.tryCodeBlockJsonParsing(response); toolCall != nil {
+	if toolCall := b.tryCodeBlockJSONParsing(response); toolCall != nil {
 		return toolCall
 	}
 
-	if toolCall := b.tryRegexJsonExtraction(response); toolCall != nil {
+	if toolCall := b.tryRegexJSONExtraction(response); toolCall != nil {
 		return toolCall
 	}
 
@@ -109,8 +109,8 @@ func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
 	return nil
 }
 
-// tryDirectJsonParsing attempts direct JSON parsing of the entire response
-func (b *LLMMCPBridge) tryDirectJsonParsing(response string) *ToolCall {
+// tryDirectJSONParsing attempts direct JSON parsing of the entire response
+func (b *LLMMCPBridge) tryDirectJSONParsing(response string) *ToolCall {
 	trimmedResponse := strings.TrimSpace(response)
 	if strings.HasPrefix(trimmedResponse, "{") && strings.HasSuffix(trimmedResponse, "}") {
 		var toolCall ToolCall
@@ -127,8 +127,8 @@ func (b *LLMMCPBridge) tryDirectJsonParsing(response string) *ToolCall {
 	return nil
 }
 
-// tryCodeBlockJsonParsing looks for JSON in code blocks
-func (b *LLMMCPBridge) tryCodeBlockJsonParsing(response string) *ToolCall {
+// tryCodeBlockJSONParsing looks for JSON in code blocks
+func (b *LLMMCPBridge) tryCodeBlockJSONParsing(response string) *ToolCall {
 	b.logger.Printf("DEBUG: Searching for JSON in code blocks")
 	codeBlockRegex := regexp.MustCompile("```(?:json)?\\s*({[\\s\\S]*?})\\s*```")
 	codeBlockMatches := codeBlockRegex.FindAllStringSubmatch(response, -1)
@@ -152,8 +152,8 @@ func (b *LLMMCPBridge) tryCodeBlockJsonParsing(response string) *ToolCall {
 	return nil
 }
 
-// tryRegexJsonExtraction looks for tool calls using regex patterns
-func (b *LLMMCPBridge) tryRegexJsonExtraction(response string) *ToolCall {
+// tryRegexJSONExtraction looks for tool calls using regex patterns
+func (b *LLMMCPBridge) tryRegexJSONExtraction(response string) *ToolCall {
 	b.logger.Printf("DEBUG: Searching for JSON objects in text")
 	// More lenient regex that can handle various JSON formats with the key elements we need
 	jsonRegex := regexp.MustCompile("(?i)[\\{\\s]*[\"']?tool[\"']?\\s*[\\:\\=]\\s*[\"']([^\"']+)[\"']\\s*[\\,\\s]*[\"']?args[\"']?\\s*[\\:\\=]\\s*\\{([\\s\\S]*?)\\}[\\s\\}]*")

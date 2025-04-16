@@ -33,33 +33,118 @@ func main() {
 	flag.Parse()
 
 	// Setup logging with structured logger
+	appLogger := setupLogging()
+	appLogger.Info("Starting Slack MCP Client (debug=%v)", *debug)
+
+	// Load and prepare configuration
+	cfg := loadAndPrepareConfig(appLogger)
+
+	// Initialize MCP clients and discover tools
+	mcpClients, discoveredTools := initializeMCPClients(appLogger, cfg)
+
+	// Initialize and run Slack client
+	startSlackClient(appLogger, mcpClients, discoveredTools, cfg)
+}
+
+// setupLogging initializes the logging system
+func setupLogging() *logging.Logger {
 	logLevel := logging.LevelInfo
 	if *debug {
 		logLevel = logging.LevelDebug
 	}
 
 	appLogger := logging.New("slack-mcp-client", logLevel)
-	appLogger.Info("Starting Slack MCP Client (debug=%v)", *debug)
+	
+	// Setup library debugging if requested
+	if *mcpDebug {
+		if err := os.Setenv("MCP_DEBUG", "true"); err != nil {
+			appLogger.Error("Failed to set MCP_DEBUG environment variable: %v", err)
+		}
+		appLogger.Info("MCP_DEBUG environment variable set to true")
+	}
+	
+	return appLogger
+}
 
+// loadAndPrepareConfig loads the configuration and applies any overrides
+func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 	// Load configuration
 	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
-		appLogger.Fatal("Failed to load configuration: %v", err)
+		logger.Fatal("Failed to load configuration: %v", err)
 	}
 
 	// Force provider to OpenAI in config loaded, as client only supports OpenAI directly now
 	if cfg.LLMProvider != config.ProviderOpenAI {
-		appLogger.Warn("Config/Env specified LLM provider '%s', but client is hardcoded for OpenAI. Forcing OpenAI.", cfg.LLMProvider)
+		logger.Warn("Config/Env specified LLM provider '%s', but client is hardcoded for OpenAI. Forcing OpenAI.", cfg.LLMProvider)
 		cfg.LLMProvider = config.ProviderOpenAI
 	}
 
 	// Apply command-line overrides AFTER loading config
-	if err := applyCommandLineOverrides(appLogger, cfg); err != nil {
-		appLogger.Fatal("Error applying command-line flags: %v", err)
+	if err := applyCommandLineOverrides(logger, cfg); err != nil {
+		logger.Fatal("Error applying command-line flags: %v", err)
 	}
 
-	appLogger.Info("Configuration loaded. Slack Bot Token Present: %t, Slack App Token Present: %t",
+	// Log configuration information
+	logger.Info("Configuration loaded. Slack Bot Token Present: %t, Slack App Token Present: %t",
 		cfg.SlackBotToken != "", cfg.SlackAppToken != "")
+	logger.Info("Final LLM Provider: %s", cfg.LLMProvider)
+	logLLMSettings(logger, cfg)
+	logger.Info("MCP Servers Configured (in file): %d", len(cfg.Servers))
+	
+	return cfg
+}
+
+// processSingleMCPServer processes a single MCP server configuration
+func processSingleMCPServer(
+	logger *logging.Logger,
+	serverName string,
+	serverConf config.ServerConfig,
+	mcpClients map[string]*mcp.Client,
+	discoveredTools map[string]common.ToolInfo,
+	failedServers *[]string,
+	initializedClientCount *int,
+) {
+	logger.Info("Processing server: '%s'", serverName)
+
+	// Skip disabled servers
+	if serverConf.Disabled {
+		logger.Info("  Skipping disabled server '%s'", serverName)
+		return
+	}
+
+	// Create a component-specific logger for this server
+	serverLogger := logger.WithName(serverName)
+
+	// Determine mode
+	mode := determineServerMode(serverLogger, serverConf)
+
+	// Create dedicated logger for this MCP client
+	mcpLoggerStd := log.New(os.Stdout, fmt.Sprintf("mcp-%s: ", strings.ToLower(serverName)), log.LstdFlags)
+
+	// Create client instance
+	mcpClient, err := createMCPClient(serverLogger, mode, serverConf, mcpLoggerStd)
+	if err != nil {
+		*failedServers = append(*failedServers, serverName+fmt.Sprintf("(create: %s)", err))
+		return
+	}
+	
+	serverLogger.Info("Successfully created MCP client instance")
+
+	// Defer client closure
+	defer func() {
+		if mcpClient != nil {
+			serverLogger.Info("Closing MCP client")
+			mcpClient.Close()
+		}
+	}()
+
+	// Initialize client
+	if err := initializeMCPClientInstance(serverLogger, mcpClient); err != nil {
+		*failedServers = append(*failedServers, serverName+"(initialize failed)")
+		return
+	}
+	
 	appLogger.Info("Final LLM Provider: %s", cfg.LLMProvider) // Will always be OpenAI now
 	logLLMSettings(appLogger, cfg)
 	appLogger.Info("MCP Servers Configured (in file): %d", len(cfg.Servers))

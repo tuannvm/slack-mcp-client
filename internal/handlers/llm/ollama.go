@@ -15,15 +15,15 @@ import (
 
 // GenerateRequest represents a request to the Ollama API
 type GenerateRequest struct {
-	Model      string                 `json:"model"`
-	Prompt     string                 `json:"prompt"`
-	Options    map[string]interface{} `json:"options,omitempty"`
-	System     string                 `json:"system,omitempty"`
-	Template   string                 `json:"template,omitempty"`
-	Context    []int                  `json:"context,omitempty"`
-	Stream     bool                   `json:"stream,omitempty"`
-	Raw        bool                   `json:"raw,omitempty"`
-	Keep_alive string                 `json:"keep_alive,omitempty"`
+	Model     string                 `json:"model"`
+	Prompt    string                 `json:"prompt"`
+	Options   map[string]interface{} `json:"options,omitempty"`
+	System    string                 `json:"system,omitempty"`
+	Template  string                 `json:"template,omitempty"`
+	Context   []int                  `json:"context,omitempty"`
+	Stream    bool                   `json:"stream,omitempty"`
+	Raw       bool                   `json:"raw,omitempty"`
+	KeepAlive string                 `json:"keep_alive,omitempty"`
 }
 
 // GenerateResponse represents a response from the Ollama API
@@ -60,15 +60,15 @@ func NewOllamaHandler(logger *logging.Logger) *OllamaHandler {
 	// Set up HTTP client with logging
 	options := httpClient.DefaultOptions()
 	options.Timeout = 120 * 1000000000 // 120 seconds for Ollama, as it can be slower
-	options.RequestLogger = func(method, url string, body []byte) {
+	options.RequestLogger = func(method, url string, _ []byte) {
 		logger.Debug("Ollama API Request: %s %s", method, url)
 	}
-	options.ResponseLogger = func(statusCode int, body []byte, err error) {
+	options.ResponseLogger = func(statusCode int, _ []byte, err error) {
 		if err != nil {
 			logger.Error("Ollama API Response error: %v", err)
 			return
 		}
-		logger.Debug("Ollama API Response: status=%d, body_length=%d", statusCode, len(body))
+		logger.Debug("Ollama API Response: status=%d", statusCode)
 	}
 
 	// Create tool definition
