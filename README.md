@@ -1,6 +1,6 @@
 # Slack MCP Client in Go
 
-A high-performance Slack bot client that communicates with Model Context Protocol (MCP) servers using multiple transport modes. This project enables AI assistants to seamlessly interact with Slack through standardized MCP tools.
+This project provides a Slack bot client that serves as a bridge between Slack and Model Context Protocol (MCP) servers. By leveraging Slack as the user interface, it allows LLM models to interact with multiple MCP servers using standardized MCP tools.
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/tuannvm/slack-mcp-client/build.yml?branch=main&label=CI%2FCD&logo=github)](https://github.com/tuannvm/slack-mcp-client/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/tuannvm/slack-mcp-client?logo=go)](https://github.com/tuannvm/slack-mcp-client/blob/main/go.mod)
@@ -11,7 +11,9 @@ A high-performance Slack bot client that communicates with Model Context Protoco
 
 ## Overview
 
-This project implements a Slack bot client that integrates with Model Context Protocol (MCP) servers. It enables AI assistants to access Slack channels and direct messages through standardized MCP tools, creating a powerful bridge between AI capabilities and team communication.
+This project implements a Slack bot client that acts as a bridge between Slack and Model Context Protocol (MCP) servers. It uses Slack as a user interface while enabling LLM models to communicate with various MCP servers through standardized MCP tools.
+
+Important distinction: This client is not designed to interact with the Slack API directly as its primary purpose. However, it can achieve Slack API functionality by connecting to a dedicated Slack MCP server (such as [modelcontextprotocol/servers/slack](https://github.com/modelcontextprotocol/servers/tree/main/src/slack)) alongside other MCP servers.
 
 ## How It Works
 
@@ -45,12 +47,11 @@ flowchart LR
 ```
 
 1. **User** interacts only with Slack, sending messages through the Slack interface
-2. **Slack API** delivers the message to the Slack Bot Service
-3. **Slack Bot Service** is a single process that includes:
+2. **Slack Bot Service** is a single process that includes:
    - The Slack Bot component that handles Slack messages
    - The MCP Client component that communicates with MCP servers
-4. The **MCP Client** forwards requests to the appropriate MCP Server(s)
-5. **MCP Servers** execute their respective tools and return results
+3. The **MCP Client** forwards requests to the appropriate MCP Server(s)
+4. **MCP Servers** execute their respective tools and return results
 
 ## Features
 
@@ -63,129 +64,207 @@ flowchart LR
   - Works with both channels and direct messages
 - ✅ **Tool Registration**: Dynamically register and call MCP tools
 - ✅ **Docker container support**
-- ✅ **Compatible with Cursor, Claude Desktop, Windsurf, ChatWise and any MCP-compatible clients**
 
 ## Installation
 
-### Homebrew (macOS and Linux)
-
-The easiest way to install slack-mcp-client is using Homebrew:
-
-```bash
-# Add the tap repository
-brew tap tuannvm/mcp
-
-# Install slack-mcp-client
-brew install slack-mcp-client
-```
-
-To update to the latest version:
-
-```bash
-brew update && brew upgrade slack-mcp-client
-```
-
-### Alternative Installation Methods
-
-#### Manual Download
-
-1. Download the appropriate binary for your platform from the [GitHub Releases](https://github.com/tuannvm/slack-mcp-client/releases) page.
-2. Place the binary in a directory included in your PATH (e.g., `/usr/local/bin` on Linux/macOS)
-3. Make it executable (`chmod +x slack-mcp-client` on Linux/macOS)
 
 #### From Source
 
+### Running Locally with Binary
+
+After installing the binary, you can run it locally with the following steps:
+
+1. Set up environment variables:
+
 ```bash
-git clone https://github.com/tuannvm/slack-mcp-client.git
-cd slack-mcp-client
-make build # Binary will be in ./bin/
+# Using environment variables directly
+export SLACK_BOT_TOKEN="xoxb-your-bot-token"
+export SLACK_APP_TOKEN="xapp-your-app-token"
+export OPENAI_API_KEY="sk-your-openai-key"
+export OPENAI_MODEL="gpt-4o"
+export LOG_LEVEL="info"
+
+# Or create a .env file and source it
+cat > .env << EOL
+SLACK_BOT_TOKEN="xoxb-your-bot-token"
+SLACK_APP_TOKEN="xapp-your-app-token"
+OPENAI_API_KEY="sk-your-openai-key"
+OPENAI_MODEL="gpt-4o"
+LOG_LEVEL="info"
+EOL
+
+source .env
 ```
 
-## Downloads
+2. Create an MCP servers configuration file:
 
-You can download pre-built binaries for your platform:
-
-| Platform | Architecture | Download Link |
-|----------|--------------|---------------|
-| macOS | x86_64 (Intel) | [Download](https://github.com/tuannvm/slack-mcp-client/releases/latest/download/slack-mcp-client-darwin-amd64) |
-| macOS | ARM64 (Apple Silicon) | [Download](https://github.com/tuannvm/slack-mcp-client/releases/latest/download/slack-mcp-client-darwin-arm64) |
-| Linux | x86_64 | [Download](https://github.com/tuannvm/slack-mcp-client/releases/latest/download/slack-mcp-client-linux-amd64) |
-| Linux | ARM64 | [Download](https://github.com/tuannvm/slack-mcp-client/releases/latest/download/slack-mcp-client-linux-arm64) |
-| Windows | x86_64 | [Download](https://github.com/tuannvm/slack-mcp-client/releases/latest/download/slack-mcp-client-windows-amd64.exe) |
-
-Or see all available downloads on the [GitHub Releases](https://github.com/tuannvm/slack-mcp-client/releases) page.
-
-## MCP Integration
-
-This Slack MCP client can be integrated with several AI applications:
-
-### Using Docker Image
-
-To use the Docker image instead of a local binary:
-
-```json
+```bash
+# Create mcp-servers.json in the current directory
+cat > mcp-servers.json << EOL
 {
   "mcpServers": {
-    "slack-mcp-client": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", 
-        "-e", "SLACK_BOT_TOKEN=your-bot-token", 
-        "-e", "SLACK_APP_TOKEN=your-app-token", 
-        "-e", "MCP_MODE=sse", 
-        "ghcr.io/tuannvm/slack-mcp-client:latest"],
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$HOME"],
       "env": {}
     }
   }
 }
+EOL
 ```
 
-> **Note**: When running in Docker, ensure your environment variables are properly passed to the container. This Docker configuration can be used in any of the below applications.
+3. Run the application:
 
-### Cursor
+```bash
+# Run with default settings (looks for mcp-servers.json in current directory)
+slack-mcp-client
 
-To use with [Cursor](https://cursor.sh/), create or edit `~/.cursor/mcp.json`:
+# Or specify a custom config file location
+slack-mcp-client --config /path/to/mcp-servers.json
 
-```json
-{
-  "mcpServers": {
-    "slack-mcp-client": {
-      "command": "slack-mcp-client",
-      "args": [],
-      "env": {
-        "SLACK_BOT_TOKEN": "your-bot-token",
-        "SLACK_APP_TOKEN": "your-app-token",
-        "MCP_MODE": "sse"
-      }
-    }
-  }
-}
+# Enable debug mode
+slack-mcp-client --debug
+
+# Specify OpenAI model
+slack-mcp-client --openai-model gpt-4o-mini
 ```
 
-Replace the environment variables with your specific Slack configuration.
+The application will connect to Slack and start listening for messages. You can check the logs for any errors or connection issues.
 
-### Claude Desktop
+### Kubernetes Deployment with Helm
 
-To use with [Claude Desktop](https://claude.ai/desktop), edit your Claude configuration file:
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+For deploying to Kubernetes, a Helm chart is available in the `helm-chart` directory. This chart provides a flexible way to deploy the slack-mcp-client with proper configuration and secret management.
 
-```json
-{
-  "mcpServers": {
-    "slack-mcp-client": {
-      "command": "slack-mcp-client",
-      "args": [],
-      "env": {
-        "SLACK_BOT_TOKEN": "your-bot-token",
-        "SLACK_APP_TOKEN": "your-app-token",
-        "MCP_MODE": "sse"
-      }
-    }
-  }
-}
+#### Prerequisites
+- Kubernetes 1.16+
+- Helm 3.0+
+- Slack Bot and App tokens
+
+#### Basic Installation
+
+```bash
+# Create a values file with your configuration
+cat > values.yaml << EOL
+secret:
+  create: true
+
+env:
+  SLACK_BOT_TOKEN: "xoxb-your-bot-token"
+  SLACK_APP_TOKEN: "xapp-your-app-token"
+  OPENAI_API_KEY: "sk-your-openai-key"
+  OPENAI_MODEL: "gpt-4o"
+  LOG_LEVEL: "info"
+
+# Optional: Configure MCP servers
+configMap:
+  create: true
+EOL
+
+# Install the chart
+helm install my-slack-bot ./helm-chart/slack-mcp-client -f values.yaml
 ```
 
-After updating the configuration, restart Claude Desktop. You should see the MCP tools available in the tools menu.
+#### Configuration Options
+
+The Helm chart supports various configuration options including:
+- Setting resource limits and requests
+- Configuring MCP servers via ConfigMap
+- Managing sensitive data via Kubernetes secrets
+- Customizing deployment parameters
+
+For more details, see the [Helm chart README](helm-chart/slack-mcp-client/README.md).
+
+#### Using the Docker Image from GHCR
+
+The Helm chart uses the Docker image from GitHub Container Registry (GHCR) by default. You can specify a particular version or use the latest tag:
+
+```yaml
+# In your values.yaml
+image:
+  repository: ghcr.io/tuannvm/slack-mcp-client
+  tag: "latest"  # Or use a specific version like "1.0.0"
+  pullPolicy: IfNotPresent
+```
+
+To manually pull the image:
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/tuannvm/slack-mcp-client:latest
+
+# Or pull a specific version
+docker pull ghcr.io/tuannvm/slack-mcp-client:1.0.0
+```
+
+If you're using private images, you can configure image pull secrets in your values:
+
+```yaml
+imagePullSecrets:
+  - name: my-ghcr-secret
+```
+
+### Docker Compose for Local Testing
+
+For local testing and development, you can use Docker Compose to easily run the slack-mcp-client along with additional MCP servers.
+
+#### Setup
+
+1. Create a `.env` file with your credentials:
+
+```bash
+# Create .env file from example
+cp .env.example .env
+# Edit the file with your credentials
+nano .env
+```
+
+2. Create a `mcp-servers.json` file (or use the example):
+
+```bash
+# Create mcp-servers.json from example
+cp mcp-servers.json.example mcp-servers.json
+# Edit if needed
+nano mcp-servers.json
+```
+
+3. Start the services:
+
+```bash
+# Start services in detached mode
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+#### Docker Compose Configuration
+
+The included `docker-compose.yml` provides:
+
+- Environment variables loaded from `.env` file
+- Volume mounting for MCP server configuration
+- Examples of connecting to additional MCP servers (commented out)
+
+```yaml
+version: '3.8'
+
+services:
+  slack-mcp-client:
+    image: ghcr.io/tuannvm/slack-mcp-client:latest
+    container_name: slack-mcp-client
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+    volumes:
+      - ./mcp-servers.json:/app/mcp-servers.json:ro
+```
+
+You can easily extend this setup to include additional MCP servers in the same network.
 
 ## Slack App Setup
 
@@ -202,22 +281,23 @@ After updating the configuration, restart Claude Desktop. You should see the MCP
    - `message.im`
 5. Install the app to your workspace
 
+For detailed instructions on Slack app configuration, token setup, required permissions, and troubleshooting common issues, see the [Slack Configuration Guide](slack.md).
+
 ## Configuration
 
 The client can be configured using the following environment variables:
 
-| Variable | Description | Default |
-| ------------------ | ----------------------------- | --------- |
-| SLACK_BOT_TOKEN | Bot token for Slack API | (required) |
-| SLACK_APP_TOKEN | App-level token for Socket Mode | (required) |
-| MCP_MODE | Transport method (sse/http/stdio) | sse |
-| MCP_SERVER_LISTEN_ADDRESS | Address for MCP server to listen on | :8081 |
-| MCP_TARGET_SERVER_ADDRESS | Target MCP server address | http://127.0.0.1:8081 |
-| LOG_LEVEL | Logging level (debug, info, warn, error) | info |
+| Variable        | Description                              | Default    |
+| --------------- | ---------------------------------------- | ---------- |
+| SLACK_BOT_TOKEN | Bot token for Slack API                  | (required) |
+| SLACK_APP_TOKEN | App-level token for Socket Mode          | (required) |
+| OPENAI_API_KEY  | API key for OpenAI authentication        | (required) |
+| OPENAI_MODEL    | OpenAI model to use                      | gpt-4o     |
+| LOG_LEVEL       | Logging level (debug, info, warn, error) | info       |
 
 ## Transport Modes
 
-The client supports three transport modes that can be configured via the `MCP_MODE` environment variable:
+The client supports three transport modes:
 
 - **SSE (default)**: Uses Server-Sent Events for real-time communication with the MCP server
 - **HTTP**: Uses HTTP POST requests with JSON-RPC for communication

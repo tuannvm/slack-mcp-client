@@ -1,0 +1,55 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/tuannvm/slack-mcp-client
+  pullPolicy: IfNotPresent
+  tag: "latest" # Override this with a specific version in production
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: false
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Environment variables
+env:
+  # Required environment variables
+  # SLACK_BOT_TOKEN: ""  # Set this in an external secret
+  # SLACK_APP_TOKEN: ""  # Set this in an external secret
+  # OPENAI_API_KEY: ""   # Set this in an external secret
+  OPENAI_MODEL: "gpt-4o"
+  MCP_MODE: "sse"
+  LOG_LEVEL: "info"
+
+# Secret containing sensitive environment variables
+secret:
+  create: false
+  name: "" # If not created by this chart, specify existing secret name here
+
+# Config file (mcp-servers.json)
+configMap:
+  create: false
+  name: ""
+  data: {}

@@ -1,0 +1,15 @@
+apiVersion: v2
+name: slack-mcp-client
+description: A Helm chart for deploying the Slack MCP Client
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - slack
+  - mcp
+  - ai
+  - llm
+maintainers:
+  - name: tuannvm
+    url: https://github.com/tuannvm
+home: https://github.com/tuannvm/slack-mcp-client

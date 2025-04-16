@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  slack-mcp-client:
+    image: ghcr.io/tuannvm/slack-mcp-client:latest
+    container_name: slack-mcp-client
+    restart: unless-stopped
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o}
+      - MCP_MODE=${MCP_MODE:-sse}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./mcp-servers.json:/app/mcp-servers.json:ro
+    # Example of connecting to another MCP server in the same compose network
+    # depends_on:
+    #   - mcp-github
+
+  # Example of additional MCP servers
+  # mcp-github:
+  #   image: ghcr.io/modelcontextprotocol/server-github:latest
+  #   container_name: mcp-github
+  #   restart: unless-stopped
+  #   environment:
+  #     - GITHUB_TOKEN=${GITHUB_TOKEN} 
