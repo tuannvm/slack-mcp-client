@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/tuannvm/slack-mcp-client/compare/v1.0.0...v1.1.0) (2025-04-16)
+
+
+### Features
+
+* **gh-pages:** add new layout and head customization for Jekyll site ([4ba7b07](https://github.com/tuannvm/slack-mcp-client/commit/4ba7b076e5d5fb6d5a1d2f920e0ab19a3ad95c7d))
+
 # 1.0.0 (2025-04-16)
 
 
