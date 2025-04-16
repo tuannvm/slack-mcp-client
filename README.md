@@ -135,6 +135,23 @@ The application will connect to Slack and start listening for messages. You can 
 
 For deploying to Kubernetes, a Helm chart is available in the `helm-chart` directory. This chart provides a flexible way to deploy the slack-mcp-client with proper configuration and secret management.
 
+#### Installing from GitHub Container Registry
+
+The Helm chart is also available directly from GitHub Container Registry, allowing for easier installation without needing to clone the repository:
+
+```bash
+# Add the OCI repository to Helm (only needed once)
+helm registry login ghcr.io -u USERNAME -p GITHUB_TOKEN
+
+# Pull the Helm chart
+helm pull oci://ghcr.io/tuannvm/charts/slack-mcp-client --version 0.1.0
+
+# Or install directly
+helm install my-slack-bot oci://ghcr.io/tuannvm/charts/slack-mcp-client --version 0.1.0 -f values.yaml
+```
+
+You can check available versions by visiting the GitHub Container Registry in your browser.
+
 #### Prerequisites
 - Kubernetes 1.16+
 - Helm 3.0+
@@ -341,3 +358,4 @@ When changes are merged to the main branch:
    - Semantic versioning based on commit messages
    - Binary builds for multiple platforms
    - Docker image publishing to GitHub Container Registry
+   - Helm chart publishing to GitHub Container Registry

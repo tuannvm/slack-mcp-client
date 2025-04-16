@@ -1,0 +1,68 @@
+name: Publish Helm Chart
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "helm-chart/**"
+      - ".github/workflows/helm-publish.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish-helm-chart:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: "latest"
+
+      - name: Set up OCI Helper
+        run: |
+          echo "Installing Helm plugins..."
+          helm plugin install https://github.com/chartmuseum/helm-push || true
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare Chart Version
+        if: github.event_name == 'release'
+        run: |
+          # When triggered by a release, use the release tag as the chart version
+          VERSION=${GITHUB_REF#refs/tags/}
+          VERSION=${VERSION#v}
+          echo "Updating Helm chart version to $VERSION"
+          sed -i "s/^version:.*/version: $VERSION/" helm-chart/slack-mcp-client/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" helm-chart/slack-mcp-client/Chart.yaml
+
+      - name: Package Helm Chart
+        run: |
+          mkdir -p .cr-release-packages
+          helm package helm-chart/slack-mcp-client --destination .cr-release-packages
+
+      - name: Push Helm Chart to GHCR
+        run: |
+          PACKAGE_NAME=$(ls .cr-release-packages/slack-mcp-client-*.tgz)
+          PACKAGE_VERSION=$(basename $PACKAGE_NAME | sed 's/slack-mcp-client-\(.*\)\.tgz/\1/')
+          echo "Publishing Helm chart $PACKAGE_NAME (version $PACKAGE_VERSION) to GHCR..."
+
+          # Push using Helm OCI
+          echo "Pushing to OCI registry..."
+          helm push $PACKAGE_NAME oci://ghcr.io/${{ github.repository_owner }}/charts
+
+          echo "Helm chart published to ghcr.io/${{ github.repository_owner }}/charts/slack-mcp-client:$PACKAGE_VERSION"
