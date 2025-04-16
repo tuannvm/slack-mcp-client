@@ -12,7 +12,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o client ./cmd/client
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o slack-mcp-client ./cmd/slack-mcp-client
 
 # Use a minimal alpine image
 FROM alpine:3.19
@@ -22,7 +22,7 @@ RUN apk --no-cache add ca-certificates tzdata
 WORKDIR /root/
 
 # Copy the binary from builder
-COPY --from=builder /app/client .
+COPY --from=builder /app/slack-mcp-client .
 
 # Command to run
-ENTRYPOINT ["./client"] 
+ENTRYPOINT ["./slack-mcp-client"] 
