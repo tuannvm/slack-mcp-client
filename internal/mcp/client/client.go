@@ -24,8 +24,8 @@ type Client struct {
 	serverAddr  string
 	initialized bool // Track if the client has been successfully initialized
 
-	closeOnce    sync.Once     // Ensures close logic runs only once
-	closeMu      sync.Mutex    // Protects access during close
+	closeOnce sync.Once  // Ensures close logic runs only once
+	closeMu   sync.Mutex // Protects access during close
 }
 
 // NewClient creates a new MCP client handler.
@@ -72,8 +72,8 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 
 	// Create the wrapper client
 	wrapperClient := &Client{
-		log:      logger,
-		client:   mcpClient,
+		log:        logger,
+		client:     mcpClient,
 		serverAddr: addressOrCommand,
 	}
 
