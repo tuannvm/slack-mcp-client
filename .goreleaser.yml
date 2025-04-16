@@ -1,0 +1,67 @@
+# Configuration version removed to avoid parsing issues with v1.18.2
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/slack-mcp-client/
+    binary: slack-mcp-client
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}}
+
+archives:
+  - format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+# Use simpler snapshot naming to ensure compatibility
+snapshot:
+  name_template: "next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - Merge pull request
+      - Merge branch
+
+# Explicitly configure GitHub Releases
+release:
+  github:
+    owner: "{{.Env.GITHUB_REPOSITORY_OWNER}}"
+    name: "slack-mcp-client"
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"
+
+# Update Docker configuration to be compatible with most GoReleaser versions
+dockers:
+  - image_templates:
+      - "ghcr.io/{{.Env.GITHUB_REPOSITORY_OWNER}}/slack-mcp-client:{{ .Version }}"
+      - "ghcr.io/{{.Env.GITHUB_REPOSITORY_OWNER}}/slack-mcp-client:latest"
+    dockerfile: Dockerfile.goreleaser
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+    # Simplified Docker configuration
+    skip_push: false

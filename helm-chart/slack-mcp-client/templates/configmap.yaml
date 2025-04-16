@@ -1,0 +1,20 @@
+{{- if .Values.configMap.create -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "slack-mcp-client.fullname" . }}-config
+  labels:
+    {{- include "slack-mcp-client.labels" . | nindent 4 }}
+data:
+  {{- toYaml .Values.configMap.data | nindent 2 }}
+  mcp-servers.json: |
+    {
+      "mcpServers": {
+        "example-server": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+          "env": {}
+        }
+      }
+    }
+{{- end }} 

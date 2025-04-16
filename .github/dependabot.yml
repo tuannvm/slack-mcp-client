@@ -1,0 +1,47 @@
+version: 2
+updates:
+  # Maintain dependencies for GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # Assign pull requests to specific users
+    assignees:
+      - "tuannvm"
+    # Labels to apply to pull requests
+    labels:
+      - "ci/cd"
+      - "dependencies"
+    # Create a group of updates instead of individual PRs
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Maintain dependencies for Go
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    assignees:
+      - "tuannvm"
+    labels:
+      - "dependencies"
+      - "go"
+    # Limit PRs for gomod to security updates and major version bumps
+    open-pull-requests-limit: 10
+
+  # Maintain dependencies for Docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    assignees:
+      - "tuannvm"
+    labels:
+      - "dependencies"
+      - "docker"
+    # Block PRs for major version bumps
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"] 

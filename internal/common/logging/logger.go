@@ -1,3 +1,4 @@
+// Package logging provides a structured logging implementation for the application
 package logging
 
 import (
@@ -152,4 +153,4 @@ func ParseLevel(level string) LogLevel {
 // StdLogger returns a standard log.Logger instance that uses this logger
 func (l *Logger) StdLogger() *log.Logger {
 	return l.stdLogger
-} 
+}

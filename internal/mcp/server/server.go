@@ -1,3 +1,4 @@
+// Package server provides an implementation of the Model Context Protocol server
 package server
 
 import (
@@ -17,11 +18,11 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/handlers/system"
 )
 
-// Server manages the MCP server endpoint.
+// Server manages the MCP server endpoint, handling tool registration and HTTP requests.
 type Server struct {
-	cfg          *config.Config
-	logger       *logging.Logger
-	mcp          *mcpServer.MCPServer
+	cfg             *config.Config
+	logger          *logging.Logger
+	mcp             *mcpServer.MCPServer
 	handlerRegistry *handlers.Registry
 }
 
@@ -41,9 +42,9 @@ func NewServer(cfg *config.Config, logger *logging.Logger) (*Server, error) {
 
 	// Create server instance
 	server := &Server{
-		cfg:            cfg,
-		logger:         logger,
-		mcp:            mcpInstance,
+		cfg:             cfg,
+		logger:          logger,
+		mcp:             mcpInstance,
 		handlerRegistry: registry,
 	}
 
@@ -94,7 +95,7 @@ func (s *Server) registerHandler(handler handlers.ToolHandler) error {
 
 	// Register with MCP server
 	tool := handler.GetToolDefinition()
-	
+
 	s.mcp.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return handler.Handle(ctx, req)
 	})
@@ -114,9 +115,10 @@ func (s *Server) Run(ctx context.Context, listenAddr string) error {
 
 	// Create the HTTP server, using the MCP handler directly at the root
 	httpServer := &http.Server{
-		Addr:        listenAddr,
-		Handler:     mcpHandler,
-		BaseContext: func(_ net.Listener) context.Context { return ctx },
+		Addr:              listenAddr,
+		Handler:           mcpHandler,
+		BaseContext:       func(_ net.Listener) context.Context { return ctx },
+		ReadHeaderTimeout: 10 * time.Second, // Add timeout to prevent Slowloris attacks
 	}
 	s.logger.Debug("HTTP server struct created for address %s with MCP root handler", httpServer.Addr)
 
@@ -141,7 +143,7 @@ func (s *Server) Run(ctx context.Context, listenAddr string) error {
 	// Wait for context cancellation or server error
 	select {
 	case <-ctx.Done():
-		s.logger.Info("Context cancelled. Initiating shutdown...")
+		s.logger.Info("Context canceled. Initiating shutdown...")
 		// Create a deadline context for shutdown
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -164,4 +166,4 @@ func (s *Server) Run(ctx context.Context, listenAddr string) error {
 		s.logger.Info("Server stopped cleanly")
 		return nil
 	}
-} 
+}

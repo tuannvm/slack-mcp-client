@@ -67,4 +67,4 @@ func (r *Registry) Unregister(name string) {
 		delete(r.handlers, name)
 		r.logger.Info("Unregistered handler: %s", name)
 	}
-} 
+}

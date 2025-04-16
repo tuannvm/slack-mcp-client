@@ -1,0 +1,12 @@
+theme: jekyll-theme-cayman
+title: Slack MCP Client
+description: A Model Context Protocol (MCP) client for Slack implemented in Go
+show_downloads: true
+github:
+  repository_url: https://github.com/tuannvm/slack-mcp-client
+  releases_url: https://github.com/tuannvm/slack-mcp-client/releases
+  is_project_page: true
+  # Custom links for platform-specific binaries
+  another_url: https://github.com/tuannvm/slack-mcp-client/releases/latest/download/slack-mcp-client-darwin-amd64
+  zip_url: https://github.com/tuannvm/slack-mcp-client/releases/latest
+  tar_url: https://github.com/tuannvm/slack-mcp-client/releases 

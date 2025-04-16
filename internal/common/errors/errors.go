@@ -1,3 +1,4 @@
+// Package errors provides custom error types and handling for the application
 package errors
 
 import (
@@ -9,25 +10,25 @@ import (
 var (
 	// ErrNotFound indicates that a resource was not found
 	ErrNotFound = errors.New("resource not found")
-	
+
 	// ErrUnauthorized indicates that the request lacks valid authentication
 	ErrUnauthorized = errors.New("unauthorized request")
-	
+
 	// ErrForbidden indicates that the request is not allowed
 	ErrForbidden = errors.New("access forbidden")
-	
+
 	// ErrBadRequest indicates that the request was invalid
 	ErrBadRequest = errors.New("bad request")
 
 	// ErrTimeout indicates that the operation timed out
 	ErrTimeout = errors.New("operation timed out")
-	
+
 	// ErrTooManyRequests indicates rate limiting
 	ErrTooManyRequests = errors.New("too many requests")
-	
+
 	// ErrInternal indicates an internal server error
 	ErrInternal = errors.New("internal server error")
-	
+
 	// ErrUnavailable indicates that the service is currently unavailable
 	ErrUnavailable = errors.New("service unavailable")
 )
@@ -64,20 +65,20 @@ func StatusCodeToError(statusCode int) error {
 
 // ServiceError represents an error from a specific service
 type ServiceError struct {
-	Service  string
-	Message  string
-	Code     string
+	Service   string
+	Message   string
+	Code      string
 	Retryable bool
-	Cause    error
+	Cause     error
 }
 
 // Error implements the error interface
 func (e *ServiceError) Error() string {
 	if e.Cause != nil {
-		return fmt.Sprintf("%s service error: %s (code: %s): %v", 
+		return fmt.Sprintf("%s service error: %s (code: %s): %v",
 			e.Service, e.Message, e.Code, e.Cause)
 	}
-	return fmt.Sprintf("%s service error: %s (code: %s)", 
+	return fmt.Sprintf("%s service error: %s (code: %s)",
 		e.Service, e.Message, e.Code)
 }
 
@@ -92,7 +93,7 @@ func (e *ServiceError) Is(target error) bool {
 	if !ok {
 		return errors.Is(e.Cause, target)
 	}
-	
+
 	return (t.Service == "" || t.Service == e.Service) &&
 		(t.Code == "" || t.Code == e.Code)
 }
@@ -111,7 +112,7 @@ func NewOpenAIError(message string, code string, cause error) error {
 // NewOllamaError creates a new error specific to Ollama
 func NewOllamaError(message string, code string, cause error) error {
 	return &ServiceError{
-		Service:   "ollama", 
+		Service:   "ollama",
 		Message:   message,
 		Code:      code,
 		Retryable: code == "server_error" || code == "unavailable",
@@ -143,4 +144,4 @@ func As(err error, target interface{}) bool {
 // Is is a convenience function that wraps errors.Is
 func Is(err, target error) bool {
 	return errors.Is(err, target)
-} 
+}

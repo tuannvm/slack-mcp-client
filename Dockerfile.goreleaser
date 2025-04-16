@@ -1,0 +1,9 @@
+FROM alpine:3.19
+
+RUN apk --no-cache add ca-certificates tzdata
+
+WORKDIR /opt/slack-mcp-client/
+
+COPY slack-mcp-client /opt/slack-mcp-client/
+
+ENTRYPOINT ["/opt/slack-mcp-client/slack-mcp-client"] 

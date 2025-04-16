@@ -1,3 +1,5 @@
+// Package slackbot implements the Slack integration for the MCP client
+// It provides event handling, message processing, and integration with LLM services
 package slackbot
 
 import (
@@ -25,18 +27,18 @@ import (
 
 // Client represents the Slack client application.
 type Client struct {
-	log             *log.Logger
-	api             *slack.Client
-	Socket          *socketmode.Client
-	botUserID       string
-	botMentionRgx   *regexp.Regexp
-	mcpClients      map[string]*mcp.Client
-	llmMCPBridge    *bridge.LLMMCPBridge
-	cfg             *config.Config // Holds the application configuration
-	httpClient      *http.Client // HTTP client for LLM communication
+	log           *log.Logger
+	api           *slack.Client
+	Socket        *socketmode.Client
+	botUserID     string
+	botMentionRgx *regexp.Regexp
+	mcpClients    map[string]*mcp.Client
+	llmMCPBridge  *bridge.LLMMCPBridge
+	cfg           *config.Config // Holds the application configuration
+	httpClient    *http.Client   // HTTP client for LLM communication
 	// Message history for context (limited per channel)
-	messageHistory  map[string][]Message
-	historyLimit    int
+	messageHistory map[string][]Message
+	historyLimit   int
 	// Use common.ToolInfo
 	discoveredTools map[string]common.ToolInfo
 }
@@ -49,8 +51,8 @@ type Message struct {
 }
 
 // NewClient creates a new Slack client instance.
-func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client, 
-               discoveredTools map[string]common.ToolInfo, cfg *config.Config) (*Client, error) {
+func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[string]*mcp.Client,
+	discoveredTools map[string]common.ToolInfo, cfg *config.Config) (*Client, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
 	}
@@ -60,21 +62,21 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	if !strings.HasPrefix(appToken, "xapp-") {
 		return nil, fmt.Errorf("SLACK_APP_TOKEN must have the prefix \"xapp-\"")
 	}
-	if mcpClients == nil || len(mcpClients) == 0 {
-		return nil, fmt.Errorf("mcpClients map cannot be nil or empty")
+	if len(mcpClients) == 0 {
+		return nil, fmt.Errorf("mcpClients map cannot be empty")
 	}
 	if cfg == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
-	
-	// Basic validation of essential LLM config 
+
+	// Basic validation of essential LLM config
 	// We now assume OpenAI is the ONLY provider the client will directly use.
 	if cfg.LLMProvider != config.ProviderOpenAI {
 		// but we will force OpenAI path later anyway.
 		logger.Printf("Warning: Configured LLM provider is '%s', but this client is hardcoded to use OpenAI directly.", cfg.LLMProvider)
-		// We will force the provider to OpenAI for internal logic consistency, 
+		// We will force the provider to OpenAI for internal logic consistency,
 		// assuming the intention is to *only* use OpenAI via this client.
-		cfg.LLMProvider = config.ProviderOpenAI 
+		cfg.LLMProvider = config.ProviderOpenAI
 	}
 	if cfg.OpenAIModelName == "" {
 		return nil, fmt.Errorf("OpenAIModelName is empty in config")
@@ -82,10 +84,10 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	if os.Getenv("OPENAI_API_KEY") == "" {
 		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
 	}
-	
-	// --- Slack API setup --- 
+
+	// --- Slack API setup ---
 	api := slack.New(
-		botToken, 
+		botToken,
 		slack.OptionDebug(false),
 		slack.OptionLog(log.New(os.Stdout, "slack-api: ", log.Lshortfile|log.LstdFlags)),
 		slack.OptionAppLevelToken(appToken),
@@ -110,26 +112,26 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		Timeout: 3 * time.Minute, // Increased timeout for potentially long LLM calls
 	}
 
-	// --- MCP/Bridge setup --- 
+	// --- MCP/Bridge setup ---
 	logger.Printf("Available MCP servers (%d):", len(mcpClients))
 	for name := range mcpClients {
 		logger.Printf("- %s", name)
 	}
-	
+
 	logger.Printf("Available tools (%d):", len(discoveredTools))
 	for toolName, toolInfo := range discoveredTools {
-		logger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)", 
+		logger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)",
 			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
 	}
-	
+
 	llmMCPBridge := bridge.NewLLMMCPBridge(mcpClients, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
-	// --- Log final config (always OpenAI now for this client) --- 
+	// --- Log final config (always OpenAI now for this client) ---
 	logger.Printf("Client configured to use LLM provider: %s", cfg.LLMProvider)
 	logger.Printf("OpenAI model: %s", cfg.OpenAIModelName)
 
-	// --- Create and return Client instance --- 
+	// --- Create and return Client instance ---
 	return &Client{
 		log:             logger,
 		api:             api,
@@ -188,7 +190,7 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 		case *slackevents.AppMentionEvent:
 			c.log.Printf("Received app mention in channel %s from user %s: %s", ev.Channel, ev.User, ev.Text)
 			messageText := c.botMentionRgx.ReplaceAllString(ev.Text, "")
-			 // Add to message history
+			// Add to message history
 			c.addToHistory(ev.Channel, "user", messageText)
 			// Use handleUserPrompt for app mentions too, for consistency
 			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp)
@@ -204,8 +206,6 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 				// Add to message history
 				c.addToHistory(ev.Channel, "user", ev.Text)
 				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp) // Use goroutine to avoid blocking event loop
-			} else if !isDirectMessage {
-				// Log other messages if needed, but don't process
 			}
 
 		default:
@@ -222,7 +222,7 @@ func (c *Client) addToHistory(channelID, role, content string) {
 	if !exists {
 		history = []Message{}
 	}
-	
+
 	// Add the new message
 	message := Message{
 		Role:      role,
@@ -230,38 +230,45 @@ func (c *Client) addToHistory(channelID, role, content string) {
 		Timestamp: time.Now(),
 	}
 	history = append(history, message)
-	
+
 	// Limit history size
 	if len(history) > c.historyLimit {
 		history = history[len(history)-c.historyLimit:]
 	}
-	
+
 	c.messageHistory[channelID] = history
 }
 
 // getContextFromHistory builds a context string from message history
+//
+//nolint:unused // Reserved for future use
 func (c *Client) getContextFromHistory(channelID string) string {
 	history, exists := c.messageHistory[channelID]
 	if !exists || len(history) == 0 {
 		return ""
 	}
-	
+
 	var contextBuilder strings.Builder
 	contextBuilder.WriteString("Previous conversation context:\n---\n") // Clearer start marker
-	
+
 	for _, msg := range history {
-		prefix := "User"
-		if msg.Role == "assistant" {
-			prefix = "Assistant"
-		} else if msg.Role == "tool" { // Add handling for tool results in history
-			prefix = "Tool Result"
+		switch msg.Role {
+		case "assistant":
+			prefix := "Assistant"
+			sanitizedContent := strings.ReplaceAll(msg.Content, "\n", " \\n ")
+			contextBuilder.WriteString(fmt.Sprintf("%s: %s\n", prefix, sanitizedContent))
+		case "tool":
+			prefix := "Tool Result"
+			sanitizedContent := strings.ReplaceAll(msg.Content, "\n", " \\n ")
+			contextBuilder.WriteString(fmt.Sprintf("%s: %s\n", prefix, sanitizedContent))
+		default: // "user" or any other role
+			prefix := "User"
+			sanitizedContent := strings.ReplaceAll(msg.Content, "\n", " \\n ")
+			contextBuilder.WriteString(fmt.Sprintf("%s: %s\n", prefix, sanitizedContent))
 		}
-		// Sanitize content slightly for logging/prompting (remove potential newlines)
-		sanitizedContent := strings.ReplaceAll(msg.Content, "\n", " \\n ") 
-		contextBuilder.WriteString(fmt.Sprintf("%s: %s\n", prefix, sanitizedContent))
 	}
 	contextBuilder.WriteString("---\n") // Clearer end marker
-	
+
 	contextString := contextBuilder.String()
 	c.log.Printf("DEBUG: Built conversation context for channel %s:\n%s", channelID, contextString) // Log the built context
 	return contextString
@@ -288,7 +295,7 @@ func (c *Client) generateToolPrompt() string {
 
 	var promptBuilder strings.Builder
 	promptBuilder.WriteString("You have access to the following tools. Analyze the user's request to determine if a tool is needed.\n\n")
-	
+
 	// Clear instructions on how to format the JSON response
 	promptBuilder.WriteString("TOOL USAGE INSTRUCTIONS:\n")
 	promptBuilder.WriteString("1. If a tool is appropriate AND you have ALL required arguments from the user's request, respond with ONLY the JSON object.\n")
@@ -296,7 +303,7 @@ func (c *Client) generateToolPrompt() string {
 	promptBuilder.WriteString("3. Do NOT include explanations, markdown formatting, or extra text with the JSON.\n")
 	promptBuilder.WriteString("4. If any required arguments are missing, do NOT generate the JSON. Instead, ask the user for the missing information.\n")
 	promptBuilder.WriteString("5. If no tool is needed, respond naturally to the user's request.\n\n")
-	
+
 	promptBuilder.WriteString("Available Tools:\n")
 
 	for name, toolInfo := range c.discoveredTools {
@@ -318,7 +325,7 @@ func (c *Client) generateToolPrompt() string {
 	promptBuilder.WriteString("  \"tool\": \"<tool_name>\",\n")
 	promptBuilder.WriteString("  \"args\": { <arguments matching the tool's input schema> }\n")
 	promptBuilder.WriteString("}\n\n")
-	
+
 	// Add a concrete example
 	promptBuilder.WriteString("EXAMPLE:\n")
 	promptBuilder.WriteString("If the user asks 'Show me the files in the current directory' and 'list_dir' is an available tool:\n")
@@ -326,7 +333,7 @@ func (c *Client) generateToolPrompt() string {
 	promptBuilder.WriteString("  \"tool\": \"list_dir\",\n")
 	promptBuilder.WriteString("  \"args\": { \"relative_workspace_path\": \".\" }\n")
 	promptBuilder.WriteString("}\n\n")
-	
+
 	// Emphasize again to help model handle this correctly
 	promptBuilder.WriteString("IMPORTANT: Return ONLY the raw JSON object with no explanations or formatting when using a tool.\n")
 
@@ -364,14 +371,16 @@ type openaiResponse struct {
 // handleOpenAIPrompt sends the user's text to the OpenAI API and posts the response.
 func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.cfg.OpenAIModelName, userPrompt)
-	
-	// Add "typing" indicator
-	c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS))
+
+	// Show a temporary "typing" indicator
+	if _, _, err := c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS)); err != nil {
+		c.log.Printf("Error posting typing indicator: %v", err)
+	}
 
 	// Prepare messages for OpenAI
 	messages := []openaiMessage{}
 
-	// --- Add System Prompt with Tool Info --- 
+	// --- Add System Prompt with Tool Info ---
 	systemPrompt := c.generateToolPrompt()
 	if systemPrompt != "" {
 		c.log.Printf("Adding system prompt with tool instructions")
@@ -398,7 +407,7 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 			})
 		}
 	}
-	
+
 	// Add the current user prompt
 	messages = append(messages, openaiMessage{
 		Role:    "user",
@@ -410,10 +419,10 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 		Model:    c.cfg.OpenAIModelName,
 		Messages: messages,
 	}
-	
+
 	// DEBUG: Log detailed model information
 	c.log.Printf("DEBUG: Model name being used: '%s'", c.cfg.OpenAIModelName)
-	
+
 	// Use model-specific parameters
 	if strings.Contains(c.cfg.OpenAIModelName, "o3-") {
 		// o3 models require max_completion_tokens and don't support temperature
@@ -431,30 +440,31 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 		reqPayload.MaxTokens = 2048
 		reqPayload.Temperature = 0.7
 	}
-	
+
 	// Log the final request payload for debugging
 	payloadBytes, _ := json.MarshalIndent(reqPayload, "", "  ")
 	c.log.Printf("DEBUG: Final OpenAI request payload: %s", string(payloadBytes))
-	
-	reqBody, err := json.Marshal(reqPayload)
+
+	// Marshal the request body
+	jsonBody, err := json.Marshal(reqPayload)
 	if err != nil {
-		c.log.Printf("Error marshalling OpenAI request payload: %v", err)
-		c.postMessage(channelID, threadTS, "Sorry, there was an internal error preparing your request.")
+		c.log.Printf("Error marshaling OpenAI request payload: %v", err)
+		c.postMessage(channelID, threadTS, "I encountered an error preparing my request. Please try again.")
 		return
 	}
 
 	// Create the HTTP request
 	ctx, cancel := context.WithTimeout(context.Background(), c.httpClient.Timeout)
 	defer cancel()
-	
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, 
-		"https://api.openai.com/v1/chat/completions", bytes.NewBuffer(reqBody))
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		c.log.Printf("Error creating OpenAI HTTP request: %v", err)
 		c.postMessage(channelID, threadTS, "Sorry, there was an internal error preparing your request.")
 		return
 	}
-	
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+os.Getenv("OPENAI_API_KEY"))
 
@@ -465,7 +475,15 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I couldn't reach the OpenAI API. Error: %v", err))
 		return
 	}
-	defer httpResp.Body.Close()
+
+	// Set up a defer to close the response body but also check for errors
+	defer func() {
+		if httpResp != nil && httpResp.Body != nil {
+			if err := httpResp.Body.Close(); err != nil {
+				c.log.Printf("Error closing HTTP response body: %v", err)
+			}
+		}
+	}()
 
 	// Read the response body
 	respBodyBytes, err := io.ReadAll(httpResp.Body)
@@ -509,10 +527,10 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS string) {
 	// Log the raw LLM response for debugging
 	c.log.Printf("DEBUG: Raw LLM response (first 500 chars): %s", truncateForLog(llmResponse, 500))
-	
-	// Process the LLM response through the LLM-MCP bridge to detect and execute tool calls
+
+	// Process the LLM response to see if it contains a tool call
+	var isToolResult = false
 	var finalResponse string
-	var isToolResult bool = false
 
 	if c.llmMCPBridge != nil {
 		c.log.Printf("DEBUG: Processing LLM response through bridge...")
@@ -543,22 +561,27 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 		finalResponse = llmResponse
 	}
 
-	// --- Re-prompting Logic --- 
+	// Set finalResponse to llmResponse if it's still empty
+	if finalResponse == "" {
+		finalResponse = llmResponse
+	}
+
+	// --- Re-prompting Logic ---
 	if isToolResult {
 		c.log.Printf("DEBUG: Tool executed. Re-prompting LLM with tool result.")
 		// Construct a new prompt incorporating the original prompt and the tool result
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a concise and helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
 
 		// Add history
-		c.addToHistory(channelID, "assistant", llmResponse) 
-		c.addToHistory(channelID, "tool", finalResponse) 
+		c.addToHistory(channelID, "assistant", llmResponse)
+		c.addToHistory(channelID, "tool", finalResponse)
 
 		c.log.Printf("DEBUG: Re-prompting LLM with: %s", rePrompt)
-		
+
 		// Always assume OpenAI path for re-prompting (or handle generic re-prompt)
-		c.log.Printf("TODO: Re-implement OpenAI re-prompt call") 
+		c.log.Printf("TODO: Re-implement OpenAI re-prompt call")
 		finalResponse = fmt.Sprintf("Tool Result:\n```%s```", finalResponse) // Temporary: show raw result
-		
+
 	} else {
 		// No tool was executed, add assistant response to history
 		c.addToHistory(channelID, "assistant", finalResponse)
@@ -586,7 +609,7 @@ func (c *Client) postMessage(channelID, threadTS, text string) {
 		c.log.Println("Attempted to send empty message, skipping.")
 		return
 	}
-	
+
 	// Delete "typing" indicator messages if any
 	// This is a simplistic approach - more sophisticated approaches might track message IDs
 	history, err := c.api.GetConversationHistory(&slack.GetConversationHistoryParameters{
@@ -596,12 +619,15 @@ func (c *Client) postMessage(channelID, threadTS, text string) {
 	if err == nil && history != nil {
 		for _, msg := range history.Messages {
 			if msg.User == c.botUserID && msg.Text == "..." {
-				c.api.DeleteMessage(channelID, msg.Timestamp)
+				_, _, err := c.api.DeleteMessage(channelID, msg.Timestamp)
+				if err != nil {
+					c.log.Printf("Error deleting typing indicator message: %v", err)
+				}
 				break // Just delete the most recent one
 			}
 		}
 	}
-	
+
 	_, _, err = c.api.PostMessage(
 		channelID,
 		slack.MsgOptionText(text, false),
