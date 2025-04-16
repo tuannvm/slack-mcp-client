@@ -74,8 +74,8 @@ func NewOpenAIHandler(logger *logging.Logger) *OpenAIHandler {
 	// Set up HTTP client with logging
 	options := httpClient.DefaultOptions()
 	options.Timeout = 60 * 1000000000 // 60 seconds
-	options.RequestLogger = func(method, url string, _ []byte) {
-		logger.Debug("OpenAI API Request: %s %s", method, url)
+	options.RequestLogger = func(_, url string, _ []byte) {
+		logger.Debug("OpenAI API Request: %s", url)
 	}
 	options.ResponseLogger = func(_ int, _ []byte, err error) {
 		if err != nil {

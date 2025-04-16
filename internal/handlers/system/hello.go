@@ -1,3 +1,4 @@
+// Package system provides system-level tool handlers for basic functionality
 package system
 
 import (
@@ -35,7 +36,7 @@ func NewHelloHandler(logger *logging.Logger) *HelloHandler {
 }
 
 // Handle processes a hello tool request
-func (h *HelloHandler) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *HelloHandler) Handle(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.Logger.Debug("Executing hello tool handler with args: %v", request.Params.Arguments)
 
 	name := ""

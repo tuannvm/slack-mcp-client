@@ -1,3 +1,4 @@
+// Package server provides an implementation of the Model Context Protocol server
 package server
 
 import (

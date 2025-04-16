@@ -1,3 +1,5 @@
+// Package main implements the Slack MCP client application
+// It provides a bridge between Slack and MCP servers
 package main
 
 import (
@@ -54,7 +56,7 @@ func setupLogging() *logging.Logger {
 	}
 
 	logger := logging.New("slack-mcp-client", logLevel)
-	
+
 	// Setup library debugging if requested
 	if *mcpDebug {
 		if err := os.Setenv("MCP_DEBUG", "true"); err != nil {
@@ -62,7 +64,7 @@ func setupLogging() *logging.Logger {
 		}
 		logger.Info("MCP_DEBUG environment variable set to true")
 	}
-	
+
 	return logger
 }
 
@@ -91,7 +93,7 @@ func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 	logger.Info("Final LLM Provider: %s", cfg.LLMProvider)
 	logLLMSettings(logger, cfg)
 	logger.Info("MCP Servers Configured (in file): %d", len(cfg.Servers))
-	
+
 	return cfg
 }
 
@@ -106,16 +108,16 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 	logger.Info("--- Starting MCP Client Initialization and Tool Discovery --- ")
 	for serverName, serverConf := range cfg.Servers {
 		processSingleMCPServer(
-			logger, 
-			serverName, 
-			serverConf, 
-			mcpClients, 
-			allDiscoveredTools, 
-			&failedServers, 
+			logger,
+			serverName,
+			serverConf,
+			mcpClients,
+			allDiscoveredTools,
+			&failedServers,
 			&initializedClientCount,
 		)
 	}
-	
+
 	logger.Info("--- Finished MCP Client Initialization and Tool Discovery --- ")
 
 	// Log summary
@@ -129,7 +131,7 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 	if initializedClientCount == 0 {
 		logger.Fatal("No MCP clients could be successfully initialized. Check configuration and server status.")
 	}
-	
+
 	return mcpClients, allDiscoveredTools
 }
 
@@ -166,7 +168,7 @@ func processSingleMCPServer(
 		*failedServers = append(*failedServers, serverName+fmt.Sprintf("(create: %s)", err))
 		return
 	}
-	
+
 	serverLogger.Info("Successfully created MCP client instance")
 
 	// Defer client closure
@@ -182,18 +184,18 @@ func processSingleMCPServer(
 		*failedServers = append(*failedServers, serverName+"(initialize failed)")
 		return
 	}
-	
+
 	// Store successfully initialized client
 	mcpClients[serverName] = mcpClient
 	*initializedClientCount++
-	
+
 	// Discover tools
 	serverLogger.Info("Discovering tools (timeout: 20s)...")
 	discoveryCtx, discoveryCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer discoveryCancel()
 
 	listResult, toolsErr := mcpClient.GetAvailableTools(discoveryCtx)
-	
+
 	if toolsErr != nil {
 		serverLogger.Warn("Failed to retrieve tools: %v", toolsErr)
 		*failedServers = append(*failedServers, serverName+"(tool discovery failed)")
@@ -265,7 +267,7 @@ func determineServerMode(logger *logging.Logger, serverConf config.ServerConfig)
 func createMCPClient(logger *logging.Logger, mode string, serverConf config.ServerConfig, mcpLogger *log.Logger) (*mcp.Client, error) {
 	var mcpClient *mcp.Client
 	var createErr error
-	
+
 	if mode == "stdio" {
 		if serverConf.Command == "" {
 			logger.Error("Skipping stdio server: 'command' field is required")
@@ -285,7 +287,7 @@ func createMCPClient(logger *logging.Logger, mode string, serverConf config.Serv
 		logger.Info("Creating %s MCP client for address: %s", mode, address)
 		mcpClient, createErr = mcp.NewClient(mode, address, nil, serverConf.Env, mcpLogger) // Pass nil for args
 	}
-	
+
 	return mcpClient, createErr
 }
 
@@ -294,14 +296,14 @@ func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client) err
 	logger.Info("Attempting to initialize MCP client (timeout: 1s)...")
 	initCtx, initCancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer initCancel()
-	
+
 	initErr := client.Initialize(initCtx)
 	if initErr != nil {
 		logger.Warn("Failed to initialize MCP client: %v", initErr)
 		logger.Warn("Client will not be used for tool discovery or execution")
 		return initErr
 	}
-	
+
 	logger.Info("MCP client successfully initialized")
 	return nil
 }
@@ -338,9 +340,9 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		cfg.SlackBotToken,
 		cfg.SlackAppToken,
 		slackLogger,
-		mcpClients,       // Pass the map of initialized clients
-		discoveredTools,  // Pass the map of tool information
-		cfg,              // Pass the whole config object
+		mcpClients,      // Pass the map of initialized clients
+		discoveredTools, // Pass the map of tool information
+		cfg,             // Pass the whole config object
 	)
 	if err != nil {
 		logger.Fatal("Failed to initialize Slack client: %v", err)

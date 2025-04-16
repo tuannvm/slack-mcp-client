@@ -1,3 +1,5 @@
+// Package slackbot implements the Slack integration for the MCP client
+// It provides event handling, message processing, and integration with LLM services
 package slackbot
 
 import (

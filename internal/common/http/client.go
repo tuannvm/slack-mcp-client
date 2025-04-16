@@ -1,3 +1,4 @@
+// Package http provides an HTTP client with retries, timeouts, and logging capabilities
 package http
 
 import (
@@ -29,8 +30,8 @@ func DefaultOptions() ClientOptions {
 		MaxRetries:     3,
 		RetryBackoff:   500 * time.Millisecond,
 		MaxBackoff:     5 * time.Second,
-		RequestLogger:  func(method, url string, body []byte) {},
-		ResponseLogger: func(statusCode int, body []byte, err error) {},
+		RequestLogger:  func(_, _ string, _ []byte) {},    // nolint:revive // Using underscores for unused parameters
+		ResponseLogger: func(_ int, _ []byte, _ error) {}, // nolint:revive // Using underscores for unused parameters
 	}
 }
 

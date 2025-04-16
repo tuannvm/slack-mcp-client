@@ -1,11 +1,13 @@
 # Golangci linter configuration
 # See: https://golangci-lint.run/usage/configuration/
 
+# Configuration version
+version: "2"
+
+# Configuration for linters
 linters-settings:
   gocyclo:
     min-complexity: 15
-  govet:
-    check-shadowing: true
   revive:
     confidence: 0.0
   misspell:
@@ -14,18 +16,21 @@ linters-settings:
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
-    - vendor
 
-linters:
+formatters:
   enable:
     - gofmt
     - goimports
+
+linters:
+  enable:
     - errcheck
     - govet
     - gosec
     - revive
     - gocyclo
+    - staticcheck
+    - unused
 
 issues:
   exclude-dirs:

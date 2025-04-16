@@ -1,3 +1,4 @@
+// Package client provides an implementation of the Model Context Protocol client
 package client
 
 import (
@@ -123,7 +124,7 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 
 // StartListener connects to the MCP server and listens for events.
 // This should be run in a goroutine.
-func (c *Client) StartListener(ctx context.Context) error {
+func (c *Client) StartListener(_ context.Context) error { // nolint:revive // Using underscore for unused parameter
 	c.log.Printf("Starting event listener for %s...", c.serverAddr)
 
 	// The official MCP Go client handles the connection and event listening
@@ -236,7 +237,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 		} else {
 			errMsgText = fmt.Sprintf("Tool '%s' execution failed", toolName)
 		}
-		
+
 		c.log.Printf("Error: %s", errMsgText)
 		return "", fmt.Errorf("%s", errMsgText)
 	}
@@ -465,7 +466,7 @@ func (c *Client) SetArguments(args []string) {
 // runNetworkDiagnostics performs basic network checks to diagnose connection issues
 //
 //nolint:unused // Reserved for future use
-func (c *Client) runNetworkDiagnostics(ctx context.Context, serverAddr string) error {
+func (c *Client) runNetworkDiagnostics(_ context.Context, serverAddr string) error { // nolint:revive // Using underscore for unused parameter
 	// Parse URL to extract host and port
 	c.log.Printf("Running network diagnostics for %s", serverAddr)
 

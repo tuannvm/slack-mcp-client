@@ -1,3 +1,4 @@
+// Package handlers provides base functionality for MCP tool handlers
 package handlers
 
 import (

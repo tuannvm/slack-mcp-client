@@ -1,3 +1,4 @@
+// Package llm provides handlers for integrating with language model providers
 package llm
 
 import (
@@ -60,8 +61,8 @@ func NewOllamaHandler(logger *logging.Logger) *OllamaHandler {
 	// Set up HTTP client with logging
 	options := httpClient.DefaultOptions()
 	options.Timeout = 120 * 1000000000 // 120 seconds for Ollama, as it can be slower
-	options.RequestLogger = func(method, url string, _ []byte) {
-		logger.Debug("Ollama API Request: %s %s", method, url)
+	options.RequestLogger = func(_, url string, _ []byte) {
+		logger.Debug("Ollama API Request: %s", url)
 	}
 	options.ResponseLogger = func(statusCode int, _ []byte, err error) {
 		if err != nil {

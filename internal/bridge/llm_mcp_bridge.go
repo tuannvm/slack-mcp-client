@@ -175,10 +175,11 @@ func (b *LLMMCPBridge) tryRegexJSONExtraction(response string) *ToolCall {
 	return nil
 }
 
-// constructToolCall attempts to construct a tool call from a tool name and args JSON string
+// constructToolCall attempts to parse JSON args and create a ToolCall struct
 func (b *LLMMCPBridge) constructToolCall(toolName string, argsJSON string) *ToolCall {
 	var args map[string]interface{}
-	if err := json.Unmarshal([]byte(argsJSON), &args); err == nil {
+	err := json.Unmarshal([]byte(argsJSON), &args)
+	if err == nil {
 		toolCall := &ToolCall{
 			Tool: toolName,
 			Args: args,
@@ -187,25 +188,27 @@ func (b *LLMMCPBridge) constructToolCall(toolName string, argsJSON string) *Tool
 		if _, exists := b.availableTools[toolCall.Tool]; exists {
 			b.logger.Printf("DEBUG: Manual JSON construction successful")
 			return toolCall
-		} else {
-			b.logger.Printf("Warning: LLM requested tool '%s' in regex match, but it is not available.", toolCall.Tool)
 		}
-	} else {
-		b.logger.Printf("DEBUG: JSON args parsing failed: %v", err)
 
-		// Try even more lenient approach - extract key-value pairs
-		if simpleArgs, ok := b.extractSimpleKeyValuePairs(argsJSON); ok && len(simpleArgs) > 0 {
-			toolCall := &ToolCall{
-				Tool: toolName,
-				Args: simpleArgs,
-			}
+		b.logger.Printf("Warning: LLM requested tool '%s' in regex match, but it is not available.", toolCall.Tool)
+		return nil
+	}
 
-			if _, exists := b.availableTools[toolCall.Tool]; exists {
-				b.logger.Printf("DEBUG: Simplified key-value extraction successful")
-				return toolCall
-			}
+	b.logger.Printf("DEBUG: JSON args parsing failed: %v", err)
+
+	// Try even more lenient approach - extract key-value pairs
+	if simpleArgs, ok := b.extractSimpleKeyValuePairs(argsJSON); ok && len(simpleArgs) > 0 {
+		toolCall := &ToolCall{
+			Tool: toolName,
+			Args: simpleArgs,
+		}
+
+		if _, exists := b.availableTools[toolCall.Tool]; exists {
+			b.logger.Printf("DEBUG: Simplified key-value extraction successful")
+			return toolCall
 		}
 	}
+
 	return nil
 }
 
@@ -214,9 +217,9 @@ func (b *LLMMCPBridge) isValidToolCall(toolCall ToolCall) bool {
 	if toolCall.Tool != "" && toolCall.Args != nil {
 		if _, exists := b.availableTools[toolCall.Tool]; exists {
 			return true
-		} else {
-			b.logger.Printf("Warning: LLM requested tool '%s', but it is not available.", toolCall.Tool)
 		}
+
+		b.logger.Printf("Warning: LLM requested tool '%s', but it is not available.", toolCall.Tool)
 	}
 	return false
 }
@@ -226,9 +229,9 @@ func (b *LLMMCPBridge) getClientForTool(toolName string) *mcp.Client {
 	if toolInfo, exists := b.availableTools[toolName]; exists {
 		if client, clientExists := b.mcpClients[toolInfo.ServerName]; clientExists {
 			return client
-		} else {
-			b.logger.Printf("Warning: Tool '%s' found, but its server '%s' is not in the client map.", toolName, toolInfo.ServerName)
 		}
+
+		b.logger.Printf("Warning: Tool '%s' found, but its server '%s' is not in the client map.", toolName, toolInfo.ServerName)
 	}
 	// Fallback or error handling if tool/server not found
 	b.logger.Printf("Warning: Could not find a specific client for tool '%s'. No fallback configured.", toolName)
