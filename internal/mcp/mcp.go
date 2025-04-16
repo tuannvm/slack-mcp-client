@@ -18,4 +18,4 @@ var NewServer = server.NewServer
 type Client = client.Client
 
 // NewClient creates a new MCP client using the implementation in internal/mcp/client
-var NewClient = client.NewClient 
+var NewClient = client.NewClient

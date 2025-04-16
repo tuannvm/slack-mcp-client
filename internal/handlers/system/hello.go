@@ -23,7 +23,7 @@ func NewHelloHandler(logger *logging.Logger) *HelloHandler {
 			mcp.Description("The name to say hello to (Optional)"),
 		),
 	)
-	
+
 	return &HelloHandler{
 		BaseHandler: handlers.BaseHandler{
 			Name:        "hello",
@@ -60,4 +60,4 @@ func (h *HelloHandler) Handle(ctx context.Context, request mcp.CallToolRequest) 
 			},
 		},
 	}, nil
-} 
+}

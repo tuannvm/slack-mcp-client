@@ -11,13 +11,13 @@ import (
 type ToolHandler interface {
 	// Handle processes an MCP tool request and returns a result or an error
 	Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
-	
+
 	// GetName returns the name of the tool
 	GetName() string
-	
+
 	// GetDescription returns a human-readable description of the tool
 	GetDescription() string
-	
+
 	// GetToolDefinition returns the MCP tool definition
 	GetToolDefinition() mcp.Tool
 }
@@ -73,4 +73,4 @@ func NewHandlerFuncAdapter(
 // Handle delegates to the handler function
 func (h *HandlerFuncAdapter) Handle(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return h.HandleFunc(ctx, request)
-} 
+}

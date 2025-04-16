@@ -15,30 +15,30 @@ import (
 
 // GenerateRequest represents a request to the Ollama API
 type GenerateRequest struct {
-	Model       string                 `json:"model"`
-	Prompt      string                 `json:"prompt"`
-	Options     map[string]interface{} `json:"options,omitempty"`
-	System      string                 `json:"system,omitempty"`
-	Template    string                 `json:"template,omitempty"`
-	Context     []int                  `json:"context,omitempty"`
-	Stream      bool                   `json:"stream,omitempty"`
-	Raw         bool                   `json:"raw,omitempty"`
-	Keep_alive  string                 `json:"keep_alive,omitempty"`
+	Model      string                 `json:"model"`
+	Prompt     string                 `json:"prompt"`
+	Options    map[string]interface{} `json:"options,omitempty"`
+	System     string                 `json:"system,omitempty"`
+	Template   string                 `json:"template,omitempty"`
+	Context    []int                  `json:"context,omitempty"`
+	Stream     bool                   `json:"stream,omitempty"`
+	Raw        bool                   `json:"raw,omitempty"`
+	Keep_alive string                 `json:"keep_alive,omitempty"`
 }
 
 // GenerateResponse represents a response from the Ollama API
 type GenerateResponse struct {
-	Model              string  `json:"model"`
-	CreatedAt          string  `json:"created_at"`
-	Response           string  `json:"response"`
-	Done               bool    `json:"done"`
-	Context            []int   `json:"context,omitempty"`
-	TotalDuration      int64   `json:"total_duration,omitempty"`
-	LoadDuration       int64   `json:"load_duration,omitempty"`
-	PromptEvalCount    int     `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration int64   `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int     `json:"eval_count,omitempty"`
-	EvalDuration       int64   `json:"eval_duration,omitempty"`
+	Model              string `json:"model"`
+	CreatedAt          string `json:"created_at"`
+	Response           string `json:"response"`
+	Done               bool   `json:"done"`
+	Context            []int  `json:"context,omitempty"`
+	TotalDuration      int64  `json:"total_duration,omitempty"`
+	LoadDuration       int64  `json:"load_duration,omitempty"`
+	PromptEvalCount    int    `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration int64  `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int    `json:"eval_count,omitempty"`
+	EvalDuration       int64  `json:"eval_duration,omitempty"`
 }
 
 // OllamaHandler implements the Ollama tool
@@ -52,11 +52,11 @@ type OllamaHandler struct {
 func NewOllamaHandler(logger *logging.Logger) *OllamaHandler {
 	// Get API endpoint from environment
 	apiEndpoint := os.Getenv("OLLAMA_API_ENDPOINT")
-	
+
 	if apiEndpoint == "" {
 		apiEndpoint = "http://localhost:11434"
 	}
-	
+
 	// Set up HTTP client with logging
 	options := httpClient.DefaultOptions()
 	options.Timeout = 120 * 1000000000 // 120 seconds for Ollama, as it can be slower
@@ -70,7 +70,7 @@ func NewOllamaHandler(logger *logging.Logger) *OllamaHandler {
 		}
 		logger.Debug("Ollama API Response: status=%d, body_length=%d", statusCode, len(body))
 	}
-	
+
 	// Create tool definition
 	tool := mcp.NewTool(
 		"ollama",
@@ -90,7 +90,7 @@ func NewOllamaHandler(logger *logging.Logger) *OllamaHandler {
 			mcp.Description("Maximum number of tokens to generate"),
 		),
 	)
-	
+
 	return &OllamaHandler{
 		BaseHandler: handlers.BaseHandler{
 			Name:        "ollama",
@@ -176,14 +176,14 @@ func (h *OllamaHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 	// Make the request
 	var generateResp GenerateResponse
 	statusCode, err := h.httpClient.DoJSONRequest(
-		ctx, 
-		"POST", 
-		h.apiEndpoint+"/api/generate", 
-		generateReq, 
-		&generateResp, 
+		ctx,
+		"POST",
+		h.apiEndpoint+"/api/generate",
+		generateReq,
+		&generateResp,
 		headers,
 	)
-	
+
 	if err != nil {
 		h.Logger.Error("Ollama API request failed: %v", err)
 		if customErrors.Is(err, customErrors.ErrTooManyRequests) {
@@ -191,7 +191,7 @@ func (h *OllamaHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 		}
 		return nil, customErrors.NewOllamaError("API request failed", "request_failed", err)
 	}
-	
+
 	if statusCode != 200 {
 		return nil, customErrors.NewOllamaError(
 			fmt.Sprintf("API returned error status: %d", statusCode),
@@ -216,4 +216,4 @@ func (h *OllamaHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 // IsConfigured returns true if the handler is properly configured
 func (h *OllamaHandler) IsConfigured() bool {
 	return true // Ollama just needs an endpoint, which has a default
-} 
+}

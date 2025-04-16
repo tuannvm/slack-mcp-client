@@ -11,15 +11,15 @@ import (
 
 // ServerConfig defines the configuration for a single MCP server.
 type ServerConfig struct {
-	Name      string            `json:"name"`      // Name of the server (derived from the key in mcpServers)
-	Command   string            `json:"command"`   // Command to execute
-	Args      []string          `json:"args"`      // Arguments for the command
-	Env       map[string]string `json:"env"`       // Environment variables for the command
-	Disabled  bool              `json:"disabled"`  // Whether the server is disabled
+	Name     string            `json:"name"`     // Name of the server (derived from the key in mcpServers)
+	Command  string            `json:"command"`  // Command to execute
+	Args     []string          `json:"args"`     // Arguments for the command
+	Env      map[string]string `json:"env"`      // Environment variables for the command
+	Disabled bool              `json:"disabled"` // Whether the server is disabled
 	// Fields for connection details
-	Address   string            `json:"address"`   // Connection address
-	URL       string            `json:"url"`       // URL (alternative to address)
-	Mode      string            `json:"mode"`      // Communication mode (http, sse, stdio)
+	Address string `json:"address"` // Connection address
+	URL     string `json:"url"`     // URL (alternative to address)
+	Mode    string `json:"mode"`    // Communication mode (http, sse, stdio)
 }
 
 // LLMProvider specifies which LLM provider to use
@@ -32,11 +32,11 @@ const (
 
 // Config holds the application configuration.
 type Config struct {
-	SlackBotToken     string                     `json:"-"` // Loaded from env
-	SlackAppToken     string                     `json:"-"` // Loaded from env
-	OpenAIModelName   string                     `json:"-"` // Loaded from env
-	LLMProvider       LLMProvider               `json:"-"` // Will always be OpenAI now
-	Servers           map[string]ServerConfig    `json:"servers"` // Map of server configs by name
+	SlackBotToken   string                  `json:"-"`       // Loaded from env
+	SlackAppToken   string                  `json:"-"`       // Loaded from env
+	OpenAIModelName string                  `json:"-"`       // Loaded from env
+	LLMProvider     LLMProvider             `json:"-"`       // Will always be OpenAI now
+	Servers         map[string]ServerConfig `json:"servers"` // Map of server configs by name
 }
 
 // LoadConfig loads configuration from environment variables and a JSON file.
@@ -68,10 +68,10 @@ func LoadConfig(configFilePath string) (*Config, error) {
 func loadConfigFromEnv() (*Config, error) {
 	// Initialize cfg fields, setting provider directly to OpenAI
 	cfg := &Config{
-		SlackBotToken:     os.Getenv("SLACK_BOT_TOKEN"),
-		SlackAppToken:     os.Getenv("SLACK_APP_TOKEN"),
-		LLMProvider:       ProviderOpenAI, // Set directly
-		Servers:           make(map[string]ServerConfig),
+		SlackBotToken: os.Getenv("SLACK_BOT_TOKEN"),
+		SlackAppToken: os.Getenv("SLACK_APP_TOKEN"),
+		LLMProvider:   ProviderOpenAI, // Set directly
+		Servers:       make(map[string]ServerConfig),
 	}
 
 	// Load OpenAI model environment variable
@@ -95,8 +95,13 @@ func loadConfigFromEnv() (*Config, error) {
 
 // loadServersFromFile loads MCP server configurations from a JSON file
 func loadServersFromFile(configFilePath string, cfg *Config) error {
+	// Validate the file path to prevent path traversal attacks
+	if strings.Contains(configFilePath, "..") {
+		return fmt.Errorf("suspicious path detected in config file path: '%s'", configFilePath)
+	}
+
 	// Read the config file
-	configFileBytes, err := os.ReadFile(configFilePath)
+	configFileBytes, err := os.ReadFile(configFilePath) //nolint:gosec // File path is validated above
 	if err != nil {
 		return fmt.Errorf("failed to read config file '%s': %w", configFilePath, err)
 	}
@@ -124,12 +129,12 @@ func loadServersFromFile(configFilePath string, cfg *Config) error {
 
 		// Set the name from the key in the map
 		server.Name = name
-		
+
 		// Handle URL field (move to Address if Address is empty)
 		if server.URL != "" && server.Address == "" {
 			server.Address = server.URL
 		}
-		
+
 		// Validate connection details
 		if server.Command == "" && server.Address == "" {
 			return fmt.Errorf("server '%s' is missing both 'command' and 'address'/'url'", name)
@@ -151,7 +156,7 @@ func loadServersFromFile(configFilePath string, cfg *Config) error {
 			// Valid mode, normalize to lowercase
 			server.Mode = strings.ToLower(server.Mode)
 		default:
-			return fmt.Errorf("server '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'", 
+			return fmt.Errorf("server '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'",
 				name, server.Mode)
 		}
 

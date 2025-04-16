@@ -21,19 +21,19 @@ type OpenAIMessage struct {
 
 // OpenAIChatRequest represents a request to the OpenAI chat completions API
 type OpenAIChatRequest struct {
-	Model               string         `json:"model"`
+	Model               string          `json:"model"`
 	Messages            []OpenAIMessage `json:"messages"`
-	Temperature         float64        `json:"temperature,omitempty"`
-	MaxTokens           int            `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
-	Stream              bool           `json:"stream,omitempty"`
+	Temperature         float64         `json:"temperature,omitempty"`
+	MaxTokens           int             `json:"max_tokens,omitempty"`
+	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
+	Stream              bool            `json:"stream,omitempty"`
 }
 
 // OpenAIChatResponseChoice represents a choice in the OpenAI API response
 type OpenAIChatResponseChoice struct {
-	Index        int          `json:"index"`
+	Index        int           `json:"index"`
 	Message      OpenAIMessage `json:"message"`
-	FinishReason string       `json:"finish_reason"`
+	FinishReason string        `json:"finish_reason"`
 }
 
 // OpenAIChatResponseUsage represents usage statistics in the OpenAI API response
@@ -45,12 +45,12 @@ type OpenAIChatResponseUsage struct {
 
 // OpenAIChatResponse represents a response from the OpenAI chat completions API
 type OpenAIChatResponse struct {
-	ID      string                    `json:"id"`
-	Object  string                    `json:"object"`
-	Created int64                     `json:"created"`
-	Model   string                    `json:"model"`
+	ID      string                     `json:"id"`
+	Object  string                     `json:"object"`
+	Created int64                      `json:"created"`
+	Model   string                     `json:"model"`
 	Choices []OpenAIChatResponseChoice `json:"choices"`
-	Usage   OpenAIChatResponseUsage   `json:"usage"`
+	Usage   OpenAIChatResponseUsage    `json:"usage"`
 }
 
 // OpenAIHandler implements the OpenAI tool
@@ -66,11 +66,11 @@ func NewOpenAIHandler(logger *logging.Logger) *OpenAIHandler {
 	// Get API key from environment
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	apiEndpoint := os.Getenv("OPENAI_API_ENDPOINT")
-	
+
 	if apiEndpoint == "" {
 		apiEndpoint = "https://api.openai.com/v1/chat/completions"
 	}
-	
+
 	// Set up HTTP client with logging
 	options := httpClient.DefaultOptions()
 	options.Timeout = 60 * 1000000000 // 60 seconds
@@ -84,7 +84,7 @@ func NewOpenAIHandler(logger *logging.Logger) *OpenAIHandler {
 		}
 		logger.Debug("OpenAI API Response: status=%d, body_length=%d", statusCode, len(body))
 	}
-	
+
 	// Create tool definition
 	tool := mcp.NewTool(
 		"openai",
@@ -106,7 +106,7 @@ func NewOpenAIHandler(logger *logging.Logger) *OpenAIHandler {
 			mcp.Description("Maximum number of tokens to generate"),
 		),
 	)
-	
+
 	return &OpenAIHandler{
 		BaseHandler: handlers.BaseHandler{
 			Name:        "openai",
@@ -141,7 +141,7 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 
 	// Handle messages parameter
 	var messages []OpenAIMessage
-	
+
 	// First, check if there's a simple "prompt" parameter as a shortcut
 	if prompt, ok := args["prompt"].(string); ok {
 		messages = []OpenAIMessage{
@@ -156,11 +156,11 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 			if msgMap, ok := rawMsg.(map[string]interface{}); ok {
 				role, _ := msgMap["role"].(string)
 				content, _ := msgMap["content"].(string)
-				
+
 				if role == "" || content == "" {
 					return nil, customErrors.ErrBadRequest
 				}
-				
+
 				messages = append(messages, OpenAIMessage{
 					Role:    role,
 					Content: content,
@@ -204,7 +204,7 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 	// Make the request
 	var chatResp OpenAIChatResponse
 	statusCode, err := h.httpClient.DoJSONRequest(ctx, "POST", h.apiEndpoint, chatReq, &chatResp, headers)
-	
+
 	if err != nil {
 		h.Logger.Error("OpenAI API request failed: %v", err)
 		if customErrors.Is(err, customErrors.ErrTooManyRequests) {
@@ -212,7 +212,7 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 		}
 		return nil, customErrors.NewOpenAIError("API request failed", "request_failed", err)
 	}
-	
+
 	if statusCode != 200 {
 		return nil, customErrors.NewOpenAIError(
 			fmt.Sprintf("API returned error status: %d", statusCode),
@@ -244,4 +244,4 @@ func (h *OpenAIHandler) Handle(ctx context.Context, request mcp.CallToolRequest)
 // IsConfigured returns true if the handler is properly configured
 func (h *OpenAIHandler) IsConfigured() bool {
 	return h.apiKey != ""
-} 
+}

@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/common"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
@@ -23,9 +23,9 @@ import (
 
 var (
 	// Define command-line flags
-	configFile = flag.String("config", "", "Path to the MCP server configuration JSON file")
-	debug      = flag.Bool("debug", false, "Enable debug logging")
-	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
+	configFile  = flag.String("config", "", "Path to the MCP server configuration JSON file")
+	debug       = flag.Bool("debug", false, "Enable debug logging")
+	mcpDebug    = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
 	openaiModel = flag.String("openai-model", "", "OpenAI model to use (overrides config/env)")
 )
 
@@ -37,7 +37,7 @@ func main() {
 	if *debug {
 		logLevel = logging.LevelDebug
 	}
-	
+
 	appLogger := logging.New("slack-mcp-client", logLevel)
 	appLogger.Info("Starting Slack MCP Client (debug=%v)", *debug)
 
@@ -66,7 +66,9 @@ func main() {
 
 	// If mcpDebug flag is set, enable library debug output
 	if *mcpDebug {
-		os.Setenv("MCP_DEBUG", "true")
+		if err := os.Setenv("MCP_DEBUG", "true"); err != nil {
+			appLogger.Error("Failed to set MCP_DEBUG environment variable: %v", err)
+		}
 		appLogger.Info("MCP_DEBUG environment variable set to true")
 	}
 
@@ -165,14 +167,14 @@ func main() {
 		// --- 3. Discover Tools ---
 		serverLogger.Info("Discovering tools (timeout: 20s)...")
 		discoveryCtx, discoveryCancel := context.WithTimeout(context.Background(), 20*time.Second)
-		
+
 		listResult, toolsErr := mcpClient.GetAvailableTools(discoveryCtx)
 		discoveryCancel()
 
 		if toolsErr != nil {
 			serverLogger.Warn("Failed to retrieve tools: %v", toolsErr)
 			failedServers = append(failedServers, serverName+"(tool discovery failed)")
-			continue 
+			continue
 		}
 
 		if listResult == nil || len(listResult.Tools) == 0 {
@@ -205,12 +207,12 @@ func main() {
 					InputSchema: inputSchemaMap,
 				}
 				if *mcpDebug {
-				    serverLogger.Debug("Stored tool: '%s' (Desc: %s)", toolName, toolDef.Description)
-				    if *debug {
-				        // Only log the full schema if debug mode is enabled
-				        schemaJSON, _ := json.MarshalIndent(inputSchemaMap, "", "  ")
-				        serverLogger.Debug("Tool schema: %s", string(schemaJSON))
-				    }
+					serverLogger.Debug("Stored tool: '%s' (Desc: %s)", toolName, toolDef.Description)
+					if *debug {
+						// Only log the full schema if debug mode is enabled
+						schemaJSON, _ := json.MarshalIndent(inputSchemaMap, "", "  ")
+						serverLogger.Debug("Tool schema: %s", string(schemaJSON))
+					}
 				}
 			} else {
 				existingInfo := allDiscoveredTools[toolName]
@@ -232,7 +234,7 @@ func main() {
 	if initializedClientCount == 0 {
 		appLogger.Fatal("No MCP clients could be successfully initialized. Check configuration and server status.")
 	}
-	
+
 	// Initialize Slack Bot Client using the successfully initialized clients and discovered tools
 	// Create a custom logger for the slack client
 	// Note: We'll fully integrate our custom logger with the Slack client in a future update
@@ -242,7 +244,7 @@ func main() {
 	//	slackLoggerLevel = logger.LevelDebug
 	// }
 	// slackAppLogger := logger.New(os.Stdout, "slack: ", logFlags, slackLoggerLevel)
-	
+
 	// Continue using standard logger for Slack client for now, as it expects *log.Logger
 	slackLogger := log.New(os.Stdout, "slack: ", log.LstdFlags)
 	client, err := slackbot.NewClient(
@@ -274,7 +276,7 @@ func applyCommandLineOverrides(logger *logging.Logger, cfg *config.Config) error
 			// This case should technically not be reachable anymore
 			logger.Warn("Warning: --openai-model flag provided, but configured provider is not OpenAI ('%s'). Flag ignored.", cfg.LLMProvider)
 		}
-	} 
+	}
 	return nil // No errors
 }
 
