@@ -10,8 +10,8 @@ github.com/gorilla/websocket v1.4.2 h1:+/TMaTYc4QFitKJxsQ7Yye35DkWvkdLcvGKqM+x0U
 github.com/gorilla/websocket v1.4.2/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
-github.com/mark3labs/mcp-go v0.20.0 h1:NYZDZ10GBKHVz4SdQ2tPFSDFQFKCTrTZJLn4wj6jAaw=
-github.com/mark3labs/mcp-go v0.20.0/go.mod h1:KmJndYv7GIgcPVwEKJjNcbhVQ+hJGJhrCCB/9xITzpE=
+github.com/mark3labs/mcp-go v0.20.1 h1:E1Bbx9K8d8kQmDZ1QHblM38c7UU2evQ2LlkANk1U/zw=
+github.com/mark3labs/mcp-go v0.20.1/go.mod h1:KmJndYv7GIgcPVwEKJjNcbhVQ+hJGJhrCCB/9xITzpE=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/slack-go/slack v0.16.0 h1:khp/WCFv+Hb/B/AJaAwvcxKun0hM6grN0bUZ8xG60P8=
