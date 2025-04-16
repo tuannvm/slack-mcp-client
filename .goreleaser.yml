@@ -50,6 +50,11 @@ release:
   draft: false
   prerelease: auto
   name_template: "{{.ProjectName}} v{{.Version}}"
+  
+  # Setting this to true means GoReleaser will not fail when running on an untagged commit
+  # This helps with our semantic-release workflow
+  disable: false
+  skip_validate: true
 
 # Update Docker configuration to be compatible with most GoReleaser versions
 dockers:

@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.extract_version.outputs.version }}
+      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,7 +35,34 @@ jobs:
 
       - name: Install semantic-release
         run: |
-          npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
+          npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github @semantic-release/commit-analyzer @semantic-release/release-notes-generator conventional-changelog-conventionalcommits
+
+      - name: Create .releaserc file
+        run: |
+          cat > .releaserc << EOF
+          {
+            "branches": ["main"],
+            "plugins": [
+              ["@semantic-release/commit-analyzer", {
+                "preset": "conventionalcommits",
+                "releaseRules": [
+                  {"type": "docs", "release": "patch"},
+                  {"type": "fix", "release": "patch"},
+                  {"type": "feat", "release": "minor"},
+                  {"type": "perf", "release": "patch"},
+                  {"scope": "no-release", "release": false}
+                ]
+              }],
+              "@semantic-release/release-notes-generator",
+              "@semantic-release/changelog",
+              "@semantic-release/github",
+              ["@semantic-release/git", {
+                "assets": ["CHANGELOG.md", "package.json"],
+                "message": "chore(release): \${nextRelease.version} [skip ci]\n\n\${nextRelease.notes}"
+              }]
+            ]
+          }
+          EOF
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -58,16 +86,19 @@ jobs:
 
       - name: Extract version from git tag
         id: extract_version
-        if: steps.semantic.outcome == 'success'
+        if: steps.semantic.outputs.new_release_published == 'true'
         run: |
           VERSION=$(git describe --tags --abbrev=0)
           VERSION=${VERSION#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Released version: $VERSION"
+          
+          # Ensure we're on the correct commit with the tag
+          git checkout $(git rev-parse HEAD)
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
-        if: steps.extract_version.outcome == 'success'
+        if: steps.semantic.outputs.new_release_published == 'true'
         with:
           version: v1.18.2
           distribution: goreleaser
@@ -80,7 +111,7 @@ jobs:
       # Fallback manual release in case of failure
       - name: Build Binaries Manually (Fallback)
         id: manual_build
-        if: failure() && steps.extract_version.outcome == 'success'
+        if: failure() && steps.extract_version.outputs.version != ''
         run: |
           echo "GoReleaser may have failed, building binaries manually as fallback"
           mkdir -p dist/binaries
@@ -112,13 +143,14 @@ jobs:
   publish-docker-image:
     name: Publish Docker Image
     needs: semantic-release
-    if: needs.semantic-release.outputs.version != ''
+    if: needs.semantic-release.outputs.new_release_published == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: v${{ needs.semantic-release.outputs.version }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
