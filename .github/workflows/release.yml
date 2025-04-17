@@ -1,6 +1,7 @@
 name: Release Pipeline
 
 on:
+  workflow_dispatch:
   workflow_run:
     workflows: ["Build & Verify Pipeline"]
     branches: [main]
@@ -16,7 +17,7 @@ permissions:
 jobs:
   semantic-release:
     name: Semantic Release
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.extract_version.outputs.version }}
@@ -48,6 +49,8 @@ jobs:
                 "releaseRules": [
                   {"type": "docs", "release": "patch"},
                   {"type": "fix", "release": "patch"},
+                  {"type": "refactor", "release": "patch"},
+                  {"type": "style", "release": "patch"},
                   {"type": "feat", "release": "minor"},
                   {"type": "perf", "release": "patch"},
                   {"scope": "no-release", "release": false}
