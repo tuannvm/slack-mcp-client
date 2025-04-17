@@ -368,50 +368,32 @@ type openaiResponse struct {
 	Choices []openaiChoice `json:"choices"`
 }
 
-// handleOpenAIPrompt sends the user's text to the OpenAI API and posts the response.
-func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
-	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.cfg.OpenAIModelName, userPrompt)
-
-	// Show a temporary "typing" indicator
-	if _, _, err := c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS)); err != nil {
-		c.log.Printf("Error posting typing indicator: %v", err)
-	}
-
+// callOpenAI sends a prompt to the OpenAI API and returns the response
+func (c *Client) callOpenAI(prompt, contextHistory string) (string, error) {
 	// Prepare messages for OpenAI
 	messages := []openaiMessage{}
 
-	// --- Add System Prompt with Tool Info ---
+	// Add system prompt with tool info if available
 	systemPrompt := c.generateToolPrompt()
 	if systemPrompt != "" {
-		c.log.Printf("Adding system prompt with tool instructions")
 		messages = append(messages, openaiMessage{
 			Role:    "system",
 			Content: systemPrompt,
 		})
-	} else {
-		c.log.Printf("No tools available, not adding tool system prompt.")
 	}
 
-	// Add conversation history
-	history, exists := c.messageHistory[channelID]
-	if exists && len(history) > 0 {
-		c.log.Printf("Adding %d messages from conversation history", len(history))
-		for _, msg := range history {
-			role := "user"
-			if msg.Role == "assistant" {
-				role = "assistant"
-			}
-			messages = append(messages, openaiMessage{
-				Role:    role,
-				Content: msg.Content,
-			})
-		}
+	// Add conversation context if provided
+	if contextHistory != "" {
+		messages = append(messages, openaiMessage{
+			Role:    "system",
+			Content: "Previous conversation: " + contextHistory,
+		})
 	}
 
-	// Add the current user prompt
+	// Add the current prompt
 	messages = append(messages, openaiMessage{
 		Role:    "user",
-		Content: userPrompt,
+		Content: prompt,
 	})
 
 	// Prepare the basic request payload
@@ -420,37 +402,21 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 		Messages: messages,
 	}
 
-	// DEBUG: Log detailed model information
-	c.log.Printf("DEBUG: Model name being used: '%s'", c.cfg.OpenAIModelName)
-
 	// Use model-specific parameters
 	if strings.Contains(c.cfg.OpenAIModelName, "o3-") {
-		// o3 models require max_completion_tokens and don't support temperature
-		c.log.Printf("DEBUG: Detected o3 model - Using max_completion_tokens=2048 and NO temperature")
 		reqPayload.MaxCompletionTokens = 2048
-		// Temperature is intentionally omitted for o3 models
 	} else if strings.Contains(c.cfg.OpenAIModelName, "gpt-4o") {
-		// gpt-4o also requires max_completion_tokens
-		c.log.Printf("DEBUG: Detected gpt-4o model - Using max_completion_tokens=2048 and temperature=0.7")
 		reqPayload.MaxCompletionTokens = 2048
 		reqPayload.Temperature = 0.7
 	} else {
-		// Other models use max_tokens and temperature
-		c.log.Printf("DEBUG: Using standard parameters (max_tokens=2048, temperature=0.7)")
 		reqPayload.MaxTokens = 2048
 		reqPayload.Temperature = 0.7
 	}
 
-	// Log the final request payload for debugging
-	payloadBytes, _ := json.MarshalIndent(reqPayload, "", "  ")
-	c.log.Printf("DEBUG: Final OpenAI request payload: %s", string(payloadBytes))
-
 	// Marshal the request body
 	jsonBody, err := json.Marshal(reqPayload)
 	if err != nil {
-		c.log.Printf("Error marshaling OpenAI request payload: %v", err)
-		c.postMessage(channelID, threadTS, "I encountered an error preparing my request. Please try again.")
-		return
+		return "", fmt.Errorf("error marshaling OpenAI request: %w", err)
 	}
 
 	// Create the HTTP request
@@ -460,9 +426,7 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		c.log.Printf("Error creating OpenAI HTTP request: %v", err)
-		c.postMessage(channelID, threadTS, "Sorry, there was an internal error preparing your request.")
-		return
+		return "", fmt.Errorf("error creating OpenAI HTTP request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -471,56 +435,66 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 	// Send the request to the OpenAI API
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		c.log.Printf("Error sending request to OpenAI API: %v", err)
-		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I couldn't reach the OpenAI API. Error: %v", err))
-		return
+		return "", fmt.Errorf("error sending request to OpenAI API: %w", err)
 	}
 
-	// Set up a defer to close the response body but also check for errors
+	// Set up a defer to close the response body
 	defer func() {
 		if httpResp != nil && httpResp.Body != nil {
-			if err := httpResp.Body.Close(); err != nil {
-				c.log.Printf("Error closing HTTP response body: %v", err)
-			}
+			_ = httpResp.Body.Close()
 		}
 	}()
 
 	// Read the response body
 	respBodyBytes, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		c.log.Printf("Error reading OpenAI response body: %v", err)
-		c.postMessage(channelID, threadTS, "Sorry, there was an error reading the response from the OpenAI API.")
-		return
+		return "", fmt.Errorf("error reading OpenAI response: %w", err)
 	}
 
 	// Check response status code
 	if httpResp.StatusCode != http.StatusOK {
-		c.log.Printf("OpenAI API returned non-OK status: %s. Body: %s", httpResp.Status, string(respBodyBytes))
-		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, the OpenAI API returned an error (Status: %s). Response: ```%s```", httpResp.Status, string(respBodyBytes)))
-		return
+		return "", fmt.Errorf("OpenAI API returned error (Status: %s): %s", httpResp.Status, string(respBodyBytes))
 	}
 
 	// Parse the JSON response from OpenAI
 	var openaiResp openaiResponse
 	if err := json.Unmarshal(respBodyBytes, &openaiResp); err != nil {
-		c.log.Printf("Error parsing OpenAI JSON response: %v. Body: %s", err, string(respBodyBytes))
-		c.postMessage(channelID, threadTS, "Sorry, I received an unexpected response format from the OpenAI API.")
-		return
+		return "", fmt.Errorf("error parsing OpenAI response: %w", err)
 	}
 
 	// Check if we have choices in the response
 	if len(openaiResp.Choices) == 0 {
-		c.log.Printf("OpenAI API returned no choices in response")
-		c.postMessage(channelID, threadTS, "Sorry, OpenAI provided no response.")
-		return
+		return "", fmt.Errorf("OpenAI API returned no choices")
 	}
 
 	// Extract the text from the first choice
-	openaiText := strings.TrimSpace(openaiResp.Choices[0].Message.Content)
-	c.log.Printf("Received response from OpenAI. Length: %d", len(openaiText))
+	return strings.TrimSpace(openaiResp.Choices[0].Message.Content), nil
+}
+
+// handleOpenAIPrompt sends the user's text to the OpenAI API and posts the response.
+func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
+	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.cfg.OpenAIModelName, userPrompt)
+
+	// Show a temporary "typing" indicator
+	if _, _, err := c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS)); err != nil {
+		c.log.Printf("Error posting typing indicator: %v", err)
+	}
+
+	// Get context from history
+	contextHistory := c.getContextFromHistory(channelID)
+
+	// Call OpenAI API
+	openaiResponse, err := c.callOpenAI(userPrompt, contextHistory)
+	if err != nil {
+		c.log.Printf("Error from OpenAI API: %v", err)
+		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error: %v", err))
+		return
+	}
+
+	c.log.Printf("Received response from OpenAI. Length: %d", len(openaiResponse))
 
 	// Process the LLM response through the MCP pipeline
-	c.processLLMResponseAndReply(openaiText, userPrompt, channelID, threadTS)
+	c.processLLMResponseAndReply(openaiResponse, userPrompt, channelID, threadTS)
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
@@ -578,9 +552,13 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 
 		c.log.Printf("DEBUG: Re-prompting LLM with: %s", rePrompt)
 
-		// Always assume OpenAI path for re-prompting (or handle generic re-prompt)
-		c.log.Printf("TODO: Re-implement OpenAI re-prompt call")
-		finalResponse = fmt.Sprintf("Tool Result:\n```%s```", finalResponse) // Temporary: show raw result
+		// Re-prompt OpenAI with the tool result
+		var repromptErr error
+		finalResponse, repromptErr = c.callOpenAI(rePrompt, c.getContextFromHistory(channelID))
+		if repromptErr != nil {
+			c.log.Printf("Error during OpenAI re-prompt: %v", repromptErr)
+			finalResponse = fmt.Sprintf("Tool Result:\n```%s```\n\n(Error re-prompting LLM: %v)", finalResponse, repromptErr)
+		}
 
 	} else {
 		// No tool was executed, add assistant response to history
