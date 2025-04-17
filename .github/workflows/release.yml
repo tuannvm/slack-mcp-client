@@ -1,7 +1,6 @@
 name: Release Pipeline
 
 on:
-  workflow_dispatch:
   workflow_run:
     workflows: ["Build & Verify Pipeline"]
     branches: [main]
@@ -17,11 +16,10 @@ permissions:
 jobs:
   semantic-release:
     name: Semantic Release
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.extract_version.outputs.version }}
-      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,36 +34,7 @@ jobs:
 
       - name: Install semantic-release
         run: |
-          npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github @semantic-release/commit-analyzer @semantic-release/release-notes-generator conventional-changelog-conventionalcommits
-
-      - name: Create .releaserc file
-        run: |
-          cat > .releaserc << EOF
-          {
-            "branches": ["main"],
-            "plugins": [
-              ["@semantic-release/commit-analyzer", {
-                "preset": "conventionalcommits",
-                "releaseRules": [
-                  {"type": "docs", "release": "patch"},
-                  {"type": "fix", "release": "patch"},
-                  {"type": "refactor", "release": "patch"},
-                  {"type": "style", "release": "patch"},
-                  {"type": "feat", "release": "minor"},
-                  {"type": "perf", "release": "patch"},
-                  {"scope": "no-release", "release": false}
-                ]
-              }],
-              "@semantic-release/release-notes-generator",
-              "@semantic-release/changelog",
-              "@semantic-release/github",
-              ["@semantic-release/git", {
-                "assets": ["CHANGELOG.md", "package.json"],
-                "message": "chore(release): \${nextRelease.version} [skip ci]\n\n\${nextRelease.notes}"
-              }]
-            ]
-          }
-          EOF
+          npm install -g semantic-release @semantic-release/changelog @semantic-release/git @semantic-release/github
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -85,29 +54,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          RELEASE_OUTPUT=$(semantic-release)
-          echo "$RELEASE_OUTPUT" # Print the output for debugging
-          if echo "$RELEASE_OUTPUT" | grep -q "Published release"; then
-            echo "new_release_published=true" >> $GITHUB_OUTPUT
-          else
-            echo "new_release_published=false" >> $GITHUB_OUTPUT
-          fi
+          semantic-release
 
       - name: Extract version from git tag
         id: extract_version
-        if: steps.semantic.outputs.new_release_published == 'true'
+        if: steps.semantic.outcome == 'success'
         run: |
           VERSION=$(git describe --tags --abbrev=0)
           VERSION=${VERSION#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Released version: $VERSION"
-          
-          # Ensure we're on the correct commit with the tag
-          git checkout $(git rev-parse HEAD)
 
       - name: Run GoReleaser
-        if: steps.semantic.outputs.new_release_published == 'true'
         uses: goreleaser/goreleaser-action@v6
+        if: steps.extract_version.outcome == 'success'
         with:
           version: v1.18.2
           distribution: goreleaser
@@ -117,49 +77,18 @@ jobs:
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
           GORELEASER_CURRENT_TAG: v${{ steps.extract_version.outputs.version }}
 
-      # Fallback manual release in case of failure
-      - name: Build Binaries Manually (Fallback)
-        id: manual_build
-        if: failure() && steps.extract_version.outputs.version != ''
-        run: |
-          echo "GoReleaser may have failed, building binaries manually as fallback"
-          mkdir -p dist/binaries
-          GOOS=linux GOARCH=amd64 go build -o dist/binaries/slack-mcp-client-linux-amd64 ./cmd/slack-mcp-client
-          GOOS=darwin GOARCH=amd64 go build -o dist/binaries/slack-mcp-client-darwin-amd64 ./cmd/slack-mcp-client
-          GOOS=windows GOARCH=amd64 go build -o dist/binaries/slack-mcp-client-windows-amd64.exe ./cmd/slack-mcp-client
-          cd dist/binaries
-          tar -czf slack-mcp-client-linux-amd64.tar.gz slack-mcp-client-linux-amd64
-          tar -czf slack-mcp-client-darwin-amd64.tar.gz slack-mcp-client-darwin-amd64
-          zip slack-mcp-client-windows-amd64.zip slack-mcp-client-windows-amd64.exe
-          cd ../..
-          echo "manual_build=true" >> $GITHUB_OUTPUT
-
-      - name: Create Manual GitHub Release (Fallback)
-        if: steps.manual_build.outputs.manual_build == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: v${{ steps.extract_version.outputs.version }}
-          name: Release v${{ steps.extract_version.outputs.version }}
-          draft: false
-          prerelease: false
-          files: |
-            dist/binaries/slack-mcp-client-linux-amd64.tar.gz
-            dist/binaries/slack-mcp-client-darwin-amd64.tar.gz
-            dist/binaries/slack-mcp-client-windows-amd64.zip
 
   # Build and publish Docker image with semantic version tags
   publish-docker-image:
     name: Publish Docker Image
     needs: semantic-release
-    if: needs.semantic-release.outputs.new_release_published == 'true'
+    if: needs.semantic-release.outputs.version != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: v${{ needs.semantic-release.outputs.version }}
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -202,4 +131,4 @@ jobs:
 
 env:
   GO_VERSION: "1.24"
-  REGISTRY: ghcr.io 
+  REGISTRY: ghcr.io
