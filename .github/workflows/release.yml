@@ -85,7 +85,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          semantic-release
+          RELEASE_OUTPUT=$(semantic-release)
+          echo "$RELEASE_OUTPUT" # Print the output for debugging
+          if echo "$RELEASE_OUTPUT" | grep -q "Published release"; then
+            echo "new_release_published=true" >> $GITHUB_OUTPUT
+          else
+            echo "new_release_published=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Extract version from git tag
         id: extract_version
@@ -100,8 +106,8 @@ jobs:
           git checkout $(git rev-parse HEAD)
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
         if: steps.semantic.outputs.new_release_published == 'true'
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: v1.18.2
           distribution: goreleaser
