@@ -482,7 +482,7 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID)
-	
+
 	// Call OpenAI API
 	openaiResponse, err := c.callOpenAI(userPrompt, contextHistory)
 	if err != nil {
@@ -490,7 +490,7 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error: %v", err))
 		return
 	}
-	
+
 	c.log.Printf("Received response from OpenAI. Length: %d", len(openaiResponse))
 
 	// Process the LLM response through the MCP pipeline
