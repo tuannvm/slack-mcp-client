@@ -285,6 +285,11 @@ func CreateMCPLangChainHandler(logger *logging.Logger) *MCPHandler {
 		mcp.WithNumber("max_tokens",
 			mcp.Description("Maximum number of tokens to generate"),
 		),
+		// Add the target_provider parameter
+		mcp.WithString("target_provider",
+			mcp.Description("The target underlying provider LangChain should use (e.g., 'openai', 'ollama')"),
+			// Not required, LangChain provider might have its own default logic
+		),
 	)
 
 	handleFunc := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -316,12 +321,19 @@ func CreateMCPLangChainHandler(logger *logging.Logger) *MCPHandler {
 			options.MaxTokens = int(maxTokens)
 		}
 
+		// Extract target provider if provided
+		if targetProvider, ok := args["target_provider"].(string); ok && targetProvider != "" {
+			options.TargetProvider = targetProvider
+			logger.Debug("Using target provider: %s", targetProvider)
+		}
+
 		var result string
 		var err error
 
 		// Process input (either prompt or messages)
 		if prompt, ok := args["prompt"].(string); ok && prompt != "" {
 			// Use the provider to generate response with prompt
+			// Pass the updated options including TargetProvider
 			result, err = provider.GenerateCompletion(ctx, prompt, options)
 		} else if rawMessages, ok := args["messages"].([]interface{}); ok && len(rawMessages) > 0 {
 			// Convert messages to standard format
@@ -341,6 +353,7 @@ func CreateMCPLangChainHandler(logger *logging.Logger) *MCPHandler {
 			}
 
 			// Use the provider to generate response with messages
+			// Pass the updated options including TargetProvider
 			result, err = provider.GenerateChatCompletion(ctx, messages, options)
 		} else {
 			return nil, errors.NewLLMError("missing_input", "No prompt or messages provided")

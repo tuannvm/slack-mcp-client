@@ -36,11 +36,12 @@ const (
 
 // Config holds the application configuration.
 type Config struct {
-	SlackBotToken   string                  `json:"-"`       // Loaded from env
-	SlackAppToken   string                  `json:"-"`       // Loaded from env
-	OpenAIModelName string                  `json:"-"`       // Loaded from env
-	LLMProvider     LLMProvider             `json:"-"`       // LangChain is the default gateway
-	Servers         map[string]ServerConfig `json:"servers"` // Map of server configs by name
+	SlackBotToken           string                  `json:"-"`       // Loaded from env
+	SlackAppToken           string                  `json:"-"`       // Loaded from env
+	OpenAIModelName         string                  `json:"-"`       // Loaded from env
+	LangChainTargetProvider string                  `json:"-"`       // Target provider for LangChain (e.g., "openai", "ollama")
+	LLMProvider             LLMProvider             `json:"-"`       // LangChain is the default gateway
+	Servers                 map[string]ServerConfig `json:"servers"` // Map of server configs by name
 }
 
 // LoadConfig loads configuration from environment variables and a JSON file.

@@ -17,8 +17,10 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging" // Added for registry logger
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
+	"github.com/tuannvm/slack-mcp-client/internal/llm" // Added for llm types
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
 
@@ -31,8 +33,8 @@ type Client struct {
 	botMentionRgx *regexp.Regexp
 	mcpClients    map[string]*mcp.Client
 	llmMCPBridge  *handlers.LLMMCPBridge
-	llmClient     *LLMClient     // Consolidated LLM client
-	cfg           *config.Config // Holds the application configuration
+	llmRegistry   *llm.ProviderRegistry // Added: LLM provider registry
+	cfg           *config.Config        // Holds the application configuration
 	// Message history for context (limited per channel)
 	messageHistory map[string][]Message
 	historyLimit   int
@@ -67,19 +69,9 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	}
 
 	// Basic validation of essential LLM config
-	// We now assume OpenAI is the ONLY provider the client will directly use.
-	if cfg.LLMProvider != config.ProviderOpenAI {
-		// but we will force OpenAI path later anyway.
-		logger.Printf("Warning: Configured LLM provider is '%s', but this client is hardcoded to use OpenAI directly.", cfg.LLMProvider)
-		// We will force the provider to OpenAI for internal logic consistency,
-		// assuming the intention is to *only* use OpenAI via this client.
-		cfg.LLMProvider = config.ProviderOpenAI
-	}
-	if cfg.OpenAIModelName == "" {
-		return nil, fmt.Errorf("OpenAIModelName is empty in config")
-	}
-	if os.Getenv("OPENAI_API_KEY") == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set")
+	// We now assume LangChain is the primary interaction point
+	if cfg.LangChainTargetProvider == "" {
+		logger.Printf("Warning: LangChainTargetProvider is not set in config. LangChain might use its default.")
 	}
 
 	// --- Slack API setup ---
@@ -120,13 +112,14 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	llmMCPBridge := handlers.NewLLMMCPBridgeFromClients(mcpClients, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
-	// Initialize the LLM client
-	llmClient := NewLLMClient(logger, discoveredTools, cfg)
-	logger.Printf("LLM client initialized with provider: %s", cfg.LLMProvider)
+	// Initialize the LLM provider registry
+	wrappedLogger := logging.New("llm-registry", logging.LevelDebug)
+	registry := llm.NewProviderRegistry(wrappedLogger)
+	logger.Printf("LLM provider registry initialized.")
 
-	// --- Log final config (always OpenAI now for this client) ---
-	logger.Printf("Client configured to use LLM provider: %s", cfg.LLMProvider)
-	logger.Printf("OpenAI model: %s", cfg.OpenAIModelName)
+	// --- Log final config ---
+	logger.Printf("Client configured to use LangChain with target provider: '%s'", cfg.LangChainTargetProvider)
+	logger.Printf("Default model hint for LangChain (may be overridden): %s", cfg.OpenAIModelName)
 
 	// --- Create and return Client instance ---
 	return &Client{
@@ -137,10 +130,10 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		botMentionRgx:   mentionRegex,
 		mcpClients:      mcpClients,
 		llmMCPBridge:    llmMCPBridge,
-		llmClient:       llmClient,
-		cfg:             cfg, // Store the config object
+		llmRegistry:     registry, // Added
+		cfg:             cfg,
 		messageHistory:  make(map[string][]Message),
-		historyLimit:    10, // Store the last 10 messages per channel
+		historyLimit:    10,
 		discoveredTools: discoveredTools,
 	}, nil
 }
@@ -271,20 +264,37 @@ func (c *Client) getContextFromHistory(channelID string) string {
 	return contextString
 }
 
-// handleUserPrompt ALWAYS sends the user's text to the OpenAI provider.
+// handleUserPrompt sends the user's text to the configured LLM provider (LangChain).
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
-	// Log the provider value (will likely be OpenAI now)
-	c.log.Printf("DEBUG: handleUserPrompt - Configured LLM provider: '%s'", c.cfg.LLMProvider)
+	// Log the provider value (will likely be LangChain now)
+	c.log.Printf("DEBUG: handleUserPrompt - Routing prompt via LangChain (Target: '%s')", c.cfg.LangChainTargetProvider)
 	c.log.Printf("DEBUG: User prompt: '%s'", userPrompt)
 
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
-	// Route based on the configured LLM provider - ALWAYS GO TO OPENAI NOW
-	c.log.Printf("DEBUG: handleUserPrompt - Forcing branch to OpenAI")
-	c.handleOpenAIPrompt(userPrompt, channelID, threadTS)
+	// Show a temporary "typing" indicator
+	if _, _, err := c.api.PostMessage(channelID, slack.MsgOptionText("Thinking...", false), slack.MsgOptionTS(threadTS)); err != nil {
+		c.log.Printf("Error posting typing indicator: %v", err)
+	}
+
+	// Get context from history
+	contextHistory := c.getContextFromHistory(channelID)
+
+	// Call LLM using the integrated logic (previously in llm_client.GenerateCompletion)
+	llmResponse, err := c.callLLM(userPrompt, contextHistory)
+	if err != nil {
+		c.log.Printf("Error from LLM provider: %v", err)
+		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error: %v", err))
+		return
+	}
+
+	c.log.Printf("Received response from LLM. Length: %d", len(llmResponse))
+
+	// Process the LLM response through the MCP pipeline
+	c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
 }
 
-// Function to generate the system prompt string
+// generateToolPrompt generates the prompt string for available tools
 func (c *Client) generateToolPrompt() string {
 	if len(c.discoveredTools) == 0 {
 		return "" // No tools available
@@ -337,7 +347,8 @@ func (c *Client) generateToolPrompt() string {
 	return promptBuilder.String()
 }
 
-// callLLM is a wrapper function that calls the appropriate LLM implementation
+// callLLM generates a text completion using the LangChain provider as a gateway.
+// This function now incorporates the logic previously in LLMClient.GenerateCompletion.
 func (c *Client) callLLM(prompt, contextHistory string) (string, error) {
 	// Create a context with appropriate timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -346,44 +357,63 @@ func (c *Client) callLLM(prompt, contextHistory string) (string, error) {
 	// Generate the system prompt with tool information
 	systemPrompt := c.generateToolPrompt()
 
-	// Use the LLM client to generate the completion
-	if c.llmClient == nil {
-		// This should ideally not happen if NewClient ensures llmClient is initialized
-		c.log.Printf("CRITICAL: LLM client is not initialized!")
-		return "", fmt.Errorf("LLM client not initialized")
-	}
-	return c.llmClient.GenerateCompletion(ctx, prompt, systemPrompt, contextHistory)
+	// Prepare messages with system prompt and context history
+	messages := []llm.RequestMessage{}
 
-	// --- Fallback logic removed ---
-}
-
-// handleOpenAIPrompt sends the user's text to the LLM and posts the response.
-func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
-	c.log.Printf("Sending prompt to LLM (Model: %s): %s", c.cfg.OpenAIModelName, userPrompt)
-
-	// Show a temporary "typing" indicator
-	if _, _, err := c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS)); err != nil {
-		c.log.Printf("Error posting typing indicator: %v", err)
+	// Add system prompt with tool info if available
+	if systemPrompt != "" {
+		messages = append(messages, llm.RequestMessage{
+			Role:    "system",
+			Content: systemPrompt,
+		})
 	}
 
-	// Get context from history
-	contextHistory := c.getContextFromHistory(channelID)
+	// Add conversation context if provided
+	if contextHistory != "" {
+		messages = append(messages, llm.RequestMessage{
+			Role:    "system",
+			Content: "Previous conversation: " + contextHistory,
+		})
+	}
 
-	// Call LLM using our consolidated client
-	llmResponse, err := c.callLLM(userPrompt, contextHistory)
+	// Add the user's prompt
+	messages = append(messages, llm.RequestMessage{
+		Role:    "user",
+		Content: prompt,
+	})
+
+	// Build options based on the config (LangChain might override or use these)
+	options := llm.ProviderOptions{
+		Model:          c.cfg.OpenAIModelName, // LangChain might use this or its own config
+		Temperature:    0.7,
+		MaxTokens:      2048,
+		TargetProvider: c.cfg.LangChainTargetProvider, // Specify the target provider for LangChain
+	}
+
+	// --- Explicitly use LangChain provider ---
+	providerName := "langchain"
+	c.log.Printf("Attempting to use LLM provider: %s via registry", providerName)
+
+	// Get the LangChain provider implementation from the registry
+	provider, err := c.llmRegistry.GetProvider(providerName)
 	if err != nil {
-		c.log.Printf("Error from LLM provider: %v", err)
-		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error: %v", err))
-		return
+		return "", fmt.Errorf("failed to get required LLM provider '%s': %w", providerName, err)
+	}
+	if provider == nil {
+		// This case should ideally not happen if GetProvider returns no error, but check defensively.
+		return "", fmt.Errorf("required LLM provider '%s' not found or not initialized in registry", providerName)
+	}
+	if !provider.IsAvailable() {
+		return "", fmt.Errorf("required LLM provider '%s' is not available (check configuration/environment)", providerName)
 	}
 
-	c.log.Printf("Received response from LLM. Length: %d", len(llmResponse))
-
-	// Process the LLM response through the MCP pipeline
-	c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
+	c.log.Printf("Using LangChain provider for chat completion.")
+	// Call the LangChain provider to generate the completion
+	return provider.GenerateChatCompletion(ctx, messages, options)
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
+// Incorporates logic previously in LLMClient.ProcessToolResponse.
 func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS string) {
 	// Log the raw LLM response for debugging
 	c.log.Printf("DEBUG: Raw LLM response (first 500 chars): %s", truncateForLog(llmResponse, 500))
@@ -392,12 +422,41 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
-	// Process the LLM response to see if it contains a tool call
-	finalResponse, isToolResult, err := c.llmClient.ProcessToolResponse(ctx, llmResponse, userPrompt, c.llmMCPBridge)
+	// --- Process Tool Response (Logic from LLMClient.ProcessToolResponse) ---
+	var finalResponse string
+	var isToolResult bool
+	var toolProcessingErr error
 
-	if err != nil {
-		c.log.Printf("ERROR: Tool processing error: %v", err)
-		c.postMessage(channelID, threadTS, finalResponse) // This will contain the error message
+	if c.llmMCPBridge == nil {
+		// If bridge is nil, just use the original response
+		finalResponse = llmResponse
+		isToolResult = false
+		toolProcessingErr = nil
+		c.log.Printf("WARN: LLMMCPBridge is nil, skipping tool processing.")
+	} else {
+		// Process the response through the bridge
+		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt)
+		if err != nil {
+			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
+			isToolResult = false
+			toolProcessingErr = err // Store the error
+		} else {
+			// If the processed response is different from the original, a tool was executed
+			if processedResponse != llmResponse {
+				finalResponse = processedResponse
+				isToolResult = true
+			} else {
+				// No tool was executed
+				finalResponse = llmResponse
+				isToolResult = false
+			}
+		}
+	}
+	// --- End of Process Tool Response Logic ---
+
+	if toolProcessingErr != nil {
+		c.log.Printf("ERROR: Tool processing error: %v", toolProcessingErr)
+		c.postMessage(channelID, threadTS, finalResponse) // Post the error message
 		return
 	}
 
@@ -410,8 +469,8 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a concise and helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
 
 		// Add history
-		c.addToHistory(channelID, "assistant", llmResponse)
-		c.addToHistory(channelID, "tool", finalResponse)
+		c.addToHistory(channelID, "assistant", llmResponse) // Original LLM response (tool call JSON)
+		c.addToHistory(channelID, "tool", finalResponse)    // Tool execution result
 
 		c.log.Printf("DEBUG: Re-prompting LLM with: %s", rePrompt)
 
@@ -420,7 +479,8 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 		finalResponse, repromptErr = c.callLLM(rePrompt, c.getContextFromHistory(channelID))
 		if repromptErr != nil {
 			c.log.Printf("Error during LLM re-prompt: %v", repromptErr)
-			finalResponse = fmt.Sprintf("Tool Result:\n```%s```\n\n(Error re-prompting LLM: %v)", finalResponse, repromptErr)
+			// Fallback: Show the tool result and the error
+			finalResponse = fmt.Sprintf("Tool Result:\n```%s```\n\n(Error generating final response: %v)", finalResponse, repromptErr)
 		}
 	} else {
 		// No tool was executed, add assistant response to history
