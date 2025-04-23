@@ -14,6 +14,8 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 )
 
 // Client provides an interface for interacting with an MCP server.
@@ -64,10 +66,10 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 	case "http", "sse":
 		mcpClient, err = client.NewSSEMCPClient(addressOrCommand)
 	default:
-		return nil, fmt.Errorf("unsupported MCP mode: %s", mode)
+		return nil, customErrors.NewMCPError("invalid_mode", fmt.Sprintf("Unsupported MCP mode: %s", mode))
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to create MCP client for %s: %w", addressOrCommand, err)
+		return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 	}
 
 	// Create the wrapper client
@@ -94,7 +96,7 @@ func (c *Client) StartListener(_ context.Context) error { // nolint:revive // Us
 // This should be called before making any tool calls.
 func (c *Client) Initialize(ctx context.Context) error {
 	if c.client == nil {
-		return fmt.Errorf("MCP client is nil")
+		return customErrors.NewMCPError("client_nil", "MCP client is nil")
 	}
 
 	// If already successfully initialized, skip
@@ -125,7 +127,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 			c.log.Printf("  Hint: Stdio process may have exited prematurely. Check command, args, and ensure required env vars are set correctly in mcp-servers.json.")
 		}
 
-		return fmt.Errorf("MCP client initialization failed: %w", initErr)
+		return customErrors.WrapMCPError(initErr, "initialization_failed", "MCP client initialization failed")
 	}
 
 	c.log.Printf("MCP client for %s successfully initialized.", c.serverAddr)
@@ -136,7 +138,7 @@ func (c *Client) Initialize(ctx context.Context) error {
 // CallTool delegates the tool call to the official MCP client.
 func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	if c.client == nil {
-		return "", fmt.Errorf("MCP client reference is nil")
+		return "", customErrors.NewMCPError("client_nil", "MCP client reference is nil")
 	}
 
 	// Ensure the client is initialized before making any tool calls.
@@ -146,7 +148,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 		if err := c.Initialize(initCtx); err != nil {
 			cancel()
 			c.log.Printf("ERROR: Failed to initialize MCP client before CallTool: %v", err)
-			return "", fmt.Errorf("failed to initialize MCP client before CallTool: %w", err)
+			return "", customErrors.WrapMCPError(err, "init_before_call", "Failed to initialize MCP client before tool call")
 		}
 		cancel()
 		c.log.Printf("DEBUG: Initialization successful during CallTool attempt.") // Added log
@@ -165,7 +167,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	if err != nil {
 		c.log.Printf("Error calling tool '%s': %v", toolName, err)
 		// Optional: add transport-specific hints here
-		return "", fmt.Errorf("failed to call tool '%s': %w", toolName, err)
+		return "", customErrors.WrapMCPError(err, "tool_call_failed", fmt.Sprintf("Failed to call tool '%s'", toolName))
 	}
 
 	// Check if the tool call resulted in an error
@@ -174,16 +176,17 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 		var errMsgText string
 		if len(result.Content) > 0 {
 			if textContent, ok := result.Content[0].(mcp.TextContent); ok {
-				errMsgText = fmt.Sprintf("Tool '%s' returned an error: %s", toolName, textContent.Text)
+				errMsgText = textContent.Text
 			} else {
-				errMsgText = fmt.Sprintf("Tool '%s' execution failed", toolName)
+				errMsgText = "Unknown error"
 			}
 		} else {
-			errMsgText = fmt.Sprintf("Tool '%s' execution failed", toolName)
+			errMsgText = "Unknown error"
 		}
 
-		c.log.Printf("Error: %s", errMsgText)
-		return "", fmt.Errorf("%s", errMsgText)
+		c.log.Printf("Error: Tool '%s' returned an error: %s", toolName, errMsgText)
+		return "", customErrors.NewMCPError("tool_execution_error", 
+			fmt.Sprintf("Tool '%s' returned an error", toolName)).WithData("error_message", errMsgText)
 	}
 
 	// Extract text content from the result
@@ -210,7 +213,7 @@ func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, e
 		if err := c.Initialize(initCtx); err != nil {
 			cancel()
 			c.log.Printf("ERROR: Initialization attempt failed during GetAvailableTools: %v", err)
-			return nil, fmt.Errorf("client not initialized before GetAvailableTools: %w", err)
+			return nil, customErrors.WrapMCPError(err, "init_before_list", "Client not initialized before getting available tools")
 		}
 		cancel()
 		c.log.Printf("DEBUG: Initialization successful during GetAvailableTools attempt.")
@@ -262,13 +265,13 @@ func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, e
 
 		// If we got here, ListTools failed even after potential retry
 		c.log.Printf("ERROR: Failed to get tools via native ListTools method for %s: %v", c.serverAddr, err)
-		return nil, fmt.Errorf("failed to get tools via native ListTools method: %w", err)
+		return nil, customErrors.WrapMCPError(err, "tool_discovery_failed", "Failed to get tools via native ListTools method")
 	}
 
 	// --- Fallback if client type does not implement ListTools ---
 	c.log.Printf("Error: Underlying MCP client (%T) for %s does not implement the toolLister interface. Cannot discover tools.", c.client, c.serverAddr)
 	// Return nil struct and error
-	return nil, fmt.Errorf("client type %T does not support tool discovery", c.client)
+	return nil, customErrors.NewMCPError("unsupported_operation", fmt.Sprintf("Client type %T does not support tool discovery", c.client))
 }
 
 // Close cleans up the MCP client resources.

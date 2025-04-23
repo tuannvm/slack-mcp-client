@@ -156,7 +156,7 @@ func (h *LangChainHandler) Handle(ctx context.Context, request mcp.CallToolReque
 
 	// Check if LLM client is configured
 	if h.llm == nil {
-		return nil, customErrors.NewOpenAIError("LangChainGo client not initialized", "missing_client", nil)
+		return nil, customErrors.NewLLMError("missing_client", "LangChainGo client not initialized")
 	}
 
 	// Extract parameters from request
@@ -261,10 +261,10 @@ func (h *LangChainHandler) callLLMWithPrompt(ctx context.Context, prompt string,
 	completion, err := llms.GenerateFromSinglePrompt(ctx, h.llm, prompt, options...)
 	if err != nil {
 		h.Logger.Error("LangChainGo OpenAI request failed: %v", err)
-		return "", customErrors.NewOpenAIError(
-			fmt.Sprintf("LangChainGo API request failed: %v", err),
-			"request_failed",
+		return "", customErrors.WrapLLMError(
 			err,
+			"request_failed",
+			"Failed to generate completion from LangChainGo",
 		)
 	}
 
