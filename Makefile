@@ -47,6 +47,7 @@ vet:
 
 # Run linter
 lint:
+	go fmt ./...
 	$(GOLINT) run ./...
 
 # Check all (format, lint, vet, test)

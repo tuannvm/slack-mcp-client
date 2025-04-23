@@ -250,17 +250,17 @@ func (h *OpenAIHandler) makeAPIRequest(ctx context.Context, chatReq OpenAIChatRe
 	if err != nil {
 		h.Logger.Error("OpenAI API request failed: %v", err)
 		if customErrors.Is(err, customErrors.ErrTooManyRequests) {
-			return OpenAIChatResponse{}, customErrors.NewOpenAIError("Rate limit exceeded", "rate_limit_exceeded", err)
+			return OpenAIChatResponse{}, customErrors.NewLLMError("rate_limit_exceeded", "Rate limit exceeded for OpenAI API").WithData("provider", "openai")
 		}
-		return OpenAIChatResponse{}, customErrors.NewOpenAIError("API request failed", "request_failed", err)
+		return OpenAIChatResponse{}, customErrors.WrapLLMError(err, "request_failed", "OpenAI API request failed")
 	}
 
 	if statusCode != 200 {
-		return OpenAIChatResponse{}, customErrors.NewOpenAIError(
-			fmt.Sprintf("API returned error status: %d", statusCode),
-			"api_error",
+		return OpenAIChatResponse{}, customErrors.WrapLLMError(
 			customErrors.StatusCodeToError(statusCode),
-		)
+			"api_error",
+			fmt.Sprintf("OpenAI API returned error status: %d", statusCode),
+		).WithData("status_code", statusCode)
 	}
 
 	return chatResp, nil
@@ -270,7 +270,7 @@ func (h *OpenAIHandler) makeAPIRequest(ctx context.Context, chatReq OpenAIChatRe
 func (h *OpenAIHandler) createToolResponse(chatResp OpenAIChatResponse) (*mcp.CallToolResult, error) {
 	// Check if we have choices in the response
 	if len(chatResp.Choices) == 0 {
-		return nil, customErrors.NewOpenAIError("API returned no choices", "no_choices", nil)
+		return nil, customErrors.NewLLMError("no_choices", "OpenAI API returned no choices in response").WithData("model", chatResp.Model)
 	}
 
 	// Extract the message content

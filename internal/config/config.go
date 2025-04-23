@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 )
 
 // ServerConfig defines the configuration for a single MCP server.
@@ -27,8 +28,10 @@ type ServerConfig struct {
 type LLMProvider string
 
 const (
-	// ProviderOpenAI uses OpenAI models
+	// ProviderOpenAI uses OpenAI models with direct implementation
 	ProviderOpenAI LLMProvider = "openai"
+	// ProviderLangChain uses LangChainGo with OpenAI models
+	ProviderLangChain LLMProvider = "langchain"
 )
 
 // Config holds the application configuration.
@@ -36,7 +39,7 @@ type Config struct {
 	SlackBotToken   string                  `json:"-"`       // Loaded from env
 	SlackAppToken   string                  `json:"-"`       // Loaded from env
 	OpenAIModelName string                  `json:"-"`       // Loaded from env
-	LLMProvider     LLMProvider             `json:"-"`       // Will always be OpenAI now
+	LLMProvider     LLMProvider             `json:"-"`       // LangChain is the default gateway
 	Servers         map[string]ServerConfig `json:"servers"` // Map of server configs by name
 }
 
@@ -65,14 +68,29 @@ func LoadConfig(configFilePath string) (*Config, error) {
 	return cfg, nil
 }
 
-// loadConfigFromEnv creates a config from environment variables. Assumes OpenAI is the provider.
+// loadConfigFromEnv creates a config from environment variables
 func loadConfigFromEnv() (*Config, error) {
-	// Initialize cfg fields, setting provider directly to OpenAI
+	// Initialize cfg fields
 	cfg := &Config{
 		SlackBotToken: os.Getenv("SLACK_BOT_TOKEN"),
 		SlackAppToken: os.Getenv("SLACK_APP_TOKEN"),
-		LLMProvider:   ProviderOpenAI, // Set directly
 		Servers:       make(map[string]ServerConfig),
+	}
+
+	// Check for LLM provider environment variable
+	provider := os.Getenv("LLM_PROVIDER")
+	if provider != "" {
+		switch LLMProvider(provider) {
+		case ProviderOpenAI, ProviderLangChain:
+			cfg.LLMProvider = LLMProvider(provider)
+		default:
+			fmt.Printf("Warning: Unknown LLM provider '%s'. Defaulting to LangChain.\n", provider)
+			cfg.LLMProvider = ProviderLangChain
+		}
+	} else {
+		// Default to LangChain when not specified
+		cfg.LLMProvider = ProviderLangChain
+		fmt.Println("No LLM provider specified, defaulting to LangChain")
 	}
 
 	// Load OpenAI model environment variable
@@ -85,10 +103,10 @@ func loadConfigFromEnv() (*Config, error) {
 
 	// Validate essential Slack credentials
 	if cfg.SlackBotToken == "" {
-		return nil, fmt.Errorf("SLACK_BOT_TOKEN environment variable not set")
+		return nil, customErrors.NewConfigError("missing_credentials", "SLACK_BOT_TOKEN environment variable not set")
 	}
 	if cfg.SlackAppToken == "" {
-		return nil, fmt.Errorf("SLACK_APP_TOKEN environment variable not set")
+		return nil, customErrors.NewConfigError("missing_credentials", "SLACK_APP_TOKEN environment variable not set")
 	}
 
 	return cfg, nil
@@ -98,13 +116,13 @@ func loadConfigFromEnv() (*Config, error) {
 func loadServersFromFile(configFilePath string, cfg *Config) error {
 	// Validate the file path to prevent path traversal attacks
 	if strings.Contains(configFilePath, "..") {
-		return fmt.Errorf("suspicious path detected in config file path: '%s'", configFilePath)
+		return customErrors.NewConfigError("insecure_path", "Suspicious path detected in config file path")
 	}
 
 	// Read the config file
 	configFileBytes, err := os.ReadFile(configFilePath) //nolint:gosec // File path is validated above
 	if err != nil {
-		return fmt.Errorf("failed to read config file '%s': %w", configFilePath, err)
+		return customErrors.WrapConfigError(err, "file_access", "Failed to read config file")
 	}
 
 	// Parse JSON using the mcpServers structure
@@ -113,12 +131,12 @@ func loadServersFromFile(configFilePath string, cfg *Config) error {
 	}{}
 
 	if err := json.Unmarshal(configFileBytes, &tempConfig); err != nil {
-		return fmt.Errorf("failed to parse JSON config file '%s': %w", configFilePath, err)
+		return customErrors.WrapConfigError(err, "invalid_json", "Failed to parse JSON config file")
 	}
 
 	// No servers defined in config file
 	if len(tempConfig.McpServers) == 0 {
-		return fmt.Errorf("no MCP servers defined in config file '%s'", configFilePath)
+		return customErrors.NewConfigError("empty_config", "No MCP servers defined in config file").WithData("configFile", configFilePath)
 	}
 
 	// Process and validate each server
@@ -138,7 +156,8 @@ func loadServersFromFile(configFilePath string, cfg *Config) error {
 
 		// Validate connection details
 		if server.Command == "" && server.Address == "" {
-			return fmt.Errorf("server '%s' is missing both 'command' and 'address'/'url'", name)
+			return customErrors.NewConfigError("invalid_server_config",
+				fmt.Sprintf("Server '%s' is missing both 'command' and 'address'/'url'", name))
 		}
 
 		// Set default mode if not specified
@@ -157,8 +176,8 @@ func loadServersFromFile(configFilePath string, cfg *Config) error {
 			// Valid mode, normalize to lowercase
 			server.Mode = strings.ToLower(server.Mode)
 		default:
-			return fmt.Errorf("server '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'",
-				name, server.Mode)
+			return customErrors.NewConfigError("invalid_mode",
+				fmt.Sprintf("Server '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'", name, server.Mode))
 		}
 
 		// Add the validated server to the config

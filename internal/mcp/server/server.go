@@ -65,6 +65,19 @@ func (s *Server) registerHandlers() error {
 	}
 
 	// LLM tools
+
+	// LangChain implementation using LangChainGo
+	langChainHandler := llm.NewLangChainHandler(s.logger)
+	if langChainHandler.IsConfigured() {
+		if err := s.registerHandler(langChainHandler); err != nil {
+			return err
+		}
+		s.logger.Info("LangChain handler registered successfully")
+	} else {
+		s.logger.Warn("LangChain handler not configured, skipping registration")
+	}
+
+	// Original OpenAI handler (kept for backwards compatibility)
 	openAIHandler := llm.NewOpenAIHandler(s.logger)
 	if openAIHandler.IsConfigured() {
 		if err := s.registerHandler(openAIHandler); err != nil {
