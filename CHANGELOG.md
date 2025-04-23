@@ -1,3 +1,11 @@
+# [1.2.0](https://github.com/tuannvm/slack-mcp-client/compare/v1.1.3...v1.2.0) (2025-04-23)
+
+
+### Features
+
+* **errors:** add unified error handling system ([1d7d2d3](https://github.com/tuannvm/slack-mcp-client/commit/1d7d2d38ca424f878d756f022612a142c7698f6f))
+* **langchain:** add support for LangChain LLM integration ([a4f3f5c](https://github.com/tuannvm/slack-mcp-client/commit/a4f3f5c563f9a3d63e5fbdaff0a0224731b82a22))
+
 ## [1.1.3](https://github.com/tuannvm/slack-mcp-client/compare/v1.1.2...v1.1.3) (2025-04-17)
 
 ## [1.1.2](https://github.com/tuannvm/slack-mcp-client/compare/v1.1.1...v1.1.2) (2025-04-17)
