@@ -1,189 +1,95 @@
-// Package config provides configuration loading and management for the application
+// Package config handles loading and managing application configuration
 package config
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 
-	"github.com/joho/godotenv"
-	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
+	"github.com/spf13/viper"
 )
 
-// ServerConfig defines the configuration for a single MCP server.
-type ServerConfig struct {
-	Name     string            `json:"name"`     // Name of the server (derived from the key in mcpServers)
-	Command  string            `json:"command"`  // Command to execute
-	Args     []string          `json:"args"`     // Arguments for the command
-	Env      map[string]string `json:"env"`      // Environment variables for the command
-	Disabled bool              `json:"disabled"` // Whether the server is disabled
-	// Fields for connection details
-	Address string `json:"address"` // Connection address
-	URL     string `json:"url"`     // URL (alternative to address)
-	Mode    string `json:"mode"`    // Communication mode (http, sse, stdio)
-}
-
-// LLMProvider specifies which LLM provider to use
-type LLMProvider string
-
+// Constants for provider types
 const (
-	// ProviderOpenAI uses OpenAI models with direct implementation
-	ProviderOpenAI LLMProvider = "openai"
-	// ProviderLangChain uses LangChainGo with OpenAI models
-	ProviderLangChain LLMProvider = "langchain"
+	ProviderOpenAI    = "openai"
+	ProviderOllama    = "ollama"
+	ProviderLangChain = "langchain" // Keep for potential direct LangChain use if needed
 )
 
-// Config holds the application configuration.
+// ServerConfig defines the configuration for a single MCP server
+type ServerConfig struct {
+	URL      string `mapstructure:"url"`
+	Disabled bool   `mapstructure:"disabled"`
+}
+
+// Config defines the overall application configuration
 type Config struct {
-	SlackBotToken           string                  `json:"-"`       // Loaded from env
-	SlackAppToken           string                  `json:"-"`       // Loaded from env
-	OpenAIModelName         string                  `json:"-"`       // Loaded from env
-	LangChainTargetProvider string                  `json:"-"`       // Target provider for LangChain (e.g., "openai", "ollama")
-	LLMProvider             LLMProvider             `json:"-"`       // LangChain is the default gateway
-	Servers                 map[string]ServerConfig `json:"servers"` // Map of server configs by name
+	SlackBotToken string                            `mapstructure:"slack_bot_token"`
+	SlackAppToken string                            `mapstructure:"slack_app_token"`
+	Servers       map[string]ServerConfig           `mapstructure:"servers"`
+	LLMProvider   string                            `mapstructure:"llm_provider"`  // Name of the provider to USE (e.g., "openai", "ollama")
+	LLMProviders  map[string]map[string]interface{} `mapstructure:"llm_providers"` // Configuration for ALL potential providers
+
+	// Deprecated/Removed - configuration now within LLMProviders map
+	// OpenAIModelName         string `mapstructure:"openai_model_name"`
+	// LangChainTargetProvider string `mapstructure:"langchain_target_provider"`
 }
 
-// LoadConfig loads configuration from environment variables and a JSON file.
-func LoadConfig(configFilePath string) (*Config, error) {
-	// Attempt to load .env file, but don't fail if it doesn't exist
-	_ = godotenv.Load()
+// LoadConfig loads configuration from file and environment variables
+func LoadConfig(configFile string) (*Config, error) {
+	viper.SetConfigName("config")
+	viper.SetConfigType("json")
+	viper.AddConfigPath(".")
+	viper.AddConfigPath("$HOME/.appname")
+	viper.AddConfigPath("/etc/appname")
 
-	// Create base config from environment variables
-	cfg, err := loadConfigFromEnv()
-	if err != nil {
-		return nil, err
+	// Attempt to read the config file
+	if err := viper.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("fatal error config file: %s", err)
 	}
 
-	// If no config file specified, return with environment-only config
-	if configFilePath == "" {
-		fmt.Println("No configuration file provided, using environment variables only.")
-		return cfg, nil
+	// Set default values
+	viper.SetDefault("llm_provider", ProviderOpenAI) // Default to OpenAI if not specified
+	// Set default structures for known providers to avoid nil maps later
+	viper.SetDefault("llm_providers", map[string]map[string]interface{}{
+		ProviderOpenAI: {"model": "gpt-4o"},                                       // Default OpenAI model
+		ProviderOllama: {"model": "llama3", "endpoint": "http://localhost:11434"}, // Default Ollama settings
+		// Add other providers with defaults here if needed
+	})
+
+	// Environment variable bindings
+	viper.BindEnv("slack_bot_token", "SLACK_BOT_TOKEN")
+	viper.BindEnv("slack_app_token", "SLACK_APP_TOKEN")
+	viper.BindEnv("llm_provider", "LLM_PROVIDER")
+
+	// Bind environment variables for specific provider settings (example for OpenAI API Key)
+	// Note: Viper doesn't easily bind nested map structures directly from env vars.
+	// API keys are best handled directly via os.Getenv in the provider constructor for security.
+	// viper.BindEnv("llm_providers.openai.api_key", "OPENAI_API_KEY") // This might not work as expected
+	// viper.BindEnv("llm_providers.openai.model", "OPENAI_MODEL") // Prefer config file for model
+	// viper.BindEnv("llm_providers.ollama.endpoint", "OLLAMA_API_ENDPOINT") // Prefer config file
+	// viper.BindEnv("llm_providers.ollama.model", "OLLAMA_MODEL") // Prefer config file
+
+	// Unmarshal config into Config struct
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unable to decode into struct, %v", err)
 	}
 
-	// Load server configurations from file
-	if err := loadServersFromFile(configFilePath, cfg); err != nil {
-		return nil, err
+	// Post-load validation or adjustments (optional)
+	if cfg.LLMProvider == "" {
+		fmt.Println("Warning: llm_provider is empty, defaulting to 'openai'")
+		cfg.LLMProvider = ProviderOpenAI
 	}
 
-	return cfg, nil
-}
-
-// loadConfigFromEnv creates a config from environment variables
-func loadConfigFromEnv() (*Config, error) {
-	// Initialize cfg fields
-	cfg := &Config{
-		SlackBotToken: os.Getenv("SLACK_BOT_TOKEN"),
-		SlackAppToken: os.Getenv("SLACK_APP_TOKEN"),
-		Servers:       make(map[string]ServerConfig),
+	// Ensure provider maps exist even if not in config file
+	if cfg.LLMProviders == nil {
+		cfg.LLMProviders = make(map[string]map[string]interface{})
+	}
+	if _, ok := cfg.LLMProviders[ProviderOpenAI]; !ok {
+		cfg.LLMProviders[ProviderOpenAI] = map[string]interface{}{"model": "gpt-4o"}
+	}
+	if _, ok := cfg.LLMProviders[ProviderOllama]; !ok {
+		cfg.LLMProviders[ProviderOllama] = map[string]interface{}{"model": "llama3", "endpoint": "http://localhost:11434"}
 	}
 
-	// Check for LLM provider environment variable
-	provider := os.Getenv("LLM_PROVIDER")
-	if provider != "" {
-		switch LLMProvider(provider) {
-		case ProviderOpenAI, ProviderLangChain:
-			cfg.LLMProvider = LLMProvider(provider)
-		default:
-			fmt.Printf("Warning: Unknown LLM provider '%s'. Defaulting to LangChain.\n", provider)
-			cfg.LLMProvider = ProviderLangChain
-		}
-	} else {
-		// Default to LangChain when not specified
-		cfg.LLMProvider = ProviderLangChain
-		fmt.Println("No LLM provider specified, defaulting to LangChain")
-	}
-
-	// Load OpenAI model environment variable
-	cfg.OpenAIModelName = os.Getenv("OPENAI_MODEL")
-	// Validate OpenAI model (and set default)
-	if cfg.OpenAIModelName == "" {
-		cfg.OpenAIModelName = "gpt-4o"
-		fmt.Printf("Warning: OPENAI_MODEL not set, defaulting to %s\n", cfg.OpenAIModelName)
-	}
-
-	// Validate essential Slack credentials
-	if cfg.SlackBotToken == "" {
-		return nil, customErrors.NewConfigError("missing_credentials", "SLACK_BOT_TOKEN environment variable not set")
-	}
-	if cfg.SlackAppToken == "" {
-		return nil, customErrors.NewConfigError("missing_credentials", "SLACK_APP_TOKEN environment variable not set")
-	}
-
-	return cfg, nil
-}
-
-// loadServersFromFile loads MCP server configurations from a JSON file
-func loadServersFromFile(configFilePath string, cfg *Config) error {
-	// Validate the file path to prevent path traversal attacks
-	if strings.Contains(configFilePath, "..") {
-		return customErrors.NewConfigError("insecure_path", "Suspicious path detected in config file path")
-	}
-
-	// Read the config file
-	configFileBytes, err := os.ReadFile(configFilePath) //nolint:gosec // File path is validated above
-	if err != nil {
-		return customErrors.WrapConfigError(err, "file_access", "Failed to read config file")
-	}
-
-	// Parse JSON using the mcpServers structure
-	tempConfig := struct {
-		McpServers map[string]ServerConfig `json:"mcpServers"`
-	}{}
-
-	if err := json.Unmarshal(configFileBytes, &tempConfig); err != nil {
-		return customErrors.WrapConfigError(err, "invalid_json", "Failed to parse JSON config file")
-	}
-
-	// No servers defined in config file
-	if len(tempConfig.McpServers) == 0 {
-		return customErrors.NewConfigError("empty_config", "No MCP servers defined in config file").WithData("configFile", configFilePath)
-	}
-
-	// Process and validate each server
-	for name, server := range tempConfig.McpServers {
-		// Skip disabled servers early
-		if server.Disabled {
-			continue
-		}
-
-		// Set the name from the key in the map
-		server.Name = name
-
-		// Handle URL field (move to Address if Address is empty)
-		if server.URL != "" && server.Address == "" {
-			server.Address = server.URL
-		}
-
-		// Validate connection details
-		if server.Command == "" && server.Address == "" {
-			return customErrors.NewConfigError("invalid_server_config",
-				fmt.Sprintf("Server '%s' is missing both 'command' and 'address'/'url'", name))
-		}
-
-		// Set default mode if not specified
-		if server.Mode == "" {
-			// Default to stdio if command is provided, otherwise http
-			if server.Command != "" {
-				server.Mode = "stdio"
-			} else {
-				server.Mode = "http"
-			}
-		}
-
-		// Validate mode
-		switch strings.ToLower(server.Mode) {
-		case "http", "sse", "stdio":
-			// Valid mode, normalize to lowercase
-			server.Mode = strings.ToLower(server.Mode)
-		default:
-			return customErrors.NewConfigError("invalid_mode",
-				fmt.Sprintf("Server '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'", name, server.Mode))
-		}
-
-		// Add the validated server to the config
-		cfg.Servers[name] = server
-	}
-
-	return nil
+	return &cfg, nil
 }

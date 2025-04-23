@@ -2,158 +2,196 @@
 package llm
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
-	"strconv"
+	"net/http"
+	"strings"
+	"time"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
-// OllamaProvider implements the LLMProvider interface for the Ollama API
+const (
+	ollamaProviderName   = "ollama"
+	defaultOllamaBaseURL = "http://localhost:11434"
+	defaultOllamaModel   = "llama3"
+	defaultOllamaTimeout = 2 * time.Minute
+)
+
+// OllamaProvider implements the LLMProvider interface for Ollama
 type OllamaProvider struct {
-	APIBaseURL string
-	Model      string
-	Logger     *logging.Logger
+	baseURL      string
+	defaultModel string
+	logger       *logging.Logger
+	httpClient   *http.Client
+	timeout      time.Duration
 }
 
-// CreateMCPOllamaHandler creates a new MCP handler for Ollama
-func CreateMCPOllamaHandler(logger *logging.Logger) *MCPHandler {
-	provider := NewOllamaProvider(logger)
+// ollamaResponse represents the structure of a response from the Ollama API
+type ollamaResponse struct {
+	Model     string    `json:"model"`
+	CreatedAt time.Time `json:"created_at"`
+	Response  string    `json:"response"`
+	Done      bool      `json:"done"`
+	// ... other fields like context, total_duration, etc. are omitted for simplicity
+}
 
-	// Set up the MCP tool for Ollama
-	ollamaTool := mcp.NewTool(
-		"ollama",
-		mcp.WithDescription("Generate text using the Ollama local LLM provider"),
-		mcp.WithString("prompt",
-			mcp.Description("The prompt to send to the Ollama API"),
-			mcp.Required(),
-		),
-		mcp.WithString("model",
-			mcp.Description("The model to use (default is the OLLAMA_DEFAULT_MODEL environment variable or 'llama2')"),
-		),
-		mcp.WithNumber("temperature",
-			mcp.Description("Sampling temperature to use (default is 0.7)"),
-		),
-	)
+// ollamaRequest represents the structure of a request to the Ollama API
+type ollamaRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Stream bool   `json:"stream"`
+	// Options can be added here if needed (e.g., temperature)
+}
 
-	// Create the handler with a custom implementation
-	return &MCPHandler{
-		Name:        "ollama",
-		Description: "Generate text using Ollama's local LLM capabilities",
-		Tool:        &ollamaTool,
-		Logger:      logger,
-		Provider:    provider,
-		HandleFunc: func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			// Extract parameters from the request
-			prompt, ok := request.Params.Arguments["prompt"].(string)
-			if !ok || prompt == "" {
-				return nil, fmt.Errorf("invalid parameter 'prompt': expected non-empty string")
-			}
-
-			// Optional parameters with defaults
-			modelParam, hasModel := request.Params.Arguments["model"].(string)
-			model := os.Getenv("OLLAMA_DEFAULT_MODEL")
-			if model == "" {
-				model = "llama2" // Default model
-			}
-			if hasModel && modelParam != "" {
-				model = modelParam
-			}
-
-			// Temperature parameter (optional)
-			temperature := 0.7 // Default
-			if tempParam, hasTemp := request.Params.Arguments["temperature"]; hasTemp {
-				if tempFloat, ok := tempParam.(float64); ok {
-					temperature = tempFloat
-				} else if tempStr, ok := tempParam.(string); ok {
-					if tempFloat, err := strconv.ParseFloat(tempStr, 64); err == nil {
-						temperature = tempFloat
-					}
-				}
-			}
-
-			// Create provider options
-			options := ProviderOptions{
-				Model:       model,
-				Temperature: temperature,
-				MaxTokens:   2048, // Default max tokens
-			}
-
-			// Generate completion using the provider
-			provider := NewOllamaProvider(logger)
-			result, err := provider.GenerateCompletion(ctx, prompt, options)
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate completion: %w", err)
-			}
-
-			// Return the result as an MCP response
-			return CreateMCPResult(result), nil
-		},
+// init registers the Ollama provider factory.
+func init() {
+	err := RegisterProviderFactory(ollamaProviderName, NewOllamaProviderFactory)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to register ollama provider factory: %v", err))
 	}
 }
 
-// NewOllamaProvider creates a new Ollama provider instance
-func NewOllamaProvider(logger *logging.Logger) *OllamaProvider {
-	// Get the base URL from environment variable, default to localhost:11434
-	baseURL := os.Getenv("OLLAMA_API_URL")
+// NewOllamaProviderFactory creates an Ollama provider instance from configuration.
+func NewOllamaProviderFactory(config map[string]interface{}, logger logging.Logger) (LLMProvider, error) {
+	baseURL, _ := config["base_url"].(string)
 	if baseURL == "" {
-		baseURL = "http://localhost:11434"
+		baseURL = defaultOllamaBaseURL
+		logger.Info("Ollama base_url not specified, defaulting to", "url", baseURL)
 	}
+
+	modelName, _ := config["model"].(string)
+	if modelName == "" {
+		modelName = defaultOllamaModel
+		logger.Info("Ollama model not specified, defaulting to", "model", modelName)
+	}
+
+	timeout := defaultOllamaTimeout
+	if timeoutStr, ok := config["timeout"].(string); ok {
+		parsedDuration, err := time.ParseDuration(timeoutStr)
+		if err == nil {
+			timeout = parsedDuration
+		} else {
+			logger.Warn("Invalid ollama timeout format in config, using default", "value", timeoutStr, "default", defaultOllamaTimeout, "error", err)
+		}
+	}
+
+	// Corrected logging: Use key-value pairs directly with the logger instance.
+	providerLogger := logger.WithName("ollama-provider")
+	providerLogger.Info("Creating Ollama provider", "model", modelName, "url", baseURL)
 
 	return &OllamaProvider{
-		APIBaseURL: baseURL,
-		Model:      os.Getenv("OLLAMA_DEFAULT_MODEL"),
-		Logger:     logger,
-	}
-}
-
-// GenerateCompletion implements the LLMProvider interface for Ollama
-func (p *OllamaProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error) {
-	// For now, just pass through to chat completion
-	messages := []RequestMessage{
-		{
-			Role:    "user",
-			Content: prompt,
+		baseURL:      strings.TrimSuffix(baseURL, "/"), // Ensure no trailing slash
+		defaultModel: modelName,
+		logger:       providerLogger,
+		httpClient: &http.Client{
+			Timeout: timeout,
 		},
-	}
-	return p.GenerateChatCompletion(ctx, messages, options)
+		timeout: timeout,
+	}, nil
 }
 
-// GenerateChatCompletion implements the LLMProvider interface for Ollama
-func (p *OllamaProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error) {
-	// In a real implementation, this would make HTTP requests to the Ollama API
-	// For now, we'll just return a placeholder message
-	p.Logger.Info("Ollama provider is not yet fully implemented - would call Ollama API")
-
-	// Build a message about what would happen if implemented
-	model := options.Model
-	if model == "" && p.Model != "" {
-		model = p.Model
-	}
-	if model == "" {
-		model = "llama2" // Default fallback
-	}
-
-	// Return an informative message
-	return fmt.Sprintf("[Ollama provider would call %s model at %s with %d messages]",
-		model, p.APIBaseURL, len(messages)), nil
-}
-
-// GetInfo implements the LLMProvider interface
+// GetInfo returns information about the provider.
 func (p *OllamaProvider) GetInfo() ProviderInfo {
 	return ProviderInfo{
-		Name:            "ollama",
-		DefaultModel:    "llama2",
-		SupportedModels: []string{"llama2", "mistral", "codellama"},
-		Endpoint:        p.APIBaseURL,
+		Name:        ollamaProviderName,
+		DisplayName: fmt.Sprintf("Ollama (%s)", p.defaultModel),
+		Description: fmt.Sprintf("Connects to an Ollama instance at %s", p.baseURL),
+		Configured:  true, // Assumed configured if created via factory
+		Available:   p.IsAvailable(),
+		Configuration: map[string]string{
+			"Base URL": p.baseURL,
+			"Model":    p.defaultModel,
+			"Timeout":  p.timeout.String(),
+		},
 	}
 }
 
-// IsAvailable checks if the Ollama provider is properly configured
+// IsAvailable checks if the Ollama server is reachable.
 func (p *OllamaProvider) IsAvailable() bool {
-	// In a real implementation, this would check if the Ollama server is running
-	// For now, we'll just check if the base URL is set
-	return p.APIBaseURL != ""
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // Short timeout for availability check
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL, nil)
+	if err != nil {
+		p.logger.Warn("Failed to create availability check request", "error", err)
+		return false
+	}
+
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		p.logger.Warn("Availability check request failed", "error", err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		p.logger.Debug("Ollama instance is available")
+		return true
+	} else {
+		p.logger.Warn("Ollama instance returned non-OK status", "status", resp.StatusCode)
+		return false
+	}
+}
+
+// GenerateCompletion generates a text completion using Ollama.
+func (p *OllamaProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error) {
+	model := options.Model
+	if model == "" {
+		model = p.defaultModel
+	}
+
+	requestPayload := ollamaRequest{
+		Model:  model,
+		Prompt: prompt,
+		Stream: false, // We want the full response
+	}
+
+	requestBody, err := json.Marshal(requestPayload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal ollama request: %w", err)
+	}
+
+	apiURL := p.baseURL + "/api/generate"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(requestBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create ollama request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	p.logger.Debug("Sending request to Ollama", "url", apiURL, "model", model)
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ollama request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errorBody bytes.Buffer
+		_, _ = errorBody.ReadFrom(resp.Body)
+		return "", fmt.Errorf("ollama API returned error status %d: %s", resp.StatusCode, errorBody.String())
+	}
+
+	var ollamaResponse ollamaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResponse); err != nil {
+		return "", fmt.Errorf("failed to decode ollama response: %w", err)
+	}
+
+	p.logger.Debug("Received response from Ollama", "model", ollamaResponse.Model)
+	return ollamaResponse.Response, nil
+}
+
+// GenerateChatCompletion is not natively supported by the basic Ollama /api/generate endpoint.
+// This could be implemented using /api/chat if needed, but for now, it delegates to GenerateCompletion.
+func (p *OllamaProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error) {
+	p.logger.Warn("GenerateChatCompletion called on Ollama provider, using simple prompt concatenation.")
+	// Simple concatenation of messages for now.
+	// TODO: Implement using the /api/chat endpoint for proper chat handling.
+	var promptBuilder strings.Builder
+	for _, msg := range messages {
+		promptBuilder.WriteString(fmt.Sprintf("%s: %s\n", msg.Role, msg.Content))
+	}
+	return p.GenerateCompletion(ctx, promptBuilder.String(), options)
 }

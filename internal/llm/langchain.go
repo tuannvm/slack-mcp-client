@@ -4,10 +4,8 @@ package llm
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
@@ -16,363 +14,198 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
+const (
+	langchainProviderName = "langchain"
+)
+
 // LangChainProvider implements the LLMProvider interface using LangChainGo
+// It acts as a gateway, configured to use either OpenAI or Ollama underneath.
 type LangChainProvider struct {
-	llm             llms.Model
-	defaultModel    string
-	providerType    ProviderType
-	endpoint        string
-	logger          *logging.Logger
-	supportedModels []string
+	llm          llms.Model
+	providerType string // "openai" or "ollama"
+	modelName    string // The specific model configured (e.g., "gpt-4o", "llama3")
+	logger       *logging.Logger
 }
 
-// NewLangChainProvider creates a new LangChain provider
-func NewLangChainProvider(logger *logging.Logger) *LangChainProvider {
-	// Get environment variables
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	apiEndpoint := os.Getenv("OPENAI_API_ENDPOINT")
-	defaultModel := os.Getenv("OPENAI_MODEL")
-	ollamaEndpoint := os.Getenv("OLLAMA_API_ENDPOINT")
-	ollamaModel := os.Getenv("OLLAMA_MODEL")
-	providerType := os.Getenv("LLM_PROVIDER_TYPE")
+// init registers the LangChain provider factory.
+func init() {
+	err := RegisterProviderFactory(langchainProviderName, NewLangChainProviderFactory)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to register langchain provider factory: %v", err))
+	}
+}
 
-	// Set defaults
-	if defaultModel == "" {
-		defaultModel = "gpt-4o"
-		logger.Info("No OPENAI_MODEL specified, defaulting to %s", defaultModel)
+// NewLangChainProviderFactory creates a LangChain provider instance from configuration.
+func NewLangChainProviderFactory(config map[string]interface{}, logger logging.Logger) (LLMProvider, error) {
+	underlyingProviderType, ok := config["type"].(string)
+	if !ok || (underlyingProviderType != "openai" && underlyingProviderType != "ollama") {
+		return nil, fmt.Errorf("langchain config requires 'type' (string, either 'openai' or 'ollama')")
 	}
 
-	if ollamaModel == "" {
-		ollamaModel = "llama3"
-		logger.Info("No OLLAMA_MODEL specified, defaulting to %s", ollamaModel)
+	modelName, ok := config["model"].(string)
+	if !ok || modelName == "" {
+		return nil, fmt.Errorf("langchain config requires 'model' (string)")
 	}
 
-	if ollamaEndpoint == "" {
-		ollamaEndpoint = "http://localhost:11434"
-		logger.Info("No OLLAMA_API_ENDPOINT specified, defaulting to %s", ollamaEndpoint)
-	}
-
-	if providerType == "" {
-		providerType = string(ProviderTypeOpenAI)
-		logger.Info("No LLM_PROVIDER_TYPE specified, defaulting to %s", providerType)
-	}
-
-	// Initialize provider based on type
 	var llmClient llms.Model
 	var err error
-	var endpoint string
-	var selectedModel string
-	var supportedModels []string
-	providerTypeEnum := ProviderType(strings.ToLower(providerType))
+	// Corrected logging: Use key-value pairs directly with the logger instance.
+	providerLogger := logger.WithName("langchain-provider")
 
-	switch providerTypeEnum {
-	case ProviderTypeOpenAI:
-		// OpenAI models
-		supportedModels = []string{
-			"gpt-4o",
-			"gpt-4-turbo",
-			"gpt-4",
-			"gpt-3.5-turbo",
-		}
-		selectedModel = defaultModel
-		endpoint = apiEndpoint
+	switch underlyingProviderType {
+	case "openai":
+		apiKey, _ := config["api_key"].(string) // API key is optional if base_url points to compatible API
+		baseURL, _ := config["base_url"].(string)
 
-		// Initialize OpenAI client
 		opts := []openai.Option{
-			openai.WithToken(apiKey),
+			openai.WithModel(modelName), // Set model during initialization
 		}
-
-		// If custom API endpoint is set, use it
-		if apiEndpoint != "" {
-			opts = append(opts, openai.WithBaseURL(apiEndpoint))
+		if apiKey != "" {
+			opts = append(opts, openai.WithToken(apiKey))
+		}
+		if baseURL != "" {
+			opts = append(opts, openai.WithBaseURL(baseURL))
+			providerLogger.Info("Configuring LangChain with OpenAI", "base_url", baseURL, "model", modelName)
+		} else {
+			providerLogger.Info("Configuring LangChain with OpenAI (default endpoint)", "model", modelName)
 		}
 
 		llmClient, err = openai.New(opts...)
 		if err != nil {
-			logger.Error("Failed to initialize LangChainGo OpenAI client: %v", err)
+			providerLogger.Error("Failed to initialize LangChainGo OpenAI client", "error", err)
+			return nil, fmt.Errorf("failed to initialize langchain openai client: %w", err)
 		}
 
-	case ProviderTypeOllama:
-		// Ollama models
-		supportedModels = []string{
-			"llama3",
-			"mistral",
-			"codellama",
-			"phi",
+	case "ollama":
+		baseURL, ok := config["base_url"].(string)
+		if !ok || baseURL == "" {
+			return nil, fmt.Errorf("langchain ollama config requires 'base_url' (string)")
 		}
-		selectedModel = ollamaModel
-		endpoint = ollamaEndpoint
 
-		// Initialize Ollama client
 		opts := []ollama.Option{
-			ollama.WithModel(ollamaModel),
+			ollama.WithModel(modelName),
+			ollama.WithServerURL(baseURL),
 		}
-
-		// Set the server URL for Ollama
-		if ollamaEndpoint != "" {
-			logger.Info("Using Ollama endpoint: %s", ollamaEndpoint)
-			opts = append(opts, ollama.WithServerURL(ollamaEndpoint))
-		}
+		providerLogger.Info("Configuring LangChain with Ollama", "base_url", baseURL, "model", modelName)
 
 		llmClient, err = ollama.New(opts...)
 		if err != nil {
-			logger.Error("Failed to initialize LangChainGo Ollama client: %v", err)
-			// If Ollama fails, fall back to OpenAI if API key is available
-			if apiKey != "" {
-				logger.Warn("Falling back to OpenAI due to Ollama initialization failure")
-				providerTypeEnum = ProviderTypeOpenAI
-				// Update supportedModels and selectedModel for OpenAI
-				supportedModels = []string{
-					"gpt-4o",
-					"gpt-4-turbo",
-					"gpt-4",
-					"gpt-3.5-turbo",
-				}
-				selectedModel = defaultModel
-				endpoint = apiEndpoint
-
-				llmClient, err = openai.New(openai.WithToken(apiKey))
-				if err != nil {
-					logger.Error("Failed to initialize fallback OpenAI client: %v", err)
-				}
-			}
+			providerLogger.Error("Failed to initialize LangChainGo Ollama client", "error", err)
+			return nil, fmt.Errorf("failed to initialize langchain ollama client: %w", err)
 		}
 
 	default:
-		logger.Warn("Unknown provider type '%s', falling back to OpenAI", providerType)
-		providerTypeEnum = ProviderTypeOpenAI
-		// OpenAI models
-		supportedModels = []string{
-			"gpt-4o",
-			"gpt-4-turbo",
-			"gpt-4",
-			"gpt-3.5-turbo",
-		}
-		selectedModel = defaultModel
-		endpoint = apiEndpoint
-
-		// Initialize OpenAI as fallback
-		llmClient, err = openai.New(openai.WithToken(apiKey))
-		if err != nil {
-			logger.Error("Failed to initialize fallback OpenAI client: %v", err)
-		}
+		// This case should not be reached due to the initial check
+		return nil, fmt.Errorf("internal error: unsupported langchain type '%s'", underlyingProviderType)
 	}
 
-	// Include support for tool calling in MCPServer functionality
 	return &LangChainProvider{
-		llm:             llmClient,
-		defaultModel:    selectedModel,
-		providerType:    providerTypeEnum,
-		endpoint:        endpoint,
-		logger:          logger.WithName("langchain-provider"),
-		supportedModels: supportedModels,
-	}
+		llm:          llmClient,
+		providerType: underlyingProviderType,
+		modelName:    modelName,
+		logger:       providerLogger, // Assign the named logger
+	}, nil
 }
 
 // GenerateCompletion generates a completion using LangChainGo
 func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error) {
-	// Check if client is initialized
 	if p.llm == nil {
 		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
-	p.logger.Debug("Calling LangChainGo with prompt: %s", prompt)
-
-	// Build options
+	p.logger.Debug("Calling LangChainGo GenerateCompletion", "prompt_length", len(prompt))
 	callOptions := p.buildOptions(options)
 
-	// Call the LLM with the prompt
 	completion, err := llms.GenerateFromSinglePrompt(ctx, p.llm, prompt, callOptions...)
 	if err != nil {
-		p.logger.Error("LangChainGo request failed: %v", err)
-		return "", errors.WrapLLMError(
-			err,
-			"request_failed",
-			"Failed to generate completion from LangChainGo",
-		)
+		p.logger.Error("LangChainGo GenerateCompletion request failed", "error", err)
+		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
 	}
 
-	p.logger.Debug("Received response of length %d", len(completion))
+	p.logger.Debug("Received GenerateCompletion response", "length", len(completion))
 	return completion, nil
 }
 
 // GenerateChatCompletion generates a chat completion using LangChainGo
+// Note: LangChainGo's basic llms.Model interface doesn't directly support chat messages.
+// We simulate it by formatting messages into a single prompt.
 func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error) {
-	// Check if client is initialized
 	if p.llm == nil {
 		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
-	p.logger.Debug("Calling LangChainGo with %d messages", len(messages))
+	p.logger.Debug("Calling LangChainGo GenerateChatCompletion", "num_messages", len(messages))
 
-	// Convert our message format to a prompt
+	// Convert our message format to a single prompt string
 	var promptBuilder strings.Builder
-
 	for _, msg := range messages {
 		promptBuilder.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(msg.Role), msg.Content))
 	}
-
 	prompt := promptBuilder.String()
-
 	// Add one final assistant prefix to indicate where the response should go
+	// This might need adjustment depending on the specific model's fine-tuning
 	prompt += "ASSISTANT: "
 
-	// Call the LLM with the constructed prompt
+	// Call the underlying GenerateCompletion method with the formatted prompt
 	return p.GenerateCompletion(ctx, prompt, options)
 }
 
-// GetInfo returns information about the provider
+// GetInfo returns information about the provider.
 func (p *LangChainProvider) GetInfo() ProviderInfo {
+	displayName := fmt.Sprintf("LangChain (%s - %s)", p.providerType, p.modelName)
+	description := fmt.Sprintf("LangChainGo gateway using %s model %s", p.providerType, p.modelName)
+
 	return ProviderInfo{
-		Name:            string(p.providerType),
-		DefaultModel:    p.defaultModel,
-		SupportedModels: p.supportedModels,
-		Endpoint:        p.endpoint,
+		Name:        langchainProviderName,
+		DisplayName: displayName,
+		Description: description,
+		Configured:  p.llm != nil,    // Configured if the client was successfully created
+		Available:   p.IsAvailable(), // Check availability dynamically (basic check for now)
+		Configuration: map[string]string{
+			"Underlying Provider": p.providerType,
+			"Model":               p.modelName,
+			// Add other relevant non-sensitive info if needed (e.g., base URL if applicable)
+		},
 	}
 }
 
-// IsAvailable returns true if the provider is properly configured
+// IsAvailable checks if the underlying client is initialized.
+// A more thorough check could involve a test API call.
 func (p *LangChainProvider) IsAvailable() bool {
 	return p.llm != nil
 }
 
-// buildOptions creates LangChainGo-specific options from our generic options
+// buildOptions creates LangChainGo-specific options from our generic options.
 func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOption {
 	var callOptions []llms.CallOption
 
-	// Set the model if provided
+	// Model: LangChainGo model is typically set at client initialization.
+	// However, some LLMs might allow overriding it per call.
+	// We prioritize the model from options if provided.
+	modelToUse := p.modelName // Default to the configured model
 	if options.Model != "" {
-		callOptions = append(callOptions, llms.WithModel(options.Model))
-	} else if p.defaultModel != "" {
-		callOptions = append(callOptions, llms.WithModel(p.defaultModel))
+		modelToUse = options.Model
+		p.logger.Debug("Overriding model per-request", "new_model", modelToUse)
+	}
+	// Add WithModel only if it differs from the initialized one or if the underlying LLM supports it.
+	// For simplicity now, we always add it if options.Model is set.
+	if options.Model != "" {
+		callOptions = append(callOptions, llms.WithModel(modelToUse))
 	}
 
-	// Set temperature if provided
+	// Temperature: Apply if > 0
 	if options.Temperature > 0 {
 		callOptions = append(callOptions, llms.WithTemperature(options.Temperature))
+		p.logger.Debug("Adding Temperature option", "value", options.Temperature)
 	}
 
-	// Set max tokens if provided
+	// MaxTokens: Apply if > 0
 	if options.MaxTokens > 0 {
 		callOptions = append(callOptions, llms.WithMaxTokens(options.MaxTokens))
+		p.logger.Debug("Adding MaxTokens option", "value", options.MaxTokens)
 	}
+
+	// Note: options.TargetProvider is handled during factory creation, not here.
 
 	return callOptions
-}
-
-// CreateMCPLangChainHandler creates an MCP handler for LangChain
-func CreateMCPLangChainHandler(logger *logging.Logger) *MCPHandler {
-	// Use the provider implementation
-	provider := NewLangChainProvider(logger)
-
-	// Create tool definition
-	tool := mcp.NewTool(
-		"langchain",
-		mcp.WithDescription("Process text using LangChainGo with various LLM models"),
-		mcp.WithString("model",
-			mcp.Description("The model to use"),
-			mcp.Required(),
-		),
-		mcp.WithString("prompt",
-			mcp.Description("The prompt to send to the LLM (alternative to messages)"),
-		),
-		mcp.WithArray("messages",
-			mcp.Description("Array of messages to send to the LLM (alternative to prompt)"),
-		),
-		mcp.WithNumber("temperature",
-			mcp.Description("Temperature for response generation"),
-		),
-		mcp.WithNumber("max_tokens",
-			mcp.Description("Maximum number of tokens to generate"),
-		),
-		// Add the target_provider parameter
-		mcp.WithString("target_provider",
-			mcp.Description("The target underlying provider LangChain should use (e.g., 'openai', 'ollama')"),
-			// Not required, LangChain provider might have its own default logic
-		),
-	)
-
-	handleFunc := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		logger.Debug("Received LangChain tool request")
-
-		// Extract parameters from request
-		args := request.Params.Arguments
-		logger.Debug("Received arguments: %+v", args)
-
-		// Get model parameter with fallback to default
-		model, ok := args["model"].(string)
-		if !ok || model == "" {
-			model = provider.GetInfo().DefaultModel
-			logger.Debug("Using default model: %s", model)
-		}
-
-		// Build options
-		options := ProviderOptions{
-			Model: model,
-		}
-
-		// Extract temperature if provided
-		if temp, ok := args["temperature"].(float64); ok {
-			options.Temperature = temp
-		}
-
-		// Extract max tokens if provided
-		if maxTokens, ok := args["max_tokens"].(float64); ok {
-			options.MaxTokens = int(maxTokens)
-		}
-
-		// Extract target provider if provided
-		if targetProvider, ok := args["target_provider"].(string); ok && targetProvider != "" {
-			options.TargetProvider = targetProvider
-			logger.Debug("Using target provider: %s", targetProvider)
-		}
-
-		var result string
-		var err error
-
-		// Process input (either prompt or messages)
-		if prompt, ok := args["prompt"].(string); ok && prompt != "" {
-			// Use the provider to generate response with prompt
-			// Pass the updated options including TargetProvider
-			result, err = provider.GenerateCompletion(ctx, prompt, options)
-		} else if rawMessages, ok := args["messages"].([]interface{}); ok && len(rawMessages) > 0 {
-			// Convert messages to standard format
-			messages := make([]RequestMessage, 0, len(rawMessages))
-			for _, rawMsg := range rawMessages {
-				if msgMap, ok := rawMsg.(map[string]interface{}); ok {
-					role, _ := msgMap["role"].(string)
-					content, _ := msgMap["content"].(string)
-
-					if role != "" && content != "" {
-						messages = append(messages, RequestMessage{
-							Role:    role,
-							Content: content,
-						})
-					}
-				}
-			}
-
-			// Use the provider to generate response with messages
-			// Pass the updated options including TargetProvider
-			result, err = provider.GenerateChatCompletion(ctx, messages, options)
-		} else {
-			return nil, errors.NewLLMError("missing_input", "No prompt or messages provided")
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		// Create and return MCP tool response
-		return CreateMCPResult(result), nil
-	}
-
-	return &MCPHandler{
-		Name:        "langchain",
-		Description: "Process text using LangChainGo with various LLM models",
-		Tool:        &tool,
-		Logger:      logger.WithName("langchain-tool"),
-		HandleFunc:  handleFunc,
-		Provider:    provider,
-	}
 }

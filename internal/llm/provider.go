@@ -4,8 +4,10 @@ package llm
 import (
 	"context"
 	"fmt"
+	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp" // Use the correct MCP library types
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
 // Constants for provider types and names
@@ -16,15 +18,64 @@ const (
 	DefaultLLMGatewayProvider = ProviderNameLangChain
 )
 
+// ProviderFactory defines the function signature for creating an LLMProvider instance.
+// It takes provider-specific configuration and a logger.
+type ProviderFactory func(config map[string]interface{}, logger logging.Logger) (LLMProvider, error)
+
+// Global map to store provider factories
+var (
+	providerFactories = make(map[string]ProviderFactory)
+	mu                sync.RWMutex
+)
+
+// RegisterProviderFactory registers a factory function for a given provider name.
+// This should be called from the init() function of each provider implementation.
+func RegisterProviderFactory(name string, factory ProviderFactory) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if _, exists := providerFactories[name]; exists {
+		return fmt.Errorf("provider factory for '%s' already registered", name)
+	}
+	providerFactories[name] = factory
+	// Use a temporary logger or standard log during init phase if needed
+	// fmt.Printf("Registered LLM provider factory: %s\n", name)
+	return nil
+}
+
+// GetProviderFactory retrieves a registered provider factory.
+func GetProviderFactory(name string) (ProviderFactory, bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+	factory, exists := providerFactories[name]
+	return factory, exists
+}
+
+// ListProviderFactories returns the names of all registered factories.
+func ListProviderFactories() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	names := make([]string, 0, len(providerFactories))
+	for name := range providerFactories {
+		names = append(names, name)
+	}
+	return names
+}
+
 // ProviderType defines the type of LLM provider (e.g., OpenAI, Ollama)
 type ProviderType string
 
 // ProviderInfo contains information about an LLM provider
 type ProviderInfo struct {
-	Name            string   // Provider name
-	DefaultModel    string   // Default model to use
-	SupportedModels []string // List of supported models
-	Endpoint        string   // API endpoint
+	Name          string            // Unique identifier (e.g., "openai", "ollama")
+	DisplayName   string            // User-friendly name (e.g., "OpenAI GPT-4", "Local Ollama")
+	Description   string            // Brief description of the provider/model
+	Configured    bool              // Whether the provider has been configured
+	Available     bool              // Whether the provider is currently reachable/available
+	Configuration map[string]string // Non-sensitive configuration details (e.g., model, base URL)
+	// --- Original fields --- (Consider if these are still needed or covered by the above)
+	// DefaultModel    string   // Default model to use (Covered by Configuration?)
+	// SupportedModels []string // List of supported models (Hard to determine dynamically for all providers)
+	// Endpoint        string   // API endpoint (Covered by Configuration?)
 }
 
 // RequestMessage represents a single message in a chat request
@@ -44,6 +95,7 @@ type ProviderOptions struct {
 // LLMProvider defines the interface for language model providers
 type LLMProvider interface {
 	// GenerateCompletion generates a text completion (less common now, prefer chat)
+	// Deprecated: Prefer GenerateChatCompletion
 	GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error)
 
 	// GenerateChatCompletion generates a chat completion using a message history

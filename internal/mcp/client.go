@@ -274,6 +274,15 @@ func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, e
 	return nil, customErrors.NewMCPError("unsupported_operation", fmt.Sprintf("Client type %T does not support tool discovery", c.client))
 }
 
+// GetClientMapKeys extracts the keys (server names) from a map of MCP clients.
+func GetClientMapKeys(m map[string]*Client) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Close cleans up the MCP client resources.
 func (c *Client) Close() {
 	c.closeMu.Lock()

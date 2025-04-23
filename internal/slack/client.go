@@ -17,34 +17,32 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging" // Added for registry logger
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
-	"github.com/tuannvm/slack-mcp-client/internal/llm" // Added for llm types
+	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
 
 // Client represents the Slack client application.
 type Client struct {
-	log           *log.Logger
-	api           *slack.Client
-	Socket        *socketmode.Client
-	botUserID     string
-	botMentionRgx *regexp.Regexp
-	mcpClients    map[string]*mcp.Client
-	llmMCPBridge  *handlers.LLMMCPBridge
-	llmRegistry   *llm.ProviderRegistry // Added: LLM provider registry
-	cfg           *config.Config        // Holds the application configuration
-	// Message history for context (limited per channel)
-	messageHistory map[string][]Message
-	historyLimit   int
-	// Use common.ToolInfo
+	log             *log.Logger // Consider replacing with internal/common/logging
+	api             *slack.Client
+	Socket          *socketmode.Client
+	botUserID       string
+	botMentionRgx   *regexp.Regexp
+	mcpClients      map[string]*mcp.Client
+	llmMCPBridge    *handlers.LLMMCPBridge
+	llmRegistry     *llm.ProviderRegistry // LLM provider registry
+	cfg             *config.Config        // Holds the application configuration
+	messageHistory  map[string][]Message
+	historyLimit    int
 	discoveredTools map[string]common.ToolInfo
 }
 
 // Message represents a message in the conversation history
 type Message struct {
-	Role      string    // "user" or "assistant"
+	Role      string    // "user", "assistant", or "tool"
 	Content   string    // The message content
 	Timestamp time.Time // When the message was sent/received
 }
@@ -66,12 +64,6 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	}
 	if cfg == nil {
 		return nil, fmt.Errorf("config cannot be nil")
-	}
-
-	// Basic validation of essential LLM config
-	// We now assume LangChain is the primary interaction point
-	if cfg.LangChainTargetProvider == "" {
-		logger.Printf("Warning: LangChainTargetProvider is not set in config. LangChain might use its default.")
 	}
 
 	// --- Slack API setup ---
@@ -112,14 +104,24 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	llmMCPBridge := handlers.NewLLMMCPBridgeFromClients(mcpClients, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
-	// Initialize the LLM provider registry
-	wrappedLogger := logging.New("llm-registry", logging.LevelDebug)
-	registry := llm.NewProviderRegistry(wrappedLogger)
-	logger.Printf("LLM provider registry initialized.")
-
-	// --- Log final config ---
-	logger.Printf("Client configured to use LangChain with target provider: '%s'", cfg.LangChainTargetProvider)
-	logger.Printf("Default model hint for LangChain (may be overridden): %s", cfg.OpenAIModelName)
+	// --- Initialize the LLM provider registry using the config ---
+	// Use the internal structured logger for the registry
+	registryLogger := logging.New("slack-client", logging.LevelDebug) // Or configure level via cfg
+	registry, err := llm.NewProviderRegistry(cfg, registryLogger)
+	if err != nil {
+		// Log the error using the standard logger for now
+		logger.Printf("ERROR: Failed to initialize LLM provider registry: %v", err)
+		// Depending on requirements, you might want to return the error or continue without LLM functionality
+		return nil, fmt.Errorf("failed to initialize LLM provider registry: %w", err)
+	}
+	logger.Printf("LLM provider registry initialized successfully.")
+	// Log the primary provider chosen by the registry
+	primaryProvider, primaryErr := registry.GetPrimaryProvider()
+	if primaryErr == nil {
+		logger.Printf("Primary LLM provider set to: %s", primaryProvider.GetInfo().Name)
+	} else {
+		logger.Printf("Warning: Could not determine primary LLM provider after initialization: %v", primaryErr)
+	}
 
 	// --- Create and return Client instance ---
 	return &Client{
@@ -130,10 +132,10 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		botMentionRgx:   mentionRegex,
 		mcpClients:      mcpClients,
 		llmMCPBridge:    llmMCPBridge,
-		llmRegistry:     registry, // Added
+		llmRegistry:     registry, // Assign the initialized registry
 		cfg:             cfg,
 		messageHistory:  make(map[string][]Message),
-		historyLimit:    10,
+		historyLimit:    10, // Consider making this configurable
 		discoveredTools: discoveredTools,
 	}, nil
 }
@@ -264,10 +266,11 @@ func (c *Client) getContextFromHistory(channelID string) string {
 	return contextString
 }
 
-// handleUserPrompt sends the user's text to the configured LLM provider (LangChain).
+// handleUserPrompt sends the user's text to the configured LLM provider.
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
-	// Log the provider value (will likely be LangChain now)
-	c.log.Printf("DEBUG: handleUserPrompt - Routing prompt via LangChain (Target: '%s')", c.cfg.LangChainTargetProvider)
+	// Determine the provider to use from config
+	providerName := c.cfg.LLMProvider // Get the primary provider name from config
+	c.log.Printf("DEBUG: handleUserPrompt - Routing prompt via configured provider: '%s'", providerName)
 	c.log.Printf("DEBUG: User prompt: '%s'", userPrompt)
 
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
@@ -280,15 +283,15 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID)
 
-	// Call LLM using the integrated logic (previously in llm_client.GenerateCompletion)
-	llmResponse, err := c.callLLM(userPrompt, contextHistory)
+	// Call LLM using the integrated logic
+	llmResponse, err := c.callLLM(providerName, userPrompt, contextHistory)
 	if err != nil {
-		c.log.Printf("Error from LLM provider: %v", err)
-		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error: %v", err))
+		c.log.Printf("Error from LLM provider '%s': %v", providerName, err)
+		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
 		return
 	}
 
-	c.log.Printf("Received response from LLM. Length: %d", len(llmResponse))
+	c.log.Printf("Received response from LLM '%s'. Length: %d", providerName, len(llmResponse))
 
 	// Process the LLM response through the MCP pipeline
 	c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
@@ -347,9 +350,8 @@ func (c *Client) generateToolPrompt() string {
 	return promptBuilder.String()
 }
 
-// callLLM generates a text completion using the LangChain provider as a gateway.
-// This function now incorporates the logic previously in LLMClient.GenerateCompletion.
-func (c *Client) callLLM(prompt, contextHistory string) (string, error) {
+// callLLM generates a text completion using the specified provider from the registry.
+func (c *Client) callLLM(providerName, prompt, contextHistory string) (string, error) {
 	// Create a context with appropriate timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -382,34 +384,28 @@ func (c *Client) callLLM(prompt, contextHistory string) (string, error) {
 		Content: prompt,
 	})
 
-	// Build options based on the config (LangChain might override or use these)
+	// Build options based on the config (provider might override or use these)
+	// Note: TargetProvider is removed as it's handled by config/factory
 	options := llm.ProviderOptions{
-		Model:          c.cfg.OpenAIModelName, // LangChain might use this or its own config
-		Temperature:    0.7,
-		MaxTokens:      2048,
-		TargetProvider: c.cfg.LangChainTargetProvider, // Specify the target provider for LangChain
+		// Model: Let the provider use its configured default or handle overrides if needed.
+		// Model: c.cfg.OpenAIModelName, // Example: If you still want a global default hint
+		Temperature: 0.7,  // Consider making configurable
+		MaxTokens:   2048, // Consider making configurable
 	}
 
-	// --- Explicitly use LangChain provider ---
-	providerName := llm.DefaultLLMGatewayProvider // Use the constant
-	c.log.Printf("Attempting to use LLM provider: %s via registry", providerName)
+	// --- Use the specified provider via the registry ---
+	c.log.Printf("Attempting to use LLM provider '%s' via registry for chat completion", providerName)
 
-	// Get the LangChain provider implementation from the registry
-	provider, err := c.llmRegistry.GetProvider(providerName)
+	// Call the registry's method which includes availability check
+	completion, err := c.llmRegistry.GenerateChatCompletion(ctx, providerName, messages, options)
 	if err != nil {
-		return "", fmt.Errorf("failed to get required LLM provider '%s': %w", providerName, err)
-	}
-	if provider == nil {
-		// This case should ideally not happen if GetProvider returns no error, but check defensively.
-		return "", fmt.Errorf("required LLM provider '%s' not found or not initialized in registry", providerName)
-	}
-	if !provider.IsAvailable() {
-		return "", fmt.Errorf("required LLM provider '%s' is not available (check configuration/environment)", providerName)
+		// Error already logged by registry method potentially, but log here too for context
+		c.log.Printf("ERROR: GenerateChatCompletion failed for provider '%s': %v", providerName, err)
+		return "", fmt.Errorf("LLM request failed for provider '%s': %w", providerName, err)
 	}
 
-	c.log.Printf("Using LangChain provider for chat completion.")
-	// Call the LangChain provider to generate the completion
-	return provider.GenerateChatCompletion(ctx, messages, options)
+	c.log.Printf("Successfully received chat completion from provider '%s'", providerName)
+	return completion, nil
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
@@ -476,7 +472,9 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 
 		// Re-prompt using the LLM client
 		var repromptErr error
-		finalResponse, repromptErr = c.callLLM(rePrompt, c.getContextFromHistory(channelID))
+		// Get the provider name from config again for the re-prompt
+		providerName := c.cfg.LLMProvider
+		finalResponse, repromptErr = c.callLLM(providerName, rePrompt, c.getContextFromHistory(channelID))
 		if repromptErr != nil {
 			c.log.Printf("Error during LLM re-prompt: %v", repromptErr)
 			// Fallback: Show the tool result and the error

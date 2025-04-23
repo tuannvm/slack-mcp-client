@@ -5,10 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	httpClient "github.com/tuannvm/slack-mcp-client/internal/common/http"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -54,73 +52,100 @@ type OpenAIChatResponse struct {
 	Usage   OpenAIChatResponseUsage    `json:"usage"`
 }
 
+const (
+	openaiProviderName = "openai"
+)
+
 // OpenAIProvider implements the LLMProvider interface for OpenAI
 type OpenAIProvider struct {
-	apiKey          string
-	apiEndpoint     string
-	httpClient      *httpClient.Client
-	defaultModel    string
-	logger          *logging.Logger
-	supportedModels []string
+	apiKey       string
+	apiEndpoint  string
+	httpClient   *httpClient.Client
+	defaultModel string
+	logger       *logging.Logger
 }
 
-// NewOpenAIProvider creates a new OpenAI provider
-func NewOpenAIProvider(logger *logging.Logger) *OpenAIProvider {
-	// Get API key from environment
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	apiEndpoint := os.Getenv("OPENAI_API_ENDPOINT")
-	defaultModel := os.Getenv("OPENAI_MODEL")
+// init registers the OpenAI provider factory.
+func init() {
+	err := RegisterProviderFactory(openaiProviderName, NewOpenAIProviderFactory)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to register openai provider factory: %v", err))
+	}
+}
 
+// NewOpenAIProviderFactory creates an OpenAI provider instance from configuration.
+func NewOpenAIProviderFactory(config map[string]interface{}, logger logging.Logger) (LLMProvider, error) {
+	apiKey, ok := config["api_key"].(string)
+	if !ok || apiKey == "" {
+		baseURL, _ := config["base_url"].(string)
+		if baseURL == "" {
+			return nil, fmt.Errorf("openai config requires 'api_key' (string) or 'base_url' (string)")
+		}
+		logger.Warn("OpenAI API key not found, relying on base_url")
+	}
+
+	baseURL, _ := config["base_url"].(string)
+	apiEndpoint := baseURL // Use base_url if provided
 	if apiEndpoint == "" {
-		apiEndpoint = "https://api.openai.com/v1/chat/completions"
+		apiEndpoint = "https://api.openai.com/v1" // Default OpenAI endpoint
+	}
+	chatCompletionEndpoint := strings.TrimSuffix(apiEndpoint, "/") + "/chat/completions"
+
+	modelName, ok := config["model"].(string)
+	if !ok || modelName == "" {
+		modelName = "gpt-4o" // Default model
+		logger.Info("OpenAI model not specified in config, defaulting to", "model", modelName)
 	}
 
-	if defaultModel == "" {
-		defaultModel = "gpt-4o"
-	}
+	providerLogger := logger.WithName("openai-provider")
+	providerLogger.Info("Creating OpenAI provider", "model", modelName, "endpoint", chatCompletionEndpoint)
 
 	// Set up HTTP client with logging
 	options := httpClient.DefaultOptions()
 	options.Timeout = 60 * 1000000000 // 60 seconds
 	options.RequestLogger = func(_, url string, _ []byte) {
-		logger.Debug("OpenAI API Request: %s", url)
+		providerLogger.Debug("OpenAI API Request", "url", url)
 	}
-	options.ResponseLogger = func(_ int, _ []byte, err error) {
+	options.ResponseLogger = func(status int, _ []byte, err error) {
 		if err != nil {
-			logger.Error("OpenAI API Response error: %v", err)
+			providerLogger.Error("OpenAI API Response error", "error", err)
 			return
 		}
-		logger.Debug("OpenAI API Response received successfully")
+		providerLogger.Debug("OpenAI API Response received", "status", status)
 	}
 
 	return &OpenAIProvider{
 		apiKey:       apiKey,
-		apiEndpoint:  apiEndpoint,
+		apiEndpoint:  chatCompletionEndpoint,
 		httpClient:   httpClient.NewClient(options),
-		defaultModel: defaultModel,
-		logger:       logger.WithName("openai-provider"),
-		supportedModels: []string{
-			"gpt-4o",
-			"gpt-4-turbo",
-			"gpt-4",
-			"gpt-3.5-turbo",
+		defaultModel: modelName,
+		logger:       providerLogger,
+	}, nil
+}
+
+// GetInfo returns information about the provider.
+func (p *OpenAIProvider) GetInfo() ProviderInfo {
+	description := fmt.Sprintf("Connects to OpenAI API endpoint at %s", p.apiEndpoint)
+	if !strings.Contains(p.apiEndpoint, "api.openai.com") {
+		description = fmt.Sprintf("Connects to OpenAI-compatible API endpoint at %s", p.apiEndpoint)
+	}
+	return ProviderInfo{
+		Name:          openaiProviderName,
+		DisplayName:   fmt.Sprintf("OpenAI (%s)", p.defaultModel),
+		Description:   description,
+		Configured:    true, // Assumes if created via factory, it's configured
+		Available:     p.IsAvailable(), // Check availability dynamically
+		Configuration: map[string]string{
+			"Endpoint": p.apiEndpoint,
+			"Model":    p.defaultModel,
 		},
 	}
 }
 
-// GetInfo returns information about the provider
-func (p *OpenAIProvider) GetInfo() ProviderInfo {
-	return ProviderInfo{
-		Name:            "openai",
-		DefaultModel:    p.defaultModel,
-		SupportedModels: p.supportedModels,
-		Endpoint:        p.apiEndpoint,
-	}
-}
-
-// IsAvailable returns true if the provider is properly configured
+// IsAvailable checks if the provider is likely available (has API key or custom endpoint).
 func (p *OpenAIProvider) IsAvailable() bool {
-	return p.apiKey != ""
+	// Available if API key is present OR if a non-default endpoint is configured
+	return p.apiKey != "" || !strings.Contains(p.apiEndpoint, "api.openai.com")
 }
 
 // GenerateCompletion generates a text completion using OpenAI
@@ -212,112 +237,4 @@ func (p *OpenAIProvider) generateWithMessages(ctx context.Context, messages []Op
 
 	// Extract the message content
 	return chatResp.Choices[0].Message.Content, nil
-}
-
-// CreateMCPOpenAIHandler creates an MCP handler for OpenAI
-func CreateMCPOpenAIHandler(logger *logging.Logger) *MCPHandler {
-	// Use the provider implementation
-	provider := NewOpenAIProvider(logger)
-
-	// Create tool definition
-	tool := mcp.NewTool(
-		"openai",
-		mcp.WithDescription("Process text using OpenAI models"),
-		mcp.WithString("model",
-			mcp.Description("The OpenAI model to use"),
-			mcp.Required(),
-		),
-		mcp.WithString("prompt",
-			mcp.Description("The prompt to send to OpenAI (alternative to messages)"),
-		),
-		mcp.WithArray("messages",
-			mcp.Description("Array of messages to send to OpenAI (alternative to prompt)"),
-		),
-		mcp.WithNumber("temperature",
-			mcp.Description("Temperature for response generation"),
-		),
-		mcp.WithNumber("max_tokens",
-			mcp.Description("Maximum number of tokens to generate"),
-		),
-	)
-
-	handleFunc := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		logger.Debug("Received OpenAI tool request")
-
-		// Check if API key is configured
-		if !provider.IsAvailable() {
-			return nil, errors.NewOpenAIError("API key not configured", "missing_key", nil)
-		}
-
-		// Extract parameters from request
-		args := request.Params.Arguments
-		logger.Debug("Received arguments: %+v", args)
-
-		// Get model parameter
-		model, ok := args["model"].(string)
-		if !ok {
-			return nil, errors.ErrBadRequest
-		}
-
-		// Build options
-		options := ProviderOptions{
-			Model: model,
-		}
-
-		// Extract temperature if provided
-		if temp, ok := args["temperature"].(float64); ok {
-			options.Temperature = temp
-		}
-
-		// Extract max tokens if provided
-		if maxTokens, ok := args["max_tokens"].(float64); ok {
-			options.MaxTokens = int(maxTokens)
-		}
-
-		var result string
-		var err error
-
-		// Process input (either prompt or messages)
-		if prompt, ok := args["prompt"].(string); ok && prompt != "" {
-			// Use the provider to generate response with prompt
-			result, err = provider.GenerateCompletion(ctx, prompt, options)
-		} else if rawMessages, ok := args["messages"].([]interface{}); ok && len(rawMessages) > 0 {
-			// Convert messages to standard format
-			messages := make([]RequestMessage, 0, len(rawMessages))
-			for _, rawMsg := range rawMessages {
-				if msgMap, ok := rawMsg.(map[string]interface{}); ok {
-					role, _ := msgMap["role"].(string)
-					content, _ := msgMap["content"].(string)
-
-					if role != "" && content != "" {
-						messages = append(messages, RequestMessage{
-							Role:    role,
-							Content: content,
-						})
-					}
-				}
-			}
-
-			// Use the provider to generate response with messages
-			result, err = provider.GenerateChatCompletion(ctx, messages, options)
-		} else {
-			return nil, errors.NewLLMError("missing_input", "No prompt or messages provided")
-		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		// Create and return MCP tool response
-		return CreateMCPResult(result), nil
-	}
-
-	return &MCPHandler{
-		Name:        "openai",
-		Description: "Process text using OpenAI models",
-		Tool:        &tool,
-		Logger:      logger.WithName("openai-tool"),
-		HandleFunc:  handleFunc,
-		Provider:    provider,
-	}
 }

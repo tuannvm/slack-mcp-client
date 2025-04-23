@@ -14,7 +14,6 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
-	"github.com/tuannvm/slack-mcp-client/internal/llm"
 )
 
 // Server manages the MCP server endpoint, handling tool registration and HTTP requests.
@@ -37,6 +36,7 @@ func NewServer(cfg *config.Config, logger *logging.Logger) (*Server, error) {
 	)
 
 	// Create a handler registry
+	// Pass the config to the registry if needed in the future, but currently unused for MCP handlers
 	registry := handlers.NewRegistry(logger)
 
 	// Create server instance
@@ -60,27 +60,6 @@ func (s *Server) registerHandlers() error {
 	// System tools
 	helloHandler := handlers.NewHelloHandler(s.logger)
 	if err := s.registerHandler(helloHandler); err != nil {
-		return err
-	}
-
-	// LLM tools
-
-	// LangChain implementation using LangChainGo
-	langChainHandler := llm.CreateMCPLangChainHandler(s.logger)
-	if err := s.registerHandler(langChainHandler); err != nil {
-		return err
-	}
-	s.logger.Info("LangChain handler registered successfully")
-
-	// OpenAI handler
-	openAIHandler := llm.CreateMCPOpenAIHandler(s.logger)
-	if err := s.registerHandler(openAIHandler); err != nil {
-		return err
-	}
-
-	// Ollama handler
-	ollamaHandler := llm.CreateMCPOllamaHandler(s.logger)
-	if err := s.registerHandler(ollamaHandler); err != nil {
 		return err
 	}
 
