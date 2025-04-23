@@ -44,7 +44,7 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 	// Convert the concrete client map to the interface map
 	// This is a workaround for the type system to avoid import cycles
 	interfaceClients := make(map[string]MCPClientInterface)
-	
+
 	// Type assertion to get the original map
 	if clientMap, ok := mcpClients.(map[string]interface{}); ok {
 		for name, client := range clientMap {
@@ -53,7 +53,7 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 			}
 		}
 	}
-	
+
 	return NewLLMMCPBridge(interfaceClients, logger, discoveredTools)
 }
 
@@ -284,12 +284,13 @@ func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]inter
 
 			// If the third capture group has a value, it's a non-string value
 			if match[3] != "" {
-				// Handle boolean values
-				if match[3] == "true" {
+				// Handle boolean and numeric values
+				switch match[3] {
+				case "true":
 					value = true
-				} else if match[3] == "false" {
+				case "false":
 					value = false
-				} else {
+				default:
 					// Handle numeric values
 					if strings.Contains(match[3], ".") {
 						// Float value

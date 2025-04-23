@@ -141,10 +141,8 @@ func (p *OpenAIProvider) GenerateChatCompletion(ctx context.Context, messages []
 	// Convert our message format to OpenAI's format
 	openaiMessages := make([]OpenAIMessage, 0, len(messages))
 	for _, msg := range messages {
-		openaiMessages = append(openaiMessages, OpenAIMessage{
-			Role:    msg.Role,
-			Content: msg.Content,
-		})
+		// Convert the RequestMessage to OpenAIMessage directly
+		openaiMessages = append(openaiMessages, OpenAIMessage(msg))
 	}
 
 	return p.generateWithMessages(ctx, openaiMessages, options)

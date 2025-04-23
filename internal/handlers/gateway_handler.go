@@ -5,7 +5,7 @@ import (
 	"context"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	
+
 	"github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
@@ -14,40 +14,40 @@ import (
 // LLMGatewayHandler implements a centralized gateway for LLM providers
 type LLMGatewayHandler struct {
 	BaseHandler
-	registry      *llm.ProviderRegistry
-	defaultModel  string
+	registry     *llm.ProviderRegistry
+	defaultModel string
 }
 
 // NewLLMGatewayHandler creates a new LLM gateway handler
 func NewLLMGatewayHandler(logger *logging.Logger) *LLMGatewayHandler {
 	// Create provider registry
 	registry := llm.NewProviderRegistry(logger)
-	
+
 	// Register providers (OpenAI direct and LangChain)
 	openaiProvider := llm.NewOpenAIProvider(logger)
 	langchainProvider := llm.NewLangChainProvider(logger)
 	ollamaProvider := llm.NewOllamaProvider(logger)
-	
+
 	// Only register providers that are available
 	if openaiProvider.IsAvailable() {
 		registry.RegisterProvider(openaiProvider)
 	}
-	
+
 	if langchainProvider.IsAvailable() {
 		registry.RegisterProvider(langchainProvider)
 		// Set LangChain as primary if available
 		registry.SetPrimaryProvider(langchainProvider.GetInfo().Name)
 	}
-	
+
 	if ollamaProvider.IsAvailable() {
 		registry.RegisterProvider(ollamaProvider)
 	}
-	
+
 	// If OpenAI is available, set it as fallback for LangChain
 	if openaiProvider.IsAvailable() && langchainProvider.IsAvailable() {
 		registry.SetFallback(langchainProvider.GetInfo().Name, openaiProvider.GetInfo().Name)
 	}
-	
+
 	// Create tool definition
 	tool := mcp.NewTool(
 		"llm",
@@ -79,8 +79,8 @@ func NewLLMGatewayHandler(logger *logging.Logger) *LLMGatewayHandler {
 			Tool:        tool,
 			Logger:      logger.WithName("llm-gateway"),
 		},
-		registry:      registry,
-		defaultModel:  "gpt-4o", // Default to GPT-4o
+		registry:     registry,
+		defaultModel: "gpt-4o", // Default to GPT-4o
 	}
 }
 
