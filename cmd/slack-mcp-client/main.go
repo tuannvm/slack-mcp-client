@@ -76,10 +76,10 @@ func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 		logger.Fatal("Failed to load configuration: %v", err)
 	}
 
-	// Force provider to OpenAI in config loaded, as client only supports OpenAI directly now
-	if cfg.LLMProvider != config.ProviderOpenAI {
-		logger.Warn("Config/Env specified LLM provider '%s', but client is hardcoded for OpenAI. Forcing OpenAI.", cfg.LLMProvider)
-		cfg.LLMProvider = config.ProviderOpenAI
+	// Validate LLM provider - now supporting both OpenAI direct and LangChain
+	if cfg.LLMProvider != config.ProviderOpenAI && cfg.LLMProvider != config.ProviderLangChain {
+		logger.Warn("Config/Env specified unsupported LLM provider '%s'. Supported: 'openai' or 'langchain'. Defaulting to LangChain.", cfg.LLMProvider)
+		cfg.LLMProvider = config.ProviderLangChain
 	}
 
 	// Apply command-line overrides AFTER loading config
@@ -310,16 +310,14 @@ func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client) err
 
 // applyCommandLineOverrides applies command-line flags directly to the loaded config
 func applyCommandLineOverrides(logger *logging.Logger, cfg *config.Config) error {
-	// Provider is now forced to OpenAI earlier, so only check for OpenAI model override.
+	// Apply OpenAI model override if specified
 	if *openaiModel != "" {
-		// Ensure the provider in config is actually OpenAI before overriding model
-		// (This should always be true due to the check in main, but good for safety)
-		if cfg.LLMProvider == config.ProviderOpenAI {
+		// Both OpenAI direct and LangChain providers can use the OpenAI model setting
+		if cfg.LLMProvider == config.ProviderOpenAI || cfg.LLMProvider == config.ProviderLangChain {
 			logger.Info("Overriding OpenAI model from command line: %s", *openaiModel)
 			cfg.OpenAIModelName = *openaiModel
 		} else {
-			// This case should technically not be reachable anymore
-			logger.Warn("Warning: --openai-model flag provided, but configured provider is not OpenAI ('%s'). Flag ignored.", cfg.LLMProvider)
+			logger.Warn("Warning: --openai-model flag provided, but configured provider '%s' doesn't use OpenAI models. Flag ignored.", cfg.LLMProvider)
 		}
 	}
 	return nil // No errors

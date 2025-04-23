@@ -483,18 +483,18 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID)
 
-	// Call OpenAI API
-	openaiResponse, err := c.callOpenAI(userPrompt, contextHistory)
+	// Call LLM based on configured provider (OpenAI direct or LangChain)
+	llmResponse, err := c.callLLM(userPrompt, contextHistory)
 	if err != nil {
-		c.log.Printf("Error from OpenAI API: %v", err)
+		c.log.Printf("Error from LLM provider (%s): %v", c.cfg.LLMProvider, err)
 		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error: %v", err))
 		return
 	}
 
-	c.log.Printf("Received response from OpenAI. Length: %d", len(openaiResponse))
+	c.log.Printf("Received response from LLM (%s). Length: %d", c.cfg.LLMProvider, len(llmResponse))
 
 	// Process the LLM response through the MCP pipeline
-	c.processLLMResponseAndReply(openaiResponse, userPrompt, channelID, threadTS)
+	c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
@@ -552,11 +552,11 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 
 		c.log.Printf("DEBUG: Re-prompting LLM with: %s", rePrompt)
 
-		// Re-prompt OpenAI with the tool result
+		// Re-prompt using the configured LLM provider with the tool result
 		var repromptErr error
-		finalResponse, repromptErr = c.callOpenAI(rePrompt, c.getContextFromHistory(channelID))
+		finalResponse, repromptErr = c.callLLM(rePrompt, c.getContextFromHistory(channelID))
 		if repromptErr != nil {
-			c.log.Printf("Error during OpenAI re-prompt: %v", repromptErr)
+			c.log.Printf("Error during LLM re-prompt: %v", repromptErr)
 			finalResponse = fmt.Sprintf("Tool Result:\n```%s```\n\n(Error re-prompting LLM: %v)", finalResponse, repromptErr)
 		}
 

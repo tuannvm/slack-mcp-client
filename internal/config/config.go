@@ -27,8 +27,10 @@ type ServerConfig struct {
 type LLMProvider string
 
 const (
-	// ProviderOpenAI uses OpenAI models
+	// ProviderOpenAI uses OpenAI models with direct implementation
 	ProviderOpenAI LLMProvider = "openai"
+	// ProviderLangChain uses LangChainGo with OpenAI models
+	ProviderLangChain LLMProvider = "langchain"
 )
 
 // Config holds the application configuration.
