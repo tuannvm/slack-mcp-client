@@ -391,7 +391,7 @@ func (c *Client) callLLM(prompt, contextHistory string) (string, error) {
 	}
 
 	// --- Explicitly use LangChain provider ---
-	providerName := "langchain"
+	providerName := llm.DefaultLLMGatewayProvider // Use the constant
 	c.log.Printf("Attempting to use LLM provider: %s via registry", providerName)
 
 	// Get the LangChain provider implementation from the registry
