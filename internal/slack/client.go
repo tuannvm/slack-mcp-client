@@ -3,13 +3,10 @@
 package slackbot
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -34,8 +31,8 @@ type Client struct {
 	botMentionRgx *regexp.Regexp
 	mcpClients    map[string]*mcp.Client
 	llmMCPBridge  *handlers.LLMMCPBridge
+	llmClient     *LLMClient     // Consolidated LLM client
 	cfg           *config.Config // Holds the application configuration
-	httpClient    *http.Client   // HTTP client for LLM communication
 	// Message history for context (limited per channel)
 	messageHistory map[string][]Message
 	historyLimit   int
@@ -108,10 +105,6 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 
 	mentionRegex := regexp.MustCompile(fmt.Sprintf(`^\s*<@%s>`, botUserID))
 
-	httpClient := &http.Client{
-		Timeout: 3 * time.Minute, // Increased timeout for potentially long LLM calls
-	}
-
 	// --- MCP/Bridge setup ---
 	logger.Printf("Available MCP servers (%d):", len(mcpClients))
 	for name := range mcpClients {
@@ -127,6 +120,10 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	llmMCPBridge := handlers.NewLLMMCPBridgeFromClients(mcpClients, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
+	// Initialize the LLM client
+	llmClient := NewLLMClient(logger, discoveredTools, cfg)
+	logger.Printf("LLM client initialized with provider: %s", cfg.LLMProvider)
+
 	// --- Log final config (always OpenAI now for this client) ---
 	logger.Printf("Client configured to use LLM provider: %s", cfg.LLMProvider)
 	logger.Printf("OpenAI model: %s", cfg.OpenAIModelName)
@@ -140,8 +137,8 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		botMentionRgx:   mentionRegex,
 		mcpClients:      mcpClients,
 		llmMCPBridge:    llmMCPBridge,
+		llmClient:       llmClient,
 		cfg:             cfg, // Store the config object
-		httpClient:      httpClient,
 		messageHistory:  make(map[string][]Message),
 		historyLimit:    10, // Store the last 10 messages per channel
 		discoveredTools: discoveredTools,
@@ -340,143 +337,29 @@ func (c *Client) generateToolPrompt() string {
 	return promptBuilder.String()
 }
 
-// OpenAI API request and response structures
-type openaiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-type openaiRequest struct {
-	Model               string          `json:"model"`
-	Messages            []openaiMessage `json:"messages"`
-	Temperature         float64         `json:"temperature,omitempty"`
-	MaxTokens           int             `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int             `json:"max_completion_tokens,omitempty"`
-}
-
-type openaiChoice struct {
-	Index        int           `json:"index"`
-	Message      openaiMessage `json:"message"`
-	FinishReason string        `json:"finish_reason"`
-}
-
-type openaiResponse struct {
-	ID      string         `json:"id"`
-	Object  string         `json:"object"`
-	Created int64          `json:"created"`
-	Model   string         `json:"model"`
-	Choices []openaiChoice `json:"choices"`
-}
-
-// callOpenAI sends a prompt to the OpenAI API and returns the response
-func (c *Client) callOpenAI(prompt, contextHistory string) (string, error) {
-	// Log a warning when falling back to direct OpenAI calls instead of using LangChain as gateway
-	c.log.Printf("WARNING: Using direct OpenAI API call instead of LangChain gateway. This is a fallback mechanism and not the preferred approach.")
-
-	// Prepare messages for OpenAI
-	messages := []openaiMessage{}
-
-	// Add system prompt with tool info if available
-	systemPrompt := c.generateToolPrompt()
-	if systemPrompt != "" {
-		messages = append(messages, openaiMessage{
-			Role:    "system",
-			Content: systemPrompt,
-		})
-	}
-
-	// Add conversation context if provided
-	if contextHistory != "" {
-		messages = append(messages, openaiMessage{
-			Role:    "system",
-			Content: "Previous conversation: " + contextHistory,
-		})
-	}
-
-	// Add the current prompt
-	messages = append(messages, openaiMessage{
-		Role:    "user",
-		Content: prompt,
-	})
-
-	// Prepare the basic request payload
-	reqPayload := openaiRequest{
-		Model:    c.cfg.OpenAIModelName,
-		Messages: messages,
-	}
-
-	// Use model-specific parameters
-	if strings.Contains(c.cfg.OpenAIModelName, "o3-") {
-		reqPayload.MaxCompletionTokens = 2048
-	} else if strings.Contains(c.cfg.OpenAIModelName, "gpt-4o") {
-		reqPayload.MaxCompletionTokens = 2048
-		reqPayload.Temperature = 0.7
-	} else {
-		reqPayload.MaxTokens = 2048
-		reqPayload.Temperature = 0.7
-	}
-
-	// Marshal the request body
-	jsonBody, err := json.Marshal(reqPayload)
-	if err != nil {
-		return "", fmt.Errorf("error marshaling OpenAI request: %w", err)
-	}
-
-	// Create the HTTP request
-	ctx, cancel := context.WithTimeout(context.Background(), c.httpClient.Timeout)
+// callLLM is a wrapper function that calls the appropriate LLM implementation
+func (c *Client) callLLM(prompt, contextHistory string) (string, error) {
+	// Create a context with appropriate timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return "", fmt.Errorf("error creating OpenAI HTTP request: %w", err)
+	// Generate the system prompt with tool information
+	systemPrompt := c.generateToolPrompt()
+
+	// Use the LLM client to generate the completion
+	if c.llmClient == nil {
+		// This should ideally not happen if NewClient ensures llmClient is initialized
+		c.log.Printf("CRITICAL: LLM client is not initialized!")
+		return "", fmt.Errorf("LLM client not initialized")
 	}
+	return c.llmClient.GenerateCompletion(ctx, prompt, systemPrompt, contextHistory)
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+os.Getenv("OPENAI_API_KEY"))
-
-	// Send the request to the OpenAI API
-	httpResp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("error sending request to OpenAI API: %w", err)
-	}
-
-	// Set up a defer to close the response body
-	defer func() {
-		if httpResp != nil && httpResp.Body != nil {
-			_ = httpResp.Body.Close()
-		}
-	}()
-
-	// Read the response body
-	respBodyBytes, err := io.ReadAll(httpResp.Body)
-	if err != nil {
-		return "", fmt.Errorf("error reading OpenAI response: %w", err)
-	}
-
-	// Check response status code
-	if httpResp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OpenAI API returned error (Status: %s): %s", httpResp.Status, string(respBodyBytes))
-	}
-
-	// Parse the JSON response from OpenAI
-	var openaiResp openaiResponse
-	if err := json.Unmarshal(respBodyBytes, &openaiResp); err != nil {
-		return "", fmt.Errorf("error parsing OpenAI response: %w", err)
-	}
-
-	// Check if we have choices in the response
-	if len(openaiResp.Choices) == 0 {
-		return "", fmt.Errorf("OpenAI API returned no choices")
-	}
-
-	// Extract the text from the first choice
-	return strings.TrimSpace(openaiResp.Choices[0].Message.Content), nil
+	// --- Fallback logic removed ---
 }
 
-// handleOpenAIPrompt sends the user's text to the OpenAI API and posts the response.
+// handleOpenAIPrompt sends the user's text to the LLM and posts the response.
 func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
-	c.log.Printf("Sending prompt to OpenAI (Model: %s): %s", c.cfg.OpenAIModelName, userPrompt)
+	c.log.Printf("Sending prompt to LLM (Model: %s): %s", c.cfg.OpenAIModelName, userPrompt)
 
 	// Show a temporary "typing" indicator
 	if _, _, err := c.api.PostMessage(channelID, slack.MsgOptionText("...", false), slack.MsgOptionTS(threadTS)); err != nil {
@@ -486,15 +369,15 @@ func (c *Client) handleOpenAIPrompt(userPrompt, channelID, threadTS string) {
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID)
 
-	// Call LLM based on configured provider (OpenAI direct or LangChain)
+	// Call LLM using our consolidated client
 	llmResponse, err := c.callLLM(userPrompt, contextHistory)
 	if err != nil {
-		c.log.Printf("Error from LLM provider (%s): %v", c.cfg.LLMProvider, err)
+		c.log.Printf("Error from LLM provider: %v", err)
 		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error: %v", err))
 		return
 	}
 
-	c.log.Printf("Received response from LLM (%s). Length: %d", c.cfg.LLMProvider, len(llmResponse))
+	c.log.Printf("Received response from LLM. Length: %d", len(llmResponse))
 
 	// Process the LLM response through the MCP pipeline
 	c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
@@ -505,47 +388,24 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 	// Log the raw LLM response for debugging
 	c.log.Printf("DEBUG: Raw LLM response (first 500 chars): %s", truncateForLog(llmResponse, 500))
 
+	// Create a context with timeout for tool processing
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	defer cancel()
+
 	// Process the LLM response to see if it contains a tool call
-	var isToolResult = false
-	var finalResponse string
+	finalResponse, isToolResult, err := c.llmClient.ProcessToolResponse(ctx, llmResponse, userPrompt, c.llmMCPBridge)
 
-	if c.llmMCPBridge != nil {
-		c.log.Printf("DEBUG: Processing LLM response through bridge...")
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute) // Timeout for tool execution
-		processedResponse, bridgeErr := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt)
-		cancel()
-
-		if bridgeErr != nil {
-			// Bridge returned an error (e.g., tool execution failed)
-			c.log.Printf("ERROR: LLM-MCP Bridge returned error: %v", bridgeErr)
-			// Inform the user about the tool failure
-			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", bridgeErr)
-			// Don't mark as tool result, just post the error message
-		} else if processedResponse != llmResponse {
-			// Bridge returned a different response, indicating a successful tool call
-			c.log.Printf("DEBUG: Bridge returned tool result. Length: %d", len(processedResponse))
-			c.log.Printf("DEBUG: Tool result (first 500 chars): %s", truncateForLog(processedResponse, 500))
-			finalResponse = processedResponse // This is the raw tool result
-			isToolResult = true
-		} else {
-			// Bridge returned the original response, meaning no tool was called
-			c.log.Printf("DEBUG: Bridge did not execute a tool.")
-			finalResponse = llmResponse
-		}
-	} else {
-		// No bridge available, use original response
-		c.log.Printf("DEBUG: LLM-MCP bridge not available.")
-		finalResponse = llmResponse
+	if err != nil {
+		c.log.Printf("ERROR: Tool processing error: %v", err)
+		c.postMessage(channelID, threadTS, finalResponse) // This will contain the error message
+		return
 	}
 
-	// Set finalResponse to llmResponse if it's still empty
-	if finalResponse == "" {
-		finalResponse = llmResponse
-	}
-
-	// --- Re-prompting Logic ---
 	if isToolResult {
 		c.log.Printf("DEBUG: Tool executed. Re-prompting LLM with tool result.")
+		// Log the tool result for debugging
+		c.log.Printf("DEBUG: Tool result (first 500 chars): %s", truncateForLog(finalResponse, 500))
+
 		// Construct a new prompt incorporating the original prompt and the tool result
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a concise and helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
 
@@ -555,14 +415,13 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 
 		c.log.Printf("DEBUG: Re-prompting LLM with: %s", rePrompt)
 
-		// Re-prompt using the configured LLM provider with the tool result
+		// Re-prompt using the LLM client
 		var repromptErr error
 		finalResponse, repromptErr = c.callLLM(rePrompt, c.getContextFromHistory(channelID))
 		if repromptErr != nil {
 			c.log.Printf("Error during LLM re-prompt: %v", repromptErr)
 			finalResponse = fmt.Sprintf("Tool Result:\n```%s```\n\n(Error re-prompting LLM: %v)", finalResponse, repromptErr)
 		}
-
 	} else {
 		// No tool was executed, add assistant response to history
 		c.addToHistory(channelID, "assistant", finalResponse)
