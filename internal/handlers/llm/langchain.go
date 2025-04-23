@@ -9,6 +9,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
 
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
@@ -16,40 +17,101 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 )
 
-// LangChainHandler implements the OpenAI tool using LangChainGo
+// LangChainHandler implements a central model gateway using LangChainGo
 type LangChainHandler struct {
 	handlers.BaseHandler
-	llm          llms.LLM
+	llm          llms.Model
 	defaultModel string
 	apiEndpoint  string
+	provider     string
 }
 
 // NewLangChainHandler creates a new LangChainHandler
 func NewLangChainHandler(logger *logging.Logger) *LangChainHandler {
-	// Get API key from environment
+	// Get environment variables
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	apiEndpoint := os.Getenv("OPENAI_API_ENDPOINT")
 	defaultModel := os.Getenv("OPENAI_MODEL")
+	ollamaEndpoint := os.Getenv("OLLAMA_API_ENDPOINT")
+	ollamaModel := os.Getenv("OLLAMA_MODEL")
+	provider := os.Getenv("LLM_PROVIDER_TYPE") // openai or ollama
 
+	// Set defaults
 	if defaultModel == "" {
 		defaultModel = "gpt-4o"
 		logger.Info("No OPENAI_MODEL specified, defaulting to %s", defaultModel)
 	}
 
-	// Initialize OpenAI client from LangChainGo
-	opts := []openai.Option{
-		openai.WithToken(apiKey),
+	if ollamaModel == "" {
+		ollamaModel = "llama3"
+		logger.Info("No OLLAMA_MODEL specified, defaulting to %s", ollamaModel)
 	}
 
-	// If custom API endpoint is set, use it
-	if apiEndpoint != "" {
-		opts = append(opts, openai.WithBaseURL(apiEndpoint))
+	if ollamaEndpoint == "" {
+		ollamaEndpoint = "http://localhost:11434"
+		logger.Info("No OLLAMA_API_ENDPOINT specified, defaulting to %s", ollamaEndpoint)
 	}
 
-	llm, err := openai.New(opts...)
-	if err != nil {
-		logger.Error("Failed to initialize LangChainGo OpenAI client: %v", err)
-		// We'll continue with a nil client and check for it in IsConfigured()
+	if provider == "" {
+		provider = "openai"
+		logger.Info("No LLM_PROVIDER_TYPE specified, defaulting to %s", provider)
+	}
+
+	// Initialize the appropriate LLM based on provider
+	var llmClient llms.LLM
+	var err error
+
+	switch strings.ToLower(provider) {
+	case "openai":
+		// Initialize OpenAI client from LangChainGo
+		opts := []openai.Option{
+			openai.WithToken(apiKey),
+		}
+
+		// If custom API endpoint is set, use it
+		if apiEndpoint != "" {
+			opts = append(opts, openai.WithBaseURL(apiEndpoint))
+		}
+
+		llmClient, err = openai.New(opts...)
+		if err != nil {
+			logger.Error("Failed to initialize LangChainGo OpenAI client: %v", err)
+		}
+
+	case "ollama":
+		// Initialize Ollama client from LangChainGo
+		opts := []ollama.Option{
+			ollama.WithModel(ollamaModel),
+		}
+
+		// Set the server URL for Ollama
+		if ollamaEndpoint != "" {
+			logger.Info("Using Ollama endpoint: %s", ollamaEndpoint)
+			opts = append(opts, ollama.WithServerURL(ollamaEndpoint))
+		}
+
+		llmClient, err = ollama.New(opts...)
+		if err != nil {
+			logger.Error("Failed to initialize LangChainGo Ollama client: %v", err)
+			// If Ollama fails, fall back to OpenAI if API key is available
+			if apiKey != "" {
+				logger.Warn("Falling back to OpenAI due to Ollama initialization failure")
+				provider = "openai"
+				llmClient, err = openai.New(openai.WithToken(apiKey))
+				if err != nil {
+					logger.Error("Failed to initialize fallback OpenAI client: %v", err)
+				}
+			}
+		}
+
+	default:
+		logger.Warn("Unknown provider type '%s', falling back to OpenAI", provider)
+		provider = "openai"
+		// Initialize OpenAI as fallback
+		llmClient, err = openai.New(openai.WithToken(apiKey))
+		if err != nil {
+			logger.Error("Failed to initialize fallback OpenAI client: %v", err)
+		}
 	}
 
 	// Create tool definition
@@ -81,9 +143,10 @@ func NewLangChainHandler(logger *logging.Logger) *LangChainHandler {
 			Tool:        tool,
 			Logger:      logger.WithName("langchain-tool"),
 		},
-		llm:          llm,
+		llm:          llmClient,
 		defaultModel: defaultModel,
 		apiEndpoint:  apiEndpoint,
+		provider:     provider,
 	}
 }
 

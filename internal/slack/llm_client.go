@@ -7,21 +7,41 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tuannvm/slack-mcp-client/internal/common"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
 
 // callLLM is a wrapper function that calls the appropriate LLM implementation
 func (c *Client) callLLM(prompt, contextHistory string) (string, error) {
+	// Try LangChain first regardless of configuration if it's available
+	if hasLangChainTool(c.discoveredTools) {
+		c.log.Printf("LangChain gateway available, using it for all LLM interactions")
+		return c.callLangChainMCP(prompt, contextHistory)
+	}
+
+	// LangChain not available, fall back to configured provider
 	switch c.cfg.LLMProvider {
 	case config.ProviderLangChain:
-		return c.callLangChainMCP(prompt, contextHistory)
+		// If LangChain is explicitly configured but not available, log warning
+		c.log.Printf("Warning: LangChain configured but not available as a tool, falling back to OpenAI")
+		return c.callOpenAI(prompt, contextHistory)
 	case config.ProviderOpenAI:
 		return c.callOpenAI(prompt, contextHistory)
 	default:
 		c.log.Printf("Unknown LLM provider '%s', falling back to OpenAI", c.cfg.LLMProvider)
 		return c.callOpenAI(prompt, contextHistory)
 	}
+}
+
+// hasLangChainTool checks if the langchain tool is available in any server
+func hasLangChainTool(tools map[string]common.ToolInfo) bool {
+	for name := range tools {
+		if name == "langchain" {
+			return true
+		}
+	}
+	return false
 }
 
 // callLangChainMCP sends a prompt to the LangChain handler via MCP
@@ -33,7 +53,8 @@ func (c *Client) callLangChainMCP(prompt, contextHistory string) (string, error)
 	var serverName string
 
 	for name, client := range c.mcpClients {
-		if c.hasToolOnServer("langchain", name) {
+		// Check if this client has the LangChain tool registered
+		if hasToolOnServer("langchain", name, c.discoveredTools) {
 			mcpClient = client
 			serverName = name
 			break
@@ -106,8 +127,8 @@ func (c *Client) callLangChainMCP(prompt, contextHistory string) (string, error)
 }
 
 // hasToolOnServer checks if a specific tool is available on a server
-func (c *Client) hasToolOnServer(toolName, serverName string) bool {
-	for name, toolInfo := range c.discoveredTools {
+func hasToolOnServer(toolName, serverName string, tools map[string]common.ToolInfo) bool {
+	for name, toolInfo := range tools {
 		if name == toolName && toolInfo.ServerName == serverName {
 			return true
 		}

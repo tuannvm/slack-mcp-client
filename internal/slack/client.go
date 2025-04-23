@@ -370,6 +370,9 @@ type openaiResponse struct {
 
 // callOpenAI sends a prompt to the OpenAI API and returns the response
 func (c *Client) callOpenAI(prompt, contextHistory string) (string, error) {
+	// Log a warning when falling back to direct OpenAI calls instead of using LangChain as gateway
+	c.log.Printf("WARNING: Using direct OpenAI API call instead of LangChain gateway. This is a fallback mechanism and not the preferred approach.")
+
 	// Prepare messages for OpenAI
 	messages := []openaiMessage{}
 

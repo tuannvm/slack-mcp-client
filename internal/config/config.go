@@ -38,7 +38,7 @@ type Config struct {
 	SlackBotToken   string                  `json:"-"`       // Loaded from env
 	SlackAppToken   string                  `json:"-"`       // Loaded from env
 	OpenAIModelName string                  `json:"-"`       // Loaded from env
-	LLMProvider     LLMProvider             `json:"-"`       // Will always be OpenAI now
+	LLMProvider     LLMProvider             `json:"-"`       // LangChain is the default gateway
 	Servers         map[string]ServerConfig `json:"servers"` // Map of server configs by name
 }
 
@@ -67,14 +67,29 @@ func LoadConfig(configFilePath string) (*Config, error) {
 	return cfg, nil
 }
 
-// loadConfigFromEnv creates a config from environment variables. Assumes OpenAI is the provider.
+// loadConfigFromEnv creates a config from environment variables
 func loadConfigFromEnv() (*Config, error) {
-	// Initialize cfg fields, setting provider directly to OpenAI
+	// Initialize cfg fields
 	cfg := &Config{
 		SlackBotToken: os.Getenv("SLACK_BOT_TOKEN"),
 		SlackAppToken: os.Getenv("SLACK_APP_TOKEN"),
-		LLMProvider:   ProviderOpenAI, // Set directly
 		Servers:       make(map[string]ServerConfig),
+	}
+
+	// Check for LLM provider environment variable
+	provider := os.Getenv("LLM_PROVIDER")
+	if provider != "" {
+		switch LLMProvider(provider) {
+		case ProviderOpenAI, ProviderLangChain:
+			cfg.LLMProvider = LLMProvider(provider)
+		default:
+			fmt.Printf("Warning: Unknown LLM provider '%s'. Defaulting to LangChain.\n", provider)
+			cfg.LLMProvider = ProviderLangChain
+		}
+	} else {
+		// Default to LangChain when not specified
+		cfg.LLMProvider = ProviderLangChain
+		fmt.Println("No LLM provider specified, defaulting to LangChain")
 	}
 
 	// Load OpenAI model environment variable
