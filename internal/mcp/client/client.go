@@ -14,7 +14,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
-	
+
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 )
 
@@ -185,7 +185,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 		}
 
 		c.log.Printf("Error: Tool '%s' returned an error: %s", toolName, errMsgText)
-		return "", customErrors.NewMCPError("tool_execution_error", 
+		return "", customErrors.NewMCPError("tool_execution_error",
 			fmt.Sprintf("Tool '%s' returned an error", toolName)).WithData("error_message", errMsgText)
 	}
 

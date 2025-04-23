@@ -156,7 +156,7 @@ func loadServersFromFile(configFilePath string, cfg *Config) error {
 
 		// Validate connection details
 		if server.Command == "" && server.Address == "" {
-			return customErrors.NewConfigError("invalid_server_config", 
+			return customErrors.NewConfigError("invalid_server_config",
 				fmt.Sprintf("Server '%s' is missing both 'command' and 'address'/'url'", name))
 		}
 
@@ -176,7 +176,7 @@ func loadServersFromFile(configFilePath string, cfg *Config) error {
 			// Valid mode, normalize to lowercase
 			server.Mode = strings.ToLower(server.Mode)
 		default:
-			return customErrors.NewConfigError("invalid_mode", 
+			return customErrors.NewConfigError("invalid_mode",
 				fmt.Sprintf("Server '%s' has invalid mode '%s'. Must be 'http', 'sse', or 'stdio'", name, server.Mode))
 		}
 

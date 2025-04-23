@@ -14,19 +14,19 @@ type ErrorDomain string
 const (
 	// ErrorDomainConfig represents errors from the configuration system
 	ErrorDomainConfig ErrorDomain = "config"
-	
+
 	// ErrorDomainLLM represents errors from language model interactions
 	ErrorDomainLLM ErrorDomain = "llm"
-	
+
 	// ErrorDomainSlack represents errors from Slack API interactions
 	ErrorDomainSlack ErrorDomain = "slack"
-	
+
 	// ErrorDomainMCP represents errors from MCP protocol
 	ErrorDomainMCP ErrorDomain = "mcp"
-	
+
 	// ErrorDomainHTTP represents errors from HTTP operations
 	ErrorDomainHTTP ErrorDomain = "http"
-	
+
 	// ErrorDomainInternal represents internal application errors
 	ErrorDomainInternal ErrorDomain = "internal"
 )
@@ -36,19 +36,19 @@ const (
 type DomainError struct {
 	// Domain is the component where the error originated
 	Domain ErrorDomain
-	
+
 	// Code is a machine-readable identifier for the error type
 	Code string
-	
+
 	// Message is a human-readable description of the error
 	Message string
-	
+
 	// Cause is the underlying error that led to this error
 	Cause error
-	
+
 	// Stack contains the stack trace at the point of error creation
 	Stack string
-	
+
 	// Data contains additional contextual data about the error
 	Data map[string]interface{}
 }
@@ -152,7 +152,7 @@ func captureStack(skip int) string {
 	var pcs [depth]uintptr
 	n := runtime.Callers(skip+1, pcs[:])
 	frames := runtime.CallersFrames(pcs[:n])
-	
+
 	var stackBuilder string
 	for {
 		frame, more := frames.Next()
