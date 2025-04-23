@@ -1,5 +1,5 @@
-// Package client provides an implementation of the Model Context Protocol client
-package client
+// Package mcp provides MCP client and server implementations
+package mcp
 
 import (
 	"context"
@@ -330,22 +330,4 @@ func (c *Client) PrintEnvironment() {
 			c.log.Printf("  mcp-trino found at: %s", path)
 		}
 	}
-}
-
-// runNetworkDiagnostics performs basic network checks to diagnose connection issues
-//
-//nolint:unused // Reserved for future use
-func (c *Client) runNetworkDiagnostics(_ context.Context, serverAddr string) error { // nolint:revive // Using underscore for unused parameter
-	// Parse URL to extract host and port
-	c.log.Printf("Running network diagnostics for %s", serverAddr)
-
-	// Simple check - can we make a HTTP request to the server?
-	// This is just a basic check, not a full SSE validation
-	c.log.Printf("Attempting HTTP GET to %s (note: this is just a connectivity test, not an SSE test)", serverAddr)
-
-	// This is a simplified version - just log the diagnostic steps
-	// In a real implementation, we'd actually make the HTTP request
-
-	c.log.Printf("Diagnostics complete for %s", serverAddr)
-	return nil
 }

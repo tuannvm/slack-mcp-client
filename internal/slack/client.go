@@ -19,9 +19,9 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
-	"github.com/tuannvm/slack-mcp-client/internal/bridge"
 	"github.com/tuannvm/slack-mcp-client/internal/common"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
+	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
 
@@ -33,7 +33,7 @@ type Client struct {
 	botUserID     string
 	botMentionRgx *regexp.Regexp
 	mcpClients    map[string]*mcp.Client
-	llmMCPBridge  *bridge.LLMMCPBridge
+	llmMCPBridge  *handlers.LLMMCPBridge
 	cfg           *config.Config // Holds the application configuration
 	httpClient    *http.Client   // HTTP client for LLM communication
 	// Message history for context (limited per channel)
@@ -124,7 +124,7 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 
-	llmMCPBridge := bridge.NewLLMMCPBridge(mcpClients, logger, discoveredTools)
+	llmMCPBridge := handlers.NewLLMMCPBridgeFromClients(mcpClients, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
 	// --- Log final config (always OpenAI now for this client) ---

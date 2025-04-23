@@ -1,5 +1,5 @@
-// Package server provides an implementation of the Model Context Protocol server
-package server
+// Package mcp provides an implementation of the Model Context Protocol server
+package mcp
 
 import (
 	"context"
@@ -14,8 +14,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
-	"github.com/tuannvm/slack-mcp-client/internal/handlers/llm"
-	"github.com/tuannvm/slack-mcp-client/internal/handlers/system"
+	"github.com/tuannvm/slack-mcp-client/internal/llm"
 )
 
 // Server manages the MCP server endpoint, handling tool registration and HTTP requests.
@@ -59,7 +58,7 @@ func NewServer(cfg *config.Config, logger *logging.Logger) (*Server, error) {
 // registerHandlers registers all the available tool handlers
 func (s *Server) registerHandlers() error {
 	// System tools
-	helloHandler := system.NewHelloHandler(s.logger)
+	helloHandler := handlers.NewHelloHandler(s.logger)
 	if err := s.registerHandler(helloHandler); err != nil {
 		return err
 	}
@@ -67,33 +66,22 @@ func (s *Server) registerHandlers() error {
 	// LLM tools
 
 	// LangChain implementation using LangChainGo
-	langChainHandler := llm.NewLangChainHandler(s.logger)
-	if langChainHandler.IsConfigured() {
-		if err := s.registerHandler(langChainHandler); err != nil {
-			return err
-		}
-		s.logger.Info("LangChain handler registered successfully")
-	} else {
-		s.logger.Warn("LangChain handler not configured, skipping registration")
+	langChainHandler := llm.CreateMCPLangChainHandler(s.logger)
+	if err := s.registerHandler(langChainHandler); err != nil {
+		return err
+	}
+	s.logger.Info("LangChain handler registered successfully")
+
+	// OpenAI handler
+	openAIHandler := llm.CreateMCPOpenAIHandler(s.logger)
+	if err := s.registerHandler(openAIHandler); err != nil {
+		return err
 	}
 
-	// Original OpenAI handler (kept for backwards compatibility)
-	openAIHandler := llm.NewOpenAIHandler(s.logger)
-	if openAIHandler.IsConfigured() {
-		if err := s.registerHandler(openAIHandler); err != nil {
-			return err
-		}
-	} else {
-		s.logger.Warn("OpenAI handler not configured, skipping registration")
-	}
-
-	ollamaHandler := llm.NewOllamaHandler(s.logger)
-	if ollamaHandler.IsConfigured() {
-		if err := s.registerHandler(ollamaHandler); err != nil {
-			return err
-		}
-	} else {
-		s.logger.Warn("Ollama handler not configured, skipping registration")
+	// Ollama handler
+	ollamaHandler := llm.CreateMCPOllamaHandler(s.logger)
+	if err := s.registerHandler(ollamaHandler); err != nil {
+		return err
 	}
 
 	return nil

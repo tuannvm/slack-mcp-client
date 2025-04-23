@@ -1,5 +1,5 @@
-// Package system provides system-level tool handlers for basic functionality
-package system
+// Package handlers provides implementation for MCP tool handlers.
+package handlers
 
 import (
 	"context"
@@ -7,12 +7,11 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
-	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 )
 
 // HelloHandler implements the Hello tool
 type HelloHandler struct {
-	handlers.BaseHandler
+	BaseHandler
 }
 
 // NewHelloHandler creates a new HelloHandler
@@ -26,7 +25,7 @@ func NewHelloHandler(logger *logging.Logger) *HelloHandler {
 	)
 
 	return &HelloHandler{
-		BaseHandler: handlers.BaseHandler{
+		BaseHandler: BaseHandler{
 			Name:        "hello",
 			Description: "Responds with a greeting",
 			Tool:        tool,

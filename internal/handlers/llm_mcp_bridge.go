@@ -1,6 +1,6 @@
-// Package bridge provides integration between LLM responses and MCP tool execution.
-// It handles detection and execution of tool calls in LLM responses.
-package bridge
+// Package handlers provides implementation for MCP tool handlers.
+// It handles tool registration, execution, and management.
+package handlers
 
 import (
 	"context"
@@ -11,74 +11,68 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/common"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
+
+// MCPClientInterface defines the interface for an MCP client
+// This allows us to break the circular dependency between packages
+type MCPClientInterface interface {
+	CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)
+}
 
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
 // It detects when an LLM response should trigger a tool call and executes it.
 type LLMMCPBridge struct {
-	mcpClients    map[string]*mcp.Client // Map of MCP clients keyed by server name
-	primaryClient *mcp.Client            // Default client for tool calls
-	logger        *log.Logger
-	// Use common.ToolInfo for the tool map
-	availableTools map[string]common.ToolInfo // Map of tool name to server name
+	mcpClients     map[string]MCPClientInterface // Map of MCP clients keyed by server name
+	logger         *log.Logger
+	availableTools map[string]common.ToolInfo // Map of tool names to info about the tool
 }
 
-// NewLLMMCPBridge creates a new bridge between LLM and MCP with pre-discovered tools.
-func NewLLMMCPBridge(mcpClients map[string]*mcp.Client, logger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
-	if logger == nil {
-		logger = log.New(log.Writer(), "LLM_MCP_BRIDGE: ", log.LstdFlags|log.Lshortfile)
-	}
-
-	bridge := &LLMMCPBridge{
+// NewLLMMCPBridge creates a new LLMMCPBridge with the given MCP clients and tools
+func NewLLMMCPBridge(mcpClients map[string]MCPClientInterface, logger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+	return &LLMMCPBridge{
 		mcpClients:     mcpClients,
 		logger:         logger,
 		availableTools: discoveredTools,
 	}
+}
 
-	// Set the primary client
-	for name, client := range mcpClients {
-		bridge.primaryClient = client
-		bridge.logger.Printf("Set primary client to '%s'", name)
-		break
+// NewLLMMCPBridgeFromClients creates a new LLMMCPBridge with the given MCP Client objects
+// This is a convenience function that wraps the concrete clients in the interface
+func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+	// Convert the concrete client map to the interface map
+	// This is a workaround for the type system to avoid import cycles
+	interfaceClients := make(map[string]MCPClientInterface)
+	
+	// Type assertion to get the original map
+	if clientMap, ok := mcpClients.(map[string]interface{}); ok {
+		for name, client := range clientMap {
+			if mcpClient, ok := client.(MCPClientInterface); ok {
+				interfaceClients[name] = mcpClient
+			}
+		}
 	}
-
-	// Log initialization details
-	if bridge.availableTools == nil {
-		bridge.availableTools = make(map[string]common.ToolInfo)
-		logger.Printf("Initialized with %d MCP clients and NO pre-discovered tools.", len(mcpClients))
-	} else {
-		logger.Printf("Initialized with %d MCP clients and %d pre-discovered tools.", len(mcpClients), len(discoveredTools))
-	}
-
-	return bridge
+	
+	return NewLLMMCPBridge(interfaceClients, logger, discoveredTools)
 }
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
 // It no longer uses natural language detection.
 func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, _ string) (string, error) {
-	b.logger.Printf("Processing LLM response for potential JSON tool call: %s", llmResponse)
-
-	// Attempt to detect and parse the specific JSON tool call format
+	// Check for a tool call in JSON format
 	if toolCall := b.detectSpecificJSONToolCall(llmResponse); toolCall != nil {
-		b.logger.Printf("Detected JSON tool call: %v", toolCall)
 		// Execute the tool call
-		toolResult, err := b.executeToolCall(ctx, toolCall)
+		result, err := b.executeToolCall(ctx, toolCall)
 		if err != nil {
-			// Return the error to the caller (slack client) to handle
-			// It might inform the user or try to re-prompt the LLM
 			b.logger.Printf("Error executing tool call: %v", err)
-			return "", fmt.Errorf("error executing tool '%s': %w", toolCall.Tool, err)
+			return fmt.Sprintf("Error executing tool call: %v", err), nil
 		}
-		// Return the raw tool result (caller will decide how to present/re-prompt)
-		b.logger.Printf("Tool '%s' executed successfully.", toolCall.Tool)
-		return toolResult, nil // Indicate success by returning result and nil error
+		return result, nil
 	}
 
-	// No valid tool call JSON detected, return original LLM response
-	b.logger.Printf("No valid JSON tool call detected.")
-	return llmResponse, nil // Indicate no tool call by returning original response and nil error
+	// Just return the LLM response as-is if no tool call was detected
+	return llmResponse, nil
 }
 
 // ToolCall represents the expected JSON structure for a tool call from the LLM
@@ -111,17 +105,14 @@ func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
 
 // tryDirectJSONParsing attempts direct JSON parsing of the entire response
 func (b *LLMMCPBridge) tryDirectJSONParsing(response string) *ToolCall {
-	trimmedResponse := strings.TrimSpace(response)
-	if strings.HasPrefix(trimmedResponse, "{") && strings.HasSuffix(trimmedResponse, "}") {
-		var toolCall ToolCall
-		if err := json.Unmarshal([]byte(trimmedResponse), &toolCall); err == nil {
-			// Validate the tool call
-			if b.isValidToolCall(toolCall) {
-				b.logger.Printf("DEBUG: Direct JSON parsing successful")
-				return &toolCall
-			}
-		} else {
-			b.logger.Printf("DEBUG: Direct JSON parsing failed: %v", err)
+	b.logger.Printf("DEBUG: Attempting direct JSON parsing")
+	response = strings.TrimSpace(response)
+
+	var toolCall ToolCall
+	if err := json.Unmarshal([]byte(response), &toolCall); err == nil {
+		if b.isValidToolCall(toolCall) {
+			b.logger.Printf("DEBUG: Direct JSON parsing successful")
+			return &toolCall
 		}
 	}
 	return nil
@@ -163,7 +154,6 @@ func (b *LLMMCPBridge) tryRegexJSONExtraction(response string) *ToolCall {
 		if len(match) >= 3 {
 			toolName := match[1]
 			argsJSON := "{" + match[2] + "}" // Ensure it's wrapped in braces
-
 			b.logger.Printf("DEBUG: Found potential JSON object: tool=%s, args=%s", toolName, argsJSON)
 
 			// Try to construct the tool call manually
@@ -225,7 +215,7 @@ func (b *LLMMCPBridge) isValidToolCall(toolCall ToolCall) bool {
 }
 
 // getClientForTool returns the appropriate client for a given tool (using the new map)
-func (b *LLMMCPBridge) getClientForTool(toolName string) *mcp.Client {
+func (b *LLMMCPBridge) getClientForTool(toolName string) MCPClientInterface {
 	if toolInfo, exists := b.availableTools[toolName]; exists {
 		if client, clientExists := b.mcpClients[toolInfo.ServerName]; clientExists {
 			return client
@@ -248,8 +238,13 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 	serverName := b.availableTools[toolCall.Tool].ServerName // Get server name for logging
 	b.logger.Printf("Calling MCP tool '%s' on server '%s' with args: %v", toolCall.Tool, serverName, toolCall.Args)
 
-	// Call the tool using the generic CallTool method
-	result, err := client.CallTool(ctx, toolCall.Tool, toolCall.Args)
+	// Create a CallToolRequest with the correct structure
+	request := mcp.CallToolRequest{}
+	request.Params.Name = toolCall.Tool
+	request.Params.Arguments = toolCall.Args
+
+	// Call the tool using the MCPClientInterface
+	result, err := client.CallTool(ctx, request)
 	if err != nil {
 		b.logger.Printf("Error calling MCP tool %s: %v", toolCall.Tool, err)
 		return "", fmt.Errorf("failed to execute tool %s: %w", toolCall.Tool, err) // Propagate error
@@ -257,40 +252,67 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 
 	b.logger.Printf("Successfully executed MCP tool: %s", toolCall.Tool)
 
-	// Return the raw result string - formatting/re-prompting happens in slack client
-	return result, nil
+	// Format the result based on its type
+	var resultStr string
+	if result != nil {
+		// Convert the result to a string representation
+		resultBytes, err := json.Marshal(result)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal tool result: %w", err)
+		}
+		resultStr = string(resultBytes)
+	} else {
+		resultStr = "{}"
+	}
+
+	// Return the result string
+	return resultStr, nil
 }
 
 // extractSimpleKeyValuePairs attempts to extract simple key-value pairs from text
 // that might look like JSON but not be valid JSON syntax
 func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]interface{}, bool) {
 	result := make(map[string]interface{})
-
-	// Look for patterns like "key": "value" or "key": 123
-	kvRegex := regexp.MustCompile("\"([^\"]+)\"\\s*\\:\\s*(\"[^\"]*\"|\\d+|true|false)")
-	matches := kvRegex.FindAllStringSubmatch(text, -1)
+	// Match key: "value" or key: value patterns
+	pairRegex := regexp.MustCompile(`\s*"?([^"{}:,]+)"?\s*:\s*(?:"([^"]*)"|(true|false|\d+(?:\.\d+)?))\s*,?`)
+	matches := pairRegex.FindAllStringSubmatch(text, -1)
 
 	for _, match := range matches {
 		if len(match) >= 3 {
-			key := match[1]
-			valueStr := match[2]
+			key := strings.TrimSpace(match[1])
+			var value interface{}
 
-			// Try to determine the value type
-			if strings.HasPrefix(valueStr, "\"") && strings.HasSuffix(valueStr, "\"") {
-				// It's a string
-				result[key] = valueStr[1 : len(valueStr)-1] // Remove quotes
-			} else if valueStr == "true" {
-				result[key] = true
-			} else if valueStr == "false" {
-				result[key] = false
-			} else {
-				// Try to parse as number
-				if num, err := strconv.ParseFloat(valueStr, 64); err == nil {
-					result[key] = num
+			// If the third capture group has a value, it's a non-string value
+			if match[3] != "" {
+				// Handle boolean values
+				if match[3] == "true" {
+					value = true
+				} else if match[3] == "false" {
+					value = false
 				} else {
-					result[key] = valueStr // Keep as string if all else fails
+					// Handle numeric values
+					if strings.Contains(match[3], ".") {
+						// Float value
+						if floatVal, err := strconv.ParseFloat(match[3], 64); err == nil {
+							value = floatVal
+						} else {
+							value = match[3] // Fallback to string if parsing fails
+						}
+					} else {
+						// Integer value
+						if intVal, err := strconv.Atoi(match[3]); err == nil {
+							value = intVal
+						} else {
+							value = match[3] // Fallback to string if parsing fails
+						}
+					}
 				}
+			} else {
+				// String value (from the second capture group)
+				value = match[2]
 			}
+
+			result[key] = value
 		}
 	}
 
