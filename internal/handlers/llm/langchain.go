@@ -58,7 +58,7 @@ func NewLangChainHandler(logger *logging.Logger) *LangChainHandler {
 	}
 
 	// Initialize the appropriate LLM based on provider
-	var llmClient llms.LLM
+	var llmClient llms.Model
 	var err error
 
 	switch strings.ToLower(provider) {
@@ -257,8 +257,8 @@ func (h *LangChainHandler) buildOptions(args map[string]interface{}, model strin
 func (h *LangChainHandler) callLLMWithPrompt(ctx context.Context, prompt string, options []llms.CallOption) (string, error) {
 	h.Logger.Debug("Calling LangChainGo OpenAI with prompt: %s", prompt)
 
-	// Call the LLM with the prompt
-	completion, err := h.llm.Call(ctx, prompt, options...)
+	// Call the LLM with the prompt using GenerateFromSinglePrompt instead of Call
+	completion, err := llms.GenerateFromSinglePrompt(ctx, h.llm, prompt, options...)
 	if err != nil {
 		h.Logger.Error("LangChainGo OpenAI request failed: %v", err)
 		return "", customErrors.NewOpenAIError(
