@@ -17,6 +17,8 @@ Important distinction: This client is not designed to interact with the Slack AP
 
 ## How It Works
 
+![Image](https://github.com/user-attachments/assets/48a587e4-7895-4a6f-9745-61b21894c34c)
+
 ```mermaid
 flowchart LR
     User([User]) --> SlackBot
@@ -62,6 +64,11 @@ flowchart LR
 - ✅ **Slack Integration**: 
   - Uses Socket Mode for secure, firewall-friendly communication
   - Works with both channels and direct messages
+  - Rich message formatting with Markdown and Block Kit
+  - Automatic conversion of quoted strings to code blocks for better readability
+- ✅ **LLM Support**:
+  - Native OpenAI integration
+  - LangChain gateway for multiple LLM providers
 - ✅ **Tool Registration**: Dynamically register and call MCP tools
 - ✅ **Docker container support**
 
@@ -300,17 +307,72 @@ You can easily extend this setup to include additional MCP servers in the same n
 
 For detailed instructions on Slack app configuration, token setup, required permissions, and troubleshooting common issues, see the [Slack Configuration Guide](slack.md).
 
+## LLM Integration
+
+The client supports multiple LLM providers through a flexible integration system:
+
+### LangChain Gateway
+
+The LangChain gateway enables seamless integration with various LLM providers:
+
+- **OpenAI**: Native support for GPT models (default)
+- **Ollama**: Local LLM support for models like Llama, Mistral, etc.
+- **Extensible**: Can be extended to support other LangChain-compatible providers
+
+### LLM-MCP Bridge
+
+The custom LLM-MCP bridge layer enables any LLM to use MCP tools without requiring native function-calling capabilities:
+
+- **Universal Compatibility**: Works with any LLM, including those without function-calling
+- **Pattern Recognition**: Detects when a user prompt or LLM response should trigger a tool call
+- **Natural Language Support**: Understands both structured JSON tool calls and natural language requests
+
+### Configuration
+
+LLM providers can be configured via environment variables or command-line flags:
+
+```bash
+# Set OpenAI as the provider (default)
+export LLM_PROVIDER="openai"
+export OPENAI_MODEL="gpt-4o"
+
+# Or use Ollama
+export LLM_PROVIDER="ollama"
+export LANGCHAIN_OLLAMA_URL="http://localhost:11434"
+export LANGCHAIN_OLLAMA_MODEL="llama3"
+```
+
 ## Configuration
 
 The client can be configured using the following environment variables:
 
-| Variable        | Description                              | Default    |
-| --------------- | ---------------------------------------- | ---------- |
-| SLACK_BOT_TOKEN | Bot token for Slack API                  | (required) |
-| SLACK_APP_TOKEN | App-level token for Socket Mode          | (required) |
-| OPENAI_API_KEY  | API key for OpenAI authentication        | (required) |
-| OPENAI_MODEL    | OpenAI model to use                      | gpt-4o     |
-| LOG_LEVEL       | Logging level (debug, info, warn, error) | info       |
+| Variable              | Description                                  | Default    |
+| --------------------- | -------------------------------------------- | ---------- |
+| SLACK_BOT_TOKEN       | Bot token for Slack API                      | (required) |
+| SLACK_APP_TOKEN       | App-level token for Socket Mode              | (required) |
+| OPENAI_API_KEY        | API key for OpenAI authentication            | (required) |
+| OPENAI_MODEL          | OpenAI model to use                          | gpt-4o     |
+| LOG_LEVEL             | Logging level (debug, info, warn, error)     | info       |
+| LLM_PROVIDER          | LLM provider to use (openai, ollama, etc.)   | openai     |
+| LANGCHAIN_OLLAMA_URL  | URL for Ollama when using LangChain          | http://localhost:11434 |
+| LANGCHAIN_OLLAMA_MODEL| Model name for Ollama when using LangChain   | llama3     |
+
+## Slack-Formatted Output
+
+The client includes a comprehensive Slack-formatted output system that enhances message display in Slack:
+
+- **Automatic Format Detection**: Automatically detects message type (plain text, markdown, JSON Block Kit, structured data) and applies appropriate formatting
+- **Markdown Formatting**: Supports Slack's mrkdwn syntax with automatic conversion from standard Markdown
+  - Converts `**bold**` to `*bold*` for proper Slack bold formatting
+  - Preserves inline code, block quotes, lists, and other formatting elements
+- **Quoted String Enhancement**: Automatically converts double-quoted strings to inline code blocks for better visualization
+  - Example: `"namespace-name"` becomes `` `namespace-name` `` in Slack
+  - Improves readability of IDs, timestamps, and other quoted values
+- **Block Kit Integration**: Converts structured data to Block Kit layouts for better visual presentation
+  - Automatically validates against Slack API limits
+  - Falls back to plain text if Block Kit validation fails
+
+For more details, see the [Slack Formatting Guide](guides/slack-formatting.md) and [Markdown-Slack Mapping Guide](guides/markdown-slack-mapping.md).
 
 ## Transport Modes
 
