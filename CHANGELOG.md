@@ -1,3 +1,19 @@
+# [1.3.0](https://github.com/tuannvm/slack-mcp-client/compare/v1.2.0...v1.3.0) (2025-04-24)
+
+
+### Bug Fixes
+
+* **logging:** handle MCP client close errors in main and Slack client functions ([fedf9c4](https://github.com/tuannvm/slack-mcp-client/commit/fedf9c4e8932692fe8712192085dec20501d3cf5))
+
+
+### Features
+
+* **handlers:** add LLM gateway handler with provider registry ([6aaf626](https://github.com/tuannvm/slack-mcp-client/commit/6aaf6267a173448fdada7fe4b2626c7f0dc92236))
+* **langchain:** integrate LangChain provider for LLM operations ([fe187c2](https://github.com/tuannvm/slack-mcp-client/commit/fe187c2672cc1160f4d07f89ef75ff2441cc4593))
+* **logging:** enhance logging with key-value pairs ([2c8a269](https://github.com/tuannvm/slack-mcp-client/commit/2c8a2695113719d05125b8fcca8406311e32032a))
+* **mcp-client:** support command-based configuration for stdio mode ([9732e11](https://github.com/tuannvm/slack-mcp-client/commit/9732e117d7b6ec06fb475fa786910f6314714526))
+* **slack-mcp-client:** make MCP clients optional, add godotenv package ([bb60c35](https://github.com/tuannvm/slack-mcp-client/commit/bb60c35c5cc087f43cd652b6e6344ebdd92ad2c2))
+
 # [1.2.0](https://github.com/tuannvm/slack-mcp-client/compare/v1.1.3...v1.2.0) (2025-04-23)
 
 
