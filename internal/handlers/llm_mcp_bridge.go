@@ -14,6 +14,7 @@ import (
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
 // MCPClientInterface defines the interface for an MCP client
@@ -26,28 +27,54 @@ type MCPClientInterface interface {
 // It detects when an LLM response should trigger a tool call and executes it.
 type LLMMCPBridge struct {
 	mcpClients     map[string]MCPClientInterface // Map of MCP clients keyed by server name
-	logger         *log.Logger
+	logger         *logging.Logger
+	stdLogger      *log.Logger                // Standard logger for backward compatibility
 	availableTools map[string]common.ToolInfo // Map of tool names to info about the tool
 }
 
 // NewLLMMCPBridge creates a new LLMMCPBridge with the given MCP clients and tools
-func NewLLMMCPBridge(mcpClients map[string]MCPClientInterface, logger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+// Uses INFO as the default log level
+func NewLLMMCPBridge(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+	// Create a structured logger from the standard logger with INFO level by default
+	// If debug logging is needed, use NewLLMMCPBridgeWithLogLevel instead
+	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo)
+}
+
+// NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
+func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger, 
+	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel) *LLMMCPBridge {
+	// Create a structured logger with the specified log level
+	structLogger := logging.New("llm-mcp-bridge", logLevel)
+
 	return &LLMMCPBridge{
 		mcpClients:     mcpClients,
-		logger:         logger,
+		logger:         structLogger,
+		stdLogger:      stdLogger,
 		availableTools: discoveredTools,
 	}
 }
 
 // NewLLMMCPBridgeFromClients creates a new LLMMCPBridge with the given MCP Client objects
 // This is a convenience function that wraps the concrete clients in the interface
-func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+// Uses INFO as the default log level
+func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+	// If debug logging is needed, use NewLLMMCPBridgeFromClientsWithLogLevel instead
+	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo)
+}
+
+// NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
+// This is a convenience function that wraps the concrete clients in the interface
+func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger, 
+	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel) *LLMMCPBridge {
+	// Create a structured logger with the specified log level
+	structLogger := logging.New("llm-mcp-bridge", logLevel)
+
 	// Convert the concrete client map to the interface map
 	// This is a workaround for the type system to avoid import cycles
 	interfaceClients := make(map[string]MCPClientInterface)
 
 	// Log the type of mcpClients for debugging
-	logger.Printf("DEBUG: mcpClients type: %T", mcpClients)
+	structLogger.DebugKV("Initializing bridge with clients", "client_type", fmt.Sprintf("%T", mcpClients))
 
 	// Try different type assertions based on the actual type
 	switch typedClients := mcpClients.(type) {
@@ -56,7 +83,7 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 		for name, client := range typedClients {
 			if mcpClient, ok := client.(MCPClientInterface); ok {
 				interfaceClients[name] = mcpClient
-				logger.Printf("DEBUG: Added client for '%s' from map[string]interface{}", name)
+				structLogger.DebugKV("Added MCP client", "name", name, "source", "map[string]interface{}")
 			}
 		}
 
@@ -64,12 +91,12 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 		// Direct case if already the right type
 		for name, client := range typedClients {
 			interfaceClients[name] = client
-			logger.Printf("DEBUG: Added client for '%s' from map[string]MCPClientInterface", name)
+			structLogger.DebugKV("Added MCP client", "name", name, "source", "map[string]MCPClientInterface")
 		}
 
 	default:
 		// Try to reflect and extract the map
-		logger.Printf("DEBUG: Using reflection to extract clients from %T", mcpClients)
+		structLogger.DebugKV("Using reflection to extract clients", "type", fmt.Sprintf("%T", mcpClients))
 
 		// Use reflection to iterate over the map
 		val := reflect.ValueOf(mcpClients)
@@ -82,13 +109,13 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 				// Try to convert the value to MCPClientInterface
 				if client, ok := value.(MCPClientInterface); ok {
 					interfaceClients[key] = client
-					logger.Printf("DEBUG: Added client for '%s' using reflection", key)
+					structLogger.DebugKV("Added MCP client", "name", key, "source", "reflection")
 				}
 			}
 		}
 	}
 
-	return NewLLMMCPBridge(interfaceClients, logger, discoveredTools)
+	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel)
 }
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
@@ -99,15 +126,20 @@ func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, _ st
 		// Execute the tool call
 		result, err := b.executeToolCall(ctx, toolCall)
 		if err != nil {
-			b.logger.Printf("Error executing tool call: %v", err)
-
 			// Check if it's already a domain error
 			var errorMessage string
 			if customErrors.IsDomainError(err) {
 				// Extract structured information from the domain error
 				code, _ := customErrors.GetErrorCode(err)
+				b.logger.ErrorKV("Failed to execute tool call",
+					"error", err.Error(),
+					"error_code", code,
+					"tool", toolCall.Tool)
 				errorMessage = fmt.Sprintf("Error executing tool call: %v (code: %s)", err, code)
 			} else {
+				b.logger.ErrorKV("Failed to execute tool call",
+					"error", err.Error(),
+					"tool", toolCall.Tool)
 				errorMessage = fmt.Sprintf("Error executing tool call: %v", err)
 			}
 
@@ -129,7 +161,7 @@ type ToolCall struct {
 // detectSpecificJSONToolCall attempts to find and parse the *specific* JSON tool call structure.
 // It validates the tool name against available tools.
 func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
-	b.logger.Printf("DEBUG: Beginning JSON tool call detection")
+	b.logger.DebugKV("Beginning JSON tool call detection")
 
 	// Try different parsing strategies in order
 	if toolCall := b.tryDirectJSONParsing(response); toolCall != nil {
@@ -144,19 +176,19 @@ func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
 		return toolCall
 	}
 
-	b.logger.Printf("DEBUG: No valid JSON tool call detected")
+	b.logger.DebugKV("No valid JSON tool call detected")
 	return nil
 }
 
 // tryDirectJSONParsing attempts direct JSON parsing of the entire response
 func (b *LLMMCPBridge) tryDirectJSONParsing(response string) *ToolCall {
-	b.logger.Printf("DEBUG: Attempting direct JSON parsing")
+	b.logger.DebugKV("Attempting direct JSON parsing")
 	response = strings.TrimSpace(response)
 
 	var toolCall ToolCall
 	if err := json.Unmarshal([]byte(response), &toolCall); err == nil {
 		if b.isValidToolCall(toolCall) {
-			b.logger.Printf("DEBUG: Direct JSON parsing successful")
+			b.logger.DebugKV("Direct JSON parsing successful", "tool", toolCall.Tool)
 			return &toolCall
 		}
 	}
@@ -165,23 +197,23 @@ func (b *LLMMCPBridge) tryDirectJSONParsing(response string) *ToolCall {
 
 // tryCodeBlockJSONParsing looks for JSON in code blocks
 func (b *LLMMCPBridge) tryCodeBlockJSONParsing(response string) *ToolCall {
-	b.logger.Printf("DEBUG: Searching for JSON in code blocks")
+	b.logger.DebugKV("Searching for JSON in code blocks")
 	codeBlockRegex := regexp.MustCompile("```(?:json)?\\s*({[\\s\\S]*?})\\s*```")
 	codeBlockMatches := codeBlockRegex.FindAllStringSubmatch(response, -1)
 
 	for _, match := range codeBlockMatches {
 		if len(match) >= 2 {
 			jsonContent := match[1]
-			b.logger.Printf("DEBUG: Found potential JSON in code block: %s", jsonContent)
+			b.logger.DebugKV("Found potential JSON in code block", "content", jsonContent)
 
 			var toolCall ToolCall
 			if err := json.Unmarshal([]byte(jsonContent), &toolCall); err == nil {
 				if b.isValidToolCall(toolCall) {
-					b.logger.Printf("DEBUG: JSON code block parsing successful")
+					b.logger.DebugKV("JSON code block parsing successful", "tool", toolCall.Tool)
 					return &toolCall
 				}
 			} else {
-				b.logger.Printf("DEBUG: JSON code block parsing failed: %v", err)
+				b.logger.DebugKV("JSON code block parsing failed", "error", err.Error())
 			}
 		}
 	}
@@ -190,7 +222,7 @@ func (b *LLMMCPBridge) tryCodeBlockJSONParsing(response string) *ToolCall {
 
 // tryRegexJSONExtraction looks for tool calls using regex patterns
 func (b *LLMMCPBridge) tryRegexJSONExtraction(response string) *ToolCall {
-	b.logger.Printf("DEBUG: Searching for JSON objects in text")
+	b.logger.DebugKV("Searching for JSON objects in text")
 	// More lenient regex that can handle various JSON formats with the key elements we need
 	jsonRegex := regexp.MustCompile("(?i)[\\{\\s]*[\"']?tool[\"']?\\s*[\\:\\=]\\s*[\"']([^\"']+)[\"']\\s*[\\,\\s]*[\"']?args[\"']?\\s*[\\:\\=]\\s*\\{([\\s\\S]*?)\\}[\\s\\}]*")
 	jsonMatches := jsonRegex.FindAllStringSubmatch(response, -1)
@@ -199,7 +231,7 @@ func (b *LLMMCPBridge) tryRegexJSONExtraction(response string) *ToolCall {
 		if len(match) >= 3 {
 			toolName := match[1]
 			argsJSON := "{" + match[2] + "}" // Ensure it's wrapped in braces
-			b.logger.Printf("DEBUG: Found potential JSON object: tool=%s, args=%s", toolName, argsJSON)
+			b.logger.DebugKV("Found potential JSON object", "tool", toolName, "args", argsJSON)
 
 			// Try to construct the tool call manually
 			if toolCall := b.constructToolCall(toolName, argsJSON); toolCall != nil {
@@ -221,15 +253,15 @@ func (b *LLMMCPBridge) constructToolCall(toolName string, argsJSON string) *Tool
 		}
 
 		if _, exists := b.availableTools[toolCall.Tool]; exists {
-			b.logger.Printf("DEBUG: Manual JSON construction successful")
+			b.logger.DebugKV("Manual JSON construction successful", "tool", toolCall.Tool)
 			return toolCall
 		}
 
-		b.logger.Printf("Warning: LLM requested tool '%s' in regex match, but it is not available.", toolCall.Tool)
+		b.logger.WarnKV("Tool not available", "tool", toolCall.Tool, "source", "regex_match")
 		return nil
 	}
 
-	b.logger.Printf("DEBUG: JSON args parsing failed: %v", err)
+	b.logger.DebugKV("JSON args parsing failed", "error", err.Error(), "tool", toolName)
 
 	// Try even more lenient approach - extract key-value pairs
 	if simpleArgs, ok := b.extractSimpleKeyValuePairs(argsJSON); ok && len(simpleArgs) > 0 {
@@ -239,7 +271,7 @@ func (b *LLMMCPBridge) constructToolCall(toolName string, argsJSON string) *Tool
 		}
 
 		if _, exists := b.availableTools[toolCall.Tool]; exists {
-			b.logger.Printf("DEBUG: Simplified key-value extraction successful")
+			b.logger.DebugKV("Simplified key-value extraction successful", "tool", toolCall.Tool)
 			return toolCall
 		}
 	}
@@ -254,7 +286,7 @@ func (b *LLMMCPBridge) isValidToolCall(toolCall ToolCall) bool {
 			return true
 		}
 
-		b.logger.Printf("Warning: LLM requested tool '%s', but it is not available.", toolCall.Tool)
+		b.logger.WarnKV("Tool not available", "tool", toolCall.Tool)
 	}
 	return false
 }
@@ -266,10 +298,10 @@ func (b *LLMMCPBridge) getClientForTool(toolName string) MCPClientInterface {
 			return client
 		}
 
-		b.logger.Printf("Warning: Tool '%s' found, but its server '%s' is not in the client map.", toolName, toolInfo.ServerName)
+		b.logger.WarnKV("Server not found for tool", "tool", toolName, "server", toolInfo.ServerName)
 	}
 	// Fallback or error handling if tool/server not found
-	b.logger.Printf("Warning: Could not find a specific client for tool '%s'. No fallback configured.", toolName)
+	b.logger.WarnKV("Client not found for tool", "tool", toolName, "fallback", false)
 	return nil // Return nil, executeToolCall should handle this
 }
 
@@ -277,17 +309,19 @@ func (b *LLMMCPBridge) getClientForTool(toolName string) MCPClientInterface {
 func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) (string, error) {
 	client := b.getClientForTool(toolCall.Tool)
 	if client == nil {
-		return "", fmt.Errorf("no MCP client available for tool '%s'", toolCall.Tool)
+		b.logger.ErrorKV("No MCP client available", "tool", toolCall.Tool)
+		return "", customErrors.NewMCPError("client_not_found", fmt.Sprintf("No MCP client available for tool '%s'", toolCall.Tool))
 	}
 
 	serverName := b.availableTools[toolCall.Tool].ServerName // Get server name for logging
-	b.logger.Printf("Calling MCP tool '%s' on server '%s' with args: %v", toolCall.Tool, serverName, toolCall.Args)
+	b.logger.InfoKV("Calling MCP tool",
+		"tool", toolCall.Tool,
+		"server", serverName,
+		"args", fmt.Sprintf("%v", toolCall.Args))
 
 	// Call the tool directly with the tool name and args
 	result, err := client.CallTool(ctx, toolCall.Tool, toolCall.Args)
 	if err != nil {
-		b.logger.Printf("Error calling MCP tool %s: %v", toolCall.Tool, err)
-
 		// Create a domain-specific error with additional context
 		domainErr := customErrors.WrapMCPError(err, "tool_execution_failed",
 			fmt.Sprintf("Failed to execute MCP tool '%s'", toolCall.Tool))
@@ -300,7 +334,7 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 		return "", domainErr
 	}
 
-	b.logger.Printf("Successfully executed MCP tool: %s", toolCall.Tool)
+	b.logger.InfoKV("Successfully executed MCP tool", "tool", toolCall.Tool)
 
 	// The result is already a string with the updated interface
 	if result == "" {

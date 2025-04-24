@@ -59,12 +59,29 @@ func main() {
 
 // setupLogging initializes the logging system
 func setupLogging() *logging.Logger {
+	// Determine log level from debug flag or existing environment variable
 	logLevel := logging.LevelInfo
-	if *debug {
+	logLevelName := "info"
+	
+	// Check if LOG_LEVEL is already set in the environment
+	envLogLevel := os.Getenv("LOG_LEVEL")
+	if envLogLevel != "" {
+		// Use the environment variable if it's set
+		logLevel = logging.ParseLevel(envLogLevel)
+		logLevelName = envLogLevel
+	} else if *debug {
+		// Otherwise use the debug flag
 		logLevel = logging.LevelDebug
+		logLevelName = "debug"
+		
+		// Set LOG_LEVEL environment variable for other components
+		if err := os.Setenv("LOG_LEVEL", logLevelName); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to set LOG_LEVEL environment variable: %v\n", err)
+		}
 	}
 
 	logger := logging.New("slack-mcp-client", logLevel)
+	logger.Info("Log level set to: %s", logLevelName)
 
 	// Setup library debugging if requested
 	if *mcpDebug {
@@ -266,15 +283,15 @@ func processSingleMCPServer(
 
 // createMCPClient creates an MCP client based on configuration
 // Use mcp.Client and mcp.NewClient from the internal mcp package
-func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, mcpLogger *log.Logger) (*mcp.Client, error) {
+func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *log.Logger) (*mcp.Client, error) {
 	// Check if this is a URL-based (HTTP/SSE) configuration
 	if serverConf.URL != "" {
 		// Assume "sse" mode by default for HTTP-based connections
 		mode := "sse"
-		logger.Info("Creating %s MCP client for address: %s", mode, serverConf.URL)
+		logger.InfoKV("Creating MCP client", "mode", mode, "address", serverConf.URL)
 
-		// Use the imported mcp.NewClient from internal/mcp/client.go
-		mcpClient, createErr := mcp.NewClient(mode, serverConf.URL, nil, nil, mcpLogger)
+		// Use the imported mcp.NewClient from internal/mcp/client.go with structured logger
+		mcpClient, createErr := mcp.NewClient(mode, serverConf.URL, nil, nil, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client for URL %s: %v", serverConf.URL, createErr)
 			// Create a domain-specific error with additional context
@@ -292,7 +309,7 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, mcp
 	// Check if this is a command-based (stdio) configuration
 	if serverConf.Command != "" {
 		mode := "stdio"
-		logger.Info("Creating %s MCP client for command: %s %v", mode, serverConf.Command, serverConf.Args)
+		logger.InfoKV("Creating MCP client", "mode", mode, "command", serverConf.Command, "args", serverConf.Args)
 
 		// Process environment variables
 		env := make(map[string]string)
@@ -313,8 +330,8 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, mcp
 		}
 
 		// Create the MCP client
-		logger.Debug("Executing NPX command: %s %v with environment: %v", serverConf.Command, serverConf.Args, env)
-		mcpClient, createErr := mcp.NewClient(mode, serverConf.Command, serverConf.Args, env, mcpLogger)
+		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env)
+		mcpClient, createErr := mcp.NewClient(mode, serverConf.Command, serverConf.Args, env, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client: %v", createErr)
 			// Create a domain-specific error with additional context
@@ -413,12 +430,11 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
-	// Continue using standard logger for Slack client for now, as it expects *log.Logger
-	slackLogger := log.New(os.Stdout, "slack: ", log.LstdFlags)
+	// Use the structured logger for the Slack client
 	client, err := slackbot.NewClient(
 		cfg.SlackBotToken,
 		cfg.SlackAppToken,
-		slackLogger,
+		logger, // Pass the structured logger
 		mcpClients,      // Pass the map of initialized clients
 		discoveredTools, // Pass the map of tool information
 		cfg,             // Pass the whole config object
