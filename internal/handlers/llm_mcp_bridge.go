@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 )
 
 // MCPClientInterface defines the interface for an MCP client
@@ -47,7 +48,7 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 
 	// Log the type of mcpClients for debugging
 	logger.Printf("DEBUG: mcpClients type: %T", mcpClients)
-	
+
 	// Try different type assertions based on the actual type
 	switch typedClients := mcpClients.(type) {
 	case map[string]interface{}:
@@ -58,18 +59,18 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 				logger.Printf("DEBUG: Added client for '%s' from map[string]interface{}", name)
 			}
 		}
-		
+
 	case map[string]MCPClientInterface:
 		// Direct case if already the right type
 		for name, client := range typedClients {
 			interfaceClients[name] = client
 			logger.Printf("DEBUG: Added client for '%s' from map[string]MCPClientInterface", name)
 		}
-		
+
 	default:
 		// Try to reflect and extract the map
 		logger.Printf("DEBUG: Using reflection to extract clients from %T", mcpClients)
-		
+
 		// Use reflection to iterate over the map
 		val := reflect.ValueOf(mcpClients)
 		if val.Kind() == reflect.Map {
@@ -77,7 +78,7 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 			for iter.Next() {
 				key := iter.Key().String()
 				value := iter.Value().Interface()
-				
+
 				// Try to convert the value to MCPClientInterface
 				if client, ok := value.(MCPClientInterface); ok {
 					interfaceClients[key] = client
@@ -99,7 +100,18 @@ func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, _ st
 		result, err := b.executeToolCall(ctx, toolCall)
 		if err != nil {
 			b.logger.Printf("Error executing tool call: %v", err)
-			return fmt.Sprintf("Error executing tool call: %v", err), nil
+
+			// Check if it's already a domain error
+			var errorMessage string
+			if customErrors.IsDomainError(err) {
+				// Extract structured information from the domain error
+				code, _ := customErrors.GetErrorCode(err)
+				errorMessage = fmt.Sprintf("Error executing tool call: %v (code: %s)", err, code)
+			} else {
+				errorMessage = fmt.Sprintf("Error executing tool call: %v", err)
+			}
+
+			return errorMessage, nil
 		}
 		return result, nil
 	}
@@ -275,7 +287,17 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 	result, err := client.CallTool(ctx, toolCall.Tool, toolCall.Args)
 	if err != nil {
 		b.logger.Printf("Error calling MCP tool %s: %v", toolCall.Tool, err)
-		return "", fmt.Errorf("failed to execute tool %s: %w", toolCall.Tool, err) // Propagate error
+
+		// Create a domain-specific error with additional context
+		domainErr := customErrors.WrapMCPError(err, "tool_execution_failed",
+			fmt.Sprintf("Failed to execute MCP tool '%s'", toolCall.Tool))
+
+		// Add additional context data
+		domainErr = domainErr.WithData("tool_name", toolCall.Tool)
+		domainErr = domainErr.WithData("server_name", serverName)
+		domainErr = domainErr.WithData("args", toolCall.Args)
+
+		return "", domainErr
 	}
 
 	b.logger.Printf("Successfully executed MCP tool: %s", toolCall.Tool)
@@ -284,7 +306,7 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 	if result == "" {
 		return "{}", nil
 	}
-	
+
 	return result, nil
 }
 

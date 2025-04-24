@@ -17,6 +17,7 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
@@ -78,7 +79,7 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 
 	authTest, err := api.AuthTestContext(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("failed to authenticate with Slack: %w", err)
+		return nil, customErrors.WrapSlackError(err, "authentication_failed", "Failed to authenticate with Slack")
 	}
 	botUserID := authTest.UserID
 	logger.Printf("Authenticated as Slack bot user: %s (%s)", botUserID, authTest.User)
@@ -122,7 +123,7 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 		// Log the error using the standard logger for now
 		logger.Printf("ERROR: Failed to initialize LLM provider registry: %v", err)
 		// Depending on requirements, you might want to return the error or continue without LLM functionality
-		return nil, fmt.Errorf("failed to initialize LLM provider registry: %w", err)
+		return nil, customErrors.WrapSlackError(err, "llm_init_failed", "Failed to initialize LLM provider registry")
 	}
 	logger.Printf("LLM provider registry initialized successfully.")
 	// Log the primary provider chosen by the registry
@@ -411,7 +412,7 @@ func (c *Client) callLLM(providerName, prompt, contextHistory string) (string, e
 	if err != nil {
 		// Error already logged by registry method potentially, but log here too for context
 		c.log.Printf("ERROR: GenerateChatCompletion failed for provider '%s': %v", providerName, err)
-		return "", fmt.Errorf("LLM request failed for provider '%s': %w", providerName, err)
+		return "", customErrors.WrapSlackError(err, "llm_request_failed", fmt.Sprintf("LLM request failed for provider '%s'", providerName))
 	}
 
 	c.log.Printf("Successfully received chat completion from provider '%s'", providerName)

@@ -1,10 +1,9 @@
 package llm
 
 import (
-	"fmt"
-
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
@@ -15,7 +14,7 @@ type OllamaModelFactory struct{}
 func (f *OllamaModelFactory) Validate(config map[string]interface{}) error {
 	baseURL, ok := config["base_url"].(string)
 	if !ok || baseURL == "" {
-		return fmt.Errorf("ollama config requires 'base_url' (string)")
+		return customErrors.NewLLMError("missing_config", "Ollama config requires 'base_url' (string)")
 	}
 	return nil
 }
@@ -35,7 +34,15 @@ func (f *OllamaModelFactory) Create(config map[string]interface{}, logger *loggi
 	llmClient, err := ollama.New(opts...)
 	if err != nil {
 		logger.ErrorKV("Failed to initialize LangChainGo Ollama client", "error", err)
-		return nil, fmt.Errorf("failed to initialize Ollama client: %w", err)
+
+		// Create a domain-specific error with additional context
+		domainErr := customErrors.WrapLLMError(err, "initialization_failed", "Failed to initialize Ollama client")
+
+		// Add additional context data
+		domainErr = domainErr.WithData("model", modelName)
+		domainErr = domainErr.WithData("base_url", baseURL)
+
+		return nil, domainErr
 	}
 
 	return llmClient, nil

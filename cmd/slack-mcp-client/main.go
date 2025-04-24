@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use the internal mcp package
@@ -37,7 +38,9 @@ func main() {
 
 	// Set LLM_PROVIDER=openai by default if not already set
 	if os.Getenv("LLM_PROVIDER") == "" {
-		os.Setenv("LLM_PROVIDER", "openai")
+		if err := os.Setenv("LLM_PROVIDER", "openai"); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to set LLM_PROVIDER environment variable: %v\n", err)
+		}
 	}
 
 	// Setup logging with structured logger
@@ -272,7 +275,18 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, mcp
 
 		// Use the imported mcp.NewClient from internal/mcp/client.go
 		mcpClient, createErr := mcp.NewClient(mode, serverConf.URL, nil, nil, mcpLogger)
-		return mcpClient, createErr
+		if createErr != nil {
+			logger.Error("Failed to create MCP client for URL %s: %v", serverConf.URL, createErr)
+			// Create a domain-specific error with additional context
+			domainErr := customErrors.WrapMCPError(createErr, "client_creation_failed",
+				fmt.Sprintf("Failed to create MCP client for URL '%s'", serverConf.URL))
+
+			// Add additional context data
+			domainErr = domainErr.WithData("mode", mode)
+			domainErr = domainErr.WithData("url", serverConf.URL)
+			return nil, domainErr
+		}
+		return mcpClient, nil
 	}
 
 	// Check if this is a command-based (stdio) configuration
@@ -303,13 +317,21 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, mcp
 		mcpClient, createErr := mcp.NewClient(mode, serverConf.Command, serverConf.Args, env, mcpLogger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client: %v", createErr)
+			// Create a domain-specific error with additional context
+			domainErr := customErrors.WrapMCPError(createErr, "client_creation_failed",
+				fmt.Sprintf("Failed to create MCP client for command '%s'", serverConf.Command))
+
+			// Add additional context data
+			domainErr = domainErr.WithData("mode", mode)
+			domainErr = domainErr.WithData("command", serverConf.Command)
+			return nil, domainErr
 		}
-		return mcpClient, createErr
+		return mcpClient, nil
 	}
 
 	// Neither URL nor Command specified
 	logger.Error("Skipping server: Neither 'url' nor 'command' specified in config")
-	return nil, fmt.Errorf("missing both url and command")
+	return nil, customErrors.NewMCPError("invalid_config", "Missing both URL and command in server configuration")
 }
 
 // initializeMCPClientInstance initializes an MCP client with proper timeout
@@ -327,16 +349,23 @@ func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client) err
 		// Log detailed error information
 		logger.Error("Failed to initialize MCP client: %v", initErr)
 
-		// Check for specific error conditions
+		// Create a domain-specific error with additional context
+		domainErr := customErrors.WrapMCPError(initErr, "initialization_failed", "Failed to initialize MCP client")
+
+		// Check for specific error conditions and add more context
 		if strings.Contains(initErr.Error(), "context deadline exceeded") {
 			logger.Error("Initialization timed out. The MCP server may be slow to start or not responding.")
 			logger.Error("Try increasing the timeout or check if the NPM package is installed correctly.")
+			domainErr = domainErr.WithData("timeout_exceeded", true)
+			domainErr = domainErr.WithData("suggestion", "Increase timeout or check NPM package installation")
 		} else if strings.Contains(initErr.Error(), "file already closed") {
 			logger.Error("The MCP server process exited prematurely. Check command and arguments.")
+			domainErr = domainErr.WithData("process_exited", true)
+			domainErr = domainErr.WithData("suggestion", "Check command and arguments")
 		}
 
 		logger.Warn("Client will not be used for tool discovery or execution")
-		return initErr
+		return domainErr
 	}
 
 	logger.Info("MCP client successfully initialized")

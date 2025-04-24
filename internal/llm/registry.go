@@ -42,15 +42,15 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 	// Iterate through the providers defined in the configuration
 	for name, providerConfig := range cfg.LLMProviders {
 		registryLogger.DebugKV("Attempting to initialize provider", "name", name)
-		
+
 		// Ensure all providers use LangChain
 		langchainConfig := make(map[string]interface{})
 		for k, v := range providerConfig {
 			langchainConfig[k] = v
 		}
-		
+
 		// Use the LangChain factory we already retrieved
-		
+
 		// Create the provider instance using the LangChain factory
 		providerInstance, err := langchainFactory(langchainConfig, logger)
 		if err != nil {
@@ -77,7 +77,7 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 		} else {
 			// Primary provider specified in config was not successfully initialized
 			registryLogger.ErrorKV("Primary LLM provider specified in config could not be initialized or found", "configured_primary", cfg.LLMProvider)
-			
+
 			// Default to OpenAI if the specified provider is not available
 			if _, exists := r.providers[ProviderTypeOpenAI]; exists {
 				r.primary = ProviderTypeOpenAI

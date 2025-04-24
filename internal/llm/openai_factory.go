@@ -1,10 +1,9 @@
 package llm
 
 import (
-	"fmt"
-
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
@@ -42,7 +41,17 @@ func (f *OpenAIModelFactory) Create(config map[string]interface{}, logger *loggi
 	llmClient, err := openai.New(opts...)
 	if err != nil {
 		logger.ErrorKV("Failed to initialize LangChainGo OpenAI client", "error", err)
-		return nil, fmt.Errorf("failed to initialize OpenAI client: %w", err)
+
+		// Create a domain-specific error with additional context
+		domainErr := customErrors.WrapLLMError(err, "initialization_failed", "Failed to initialize OpenAI client")
+
+		// Add additional context data
+		domainErr = domainErr.WithData("model", modelName)
+		if baseURL != "" {
+			domainErr = domainErr.WithData("base_url", baseURL)
+		}
+
+		return nil, domainErr
 	}
 
 	return llmClient, nil

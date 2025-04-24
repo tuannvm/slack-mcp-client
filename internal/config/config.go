@@ -88,7 +88,7 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 			if err := json.Unmarshal(configData, cfg); err != nil {
 				return nil, fmt.Errorf("failed to parse config file: %s", err)
 			}
-			
+
 			if logger != nil {
 				logger.InfoKV("Loaded configuration from file", "file", configFile)
 			}
