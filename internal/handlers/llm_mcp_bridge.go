@@ -41,7 +41,7 @@ func NewLLMMCPBridge(mcpClients map[string]MCPClientInterface, stdLogger *log.Lo
 }
 
 // NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
-func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger, 
+func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger,
 	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
@@ -64,7 +64,7 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, d
 
 // NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
 // This is a convenience function that wraps the concrete clients in the interface
-func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger, 
+func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger,
 	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)

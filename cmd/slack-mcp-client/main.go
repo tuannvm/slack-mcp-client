@@ -62,7 +62,7 @@ func setupLogging() *logging.Logger {
 	// Determine log level from debug flag or existing environment variable
 	logLevel := logging.LevelInfo
 	logLevelName := "info"
-	
+
 	// Check if LOG_LEVEL is already set in the environment
 	envLogLevel := os.Getenv("LOG_LEVEL")
 	if envLogLevel != "" {
@@ -73,7 +73,7 @@ func setupLogging() *logging.Logger {
 		// Otherwise use the debug flag
 		logLevel = logging.LevelDebug
 		logLevelName = "debug"
-		
+
 		// Set LOG_LEVEL environment variable for other components
 		if err := os.Setenv("LOG_LEVEL", logLevelName); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to set LOG_LEVEL environment variable: %v\n", err)
@@ -200,7 +200,9 @@ func processSingleMCPServer(
 	closeClientOnFailure := func() {
 		if mcpClient != nil && mcpClients[serverName] == nil { // Only close if not stored in mcpClients
 			serverLogger.Info("Closing unused MCP client")
-			mcpClient.Close()
+			if err := mcpClient.Close(); err != nil {
+				serverLogger.ErrorKV("Failed to close MCP client", "error", err)
+			}
 		}
 	}
 	defer closeClientOnFailure()
@@ -434,7 +436,7 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 	client, err := slackbot.NewClient(
 		cfg.SlackBotToken,
 		cfg.SlackAppToken,
-		logger, // Pass the structured logger
+		logger,          // Pass the structured logger
 		mcpClients,      // Pass the map of initialized clients
 		discoveredTools, // Pass the map of tool information
 		cfg,             // Pass the whole config object
@@ -463,8 +465,10 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 	logger.Info("Closing all MCP clients...")
 	for name, client := range mcpClients {
 		if client != nil {
-			logger.Info("Closing MCP client: %s", name)
-			client.Close()
+			logger.InfoKV("Closing MCP client", "name", name)
+			if err := client.Close(); err != nil {
+				logger.ErrorKV("Failed to close MCP client", "name", name, "error", err)
+			}
 		}
 	}
 }
