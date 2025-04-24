@@ -285,7 +285,18 @@ func ConvertQuotedStringsToCode(text string) string {
 	pattern := regexp.MustCompile(`"([^"\\]*(\\.[^"\\]*)*)"`)
 
 	// Replace each match with a code block
-	return pattern.ReplaceAllString(text, "`$1`")
+	text = pattern.ReplaceAllString(text, "`$1`")
+	
+	// Also handle specific patterns like "yyyy-MM-ddTHH:mm:ssZ" timestamps
+	// which are common in Kubernetes and other outputs
+	timestampPattern := regexp.MustCompile(`"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"`)
+	text = timestampPattern.ReplaceAllString(text, "`$1`")
+	
+	// Handle quoted namespace names and other identifiers
+	identifierPattern := regexp.MustCompile(`"([\w-]+)"`)
+	text = identifierPattern.ReplaceAllString(text, "`$1`")
+	
+	return text
 }
 
 // EscapeMarkdown escapes special characters in Markdown
