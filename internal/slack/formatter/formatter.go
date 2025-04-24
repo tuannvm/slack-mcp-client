@@ -110,6 +110,13 @@ func FormatMessage(text string, options FormatOptions) []slack.MsgOption {
 					if err := json.Unmarshal(blockJSON, &actions); err == nil {
 						slackBlock = actions
 					}
+				case "divider":
+					slackBlock = slack.NewDividerBlock()
+				case "context":
+					var context slack.ContextBlock
+					if err := json.Unmarshal(blockJSON, &context); err == nil {
+						slackBlock = context
+					}
 					// Add more block types as needed
 				}
 
@@ -119,11 +126,16 @@ func FormatMessage(text string, options FormatOptions) []slack.MsgOption {
 			}
 
 			if len(blocks.BlockSet) > 0 {
-				msgOptions = append(msgOptions, slack.MsgOptionBlocks(blocks.BlockSet...))
-				// Add fallback text
-				if blockMessage.Text != "" {
-					msgOptions = append(msgOptions, slack.MsgOptionText(blockMessage.Text, false))
+				// Create fallback text in case blocks fail
+				fallbackText := blockMessage.Text
+				if fallbackText == "" {
+					// If no fallback text provided, use the original text
+					fallbackText = text
 				}
+
+				// Add the blocks first, then the fallback text
+				msgOptions = append(msgOptions, slack.MsgOptionBlocks(blocks.BlockSet...))
+				msgOptions = append(msgOptions, slack.MsgOptionText(fallbackText, false))
 			} else {
 				// Failed to parse blocks, fall back to text
 				msgOptions = append(msgOptions, slack.MsgOptionText(text, options.EscapeText))
@@ -146,51 +158,92 @@ func CreateBlockMessage(text string, blockOptions BlockOptions) string {
 
 	// Add header if provided
 	if blockOptions.HeaderText != "" {
+		// Truncate header text if too long (Slack has a 150 char limit for plain_text)
+		headerText := blockOptions.HeaderText
+		if len(headerText) > 150 {
+			headerText = headerText[:147] + "..."
+		}
+
 		blocks = append(blocks, map[string]interface{}{
 			"type": "header",
 			"text": map[string]interface{}{
 				"type": "plain_text",
-				"text": blockOptions.HeaderText,
+				"text": headerText,
 			},
 		})
 	}
 
 	// Add fields if provided
 	if len(blockOptions.Fields) > 0 {
-		fields := []map[string]interface{}{}
-		for _, field := range blockOptions.Fields {
-			fields = append(fields, map[string]interface{}{
-				"type": "mrkdwn",
-				"text": fmt.Sprintf("*%s*\n%s", field.Title, field.Value),
+		// Slack has a limit of 10 fields per section
+		// Split fields into multiple sections if needed
+		for i := 0; i < len(blockOptions.Fields); i += 10 {
+			end := i + 10
+			if end > len(blockOptions.Fields) {
+				end = len(blockOptions.Fields)
+			}
+
+			fields := []map[string]interface{}{}
+			for _, field := range blockOptions.Fields[i:end] {
+				// Truncate field text if too long (Slack has a 2000 char limit for text fields)
+				fieldValue := field.Value
+				if len(fieldValue) > 2000 {
+					fieldValue = fieldValue[:1997] + "..."
+				}
+
+				fields = append(fields, map[string]interface{}{
+					"type": "mrkdwn",
+					"text": fmt.Sprintf("*%s*\n%s", field.Title, fieldValue),
+				})
+			}
+
+			blocks = append(blocks, map[string]interface{}{
+				"type":   "section",
+				"fields": fields,
 			})
 		}
-
-		blocks = append(blocks, map[string]interface{}{
-			"type":   "section",
-			"fields": fields,
-		})
 	}
 
 	// Add text section if provided
 	if text != "" {
+		// Truncate text if too long (Slack has a 3000 char limit for text blocks)
+		sectionText := text
+		if len(sectionText) > 3000 {
+			sectionText = sectionText[:2997] + "..."
+		}
+
 		blocks = append(blocks, map[string]interface{}{
 			"type": "section",
 			"text": map[string]interface{}{
 				"type": "mrkdwn",
-				"text": text,
+				"text": sectionText,
 			},
 		})
 	}
 
 	// Add actions if provided
 	if len(blockOptions.Actions) > 0 {
+		// Slack has a limit of 5 elements in an actions block
+		actionCount := len(blockOptions.Actions)
+		if actionCount > 5 {
+			actionCount = 5
+		}
+
 		elements := []map[string]interface{}{}
-		for _, action := range blockOptions.Actions {
+		for i := 0; i < actionCount; i++ {
+			action := blockOptions.Actions[i]
+
+			// Truncate button text if too long (Slack has a 75 char limit for button text)
+			buttonText := action.Text
+			if len(buttonText) > 75 {
+				buttonText = buttonText[:72] + "..."
+			}
+
 			elements = append(elements, map[string]interface{}{
 				"type": "button",
 				"text": map[string]interface{}{
 					"type": "plain_text",
-					"text": action.Text,
+					"text": buttonText,
 				},
 				"url": action.URL,
 			})
@@ -230,7 +283,7 @@ func ConvertQuotedStringsToCode(text string) string {
 	// Regex to find double-quoted strings
 	// This pattern looks for "..." but avoids matching escaped quotes \"...\"
 	pattern := regexp.MustCompile(`"([^"\\]*(\\.[^"\\]*)*)"`)
-	
+
 	// Replace each match with a code block
 	return pattern.ReplaceAllString(text, "`$1`")
 }

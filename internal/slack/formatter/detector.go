@@ -53,8 +53,77 @@ func isValidBlockKit(content string) bool {
 		Blocks []interface{} `json:"blocks"`
 	}
 
+	// Check if it's valid JSON
 	err := json.Unmarshal([]byte(content), &blockMessage)
-	return err == nil && len(blockMessage.Blocks) > 0
+	if err != nil || len(blockMessage.Blocks) == 0 {
+		return false
+	}
+
+	// Additional validation for block structure
+	for _, block := range blockMessage.Blocks {
+		blockJSON, err := json.Marshal(block)
+		if err != nil {
+			return false
+		}
+
+		var blockMap map[string]interface{}
+		if err := json.Unmarshal(blockJSON, &blockMap); err != nil {
+			return false
+		}
+
+		// Check if block has a type
+		blockType, ok := blockMap["type"].(string)
+		if !ok || blockType == "" {
+			return false
+		}
+
+		// Validate specific block types
+		switch blockType {
+		case "section":
+			// Section must have text or fields
+			_, hasText := blockMap["text"]
+			fields, hasFields := blockMap["fields"]
+			if !hasText && !hasFields {
+				return false
+			}
+			// If it has fields, it must be an array
+			if hasFields {
+				fieldsArray, ok := fields.([]interface{})
+				if !ok || len(fieldsArray) == 0 || len(fieldsArray) > 10 {
+					return false
+				}
+			}
+		case "header":
+			// Header must have text
+			text, hasText := blockMap["text"]
+			if !hasText {
+				return false
+			}
+			// Text must be a map with type and text
+			textMap, ok := text.(map[string]interface{})
+			if !ok {
+				return false
+			}
+			// Type must be plain_text
+			textType, hasType := textMap["type"]
+			if !hasType || textType != "plain_text" {
+				return false
+			}
+		case "actions":
+			// Actions must have elements
+			elements, hasElements := blockMap["elements"]
+			if !hasElements {
+				return false
+			}
+			// Elements must be an array
+			elementsArray, ok := elements.([]interface{})
+			if !ok || len(elementsArray) == 0 || len(elementsArray) > 5 {
+				return false
+			}
+		}
+	}
+
+	return true
 }
 
 // containsStructuredData checks if the content contains patterns that suggest structured data
@@ -124,10 +193,17 @@ func ExtractStructuredData(content string) map[string]string {
 }
 
 // FormatStructuredData formats structured data as a Block Kit message
+// If the structured data can't be properly formatted as blocks, it falls back to text
 func FormatStructuredData(content string) string {
 	data := ExtractStructuredData(content)
 	if len(data) == 0 {
 		return content // Return original content if no structured data found
+	}
+
+	// If we have too many fields, it might cause issues with Slack's limits
+	if len(data) > 10 {
+		// Just apply markdown formatting instead of trying to use blocks
+		return FormatMarkdown(content)
 	}
 
 	// Create fields for Block Kit
@@ -146,6 +222,11 @@ func FormatStructuredData(content string) string {
 
 	// Convert remaining data to fields
 	for key, value := range data {
+		// Truncate very long values to avoid Slack API limits
+		if len(value) > 2000 {
+			value = value[:1997] + "..."
+		}
+
 		fields = append(fields, Field{
 			Title: key,
 			Value: value,
@@ -158,5 +239,14 @@ func FormatStructuredData(content string) string {
 		Fields:     fields,
 	}
 
-	return CreateBlockMessage(content, blockOptions)
+	// Try to create a Block Kit message
+	blockMessage := CreateBlockMessage(content, blockOptions)
+
+	// Validate the Block Kit message
+	if !isValidBlockKit(blockMessage) {
+		// If validation fails, fall back to simple markdown formatting
+		return FormatMarkdown(content)
+	}
+
+	return blockMessage
 }

@@ -586,5 +586,25 @@ func (c *Client) postMessage(channelID, threadTS, text string) {
 	_, _, err = c.api.PostMessage(channelID, msgOptions...)
 	if err != nil {
 		c.logger.ErrorKV("Error posting message to channel", "channel", channelID, "error", err, "messageType", messageType)
+
+		// If we get an error with Block Kit format, try falling back to plain text
+		if messageType == formatter.JSONBlock || messageType == formatter.StructuredData {
+			c.logger.InfoKV("Falling back to plain text format due to Block Kit error", "channel", channelID)
+
+			// Apply markdown formatting to the original text and send as plain text
+			formattedText := formatter.FormatMarkdown(text)
+			fallbackOptions := []slack.MsgOption{
+				slack.MsgOptionText(formattedText, false),
+			}
+			if threadTS != "" {
+				fallbackOptions = append(fallbackOptions, slack.MsgOptionTS(threadTS))
+			}
+
+			// Try sending with plain text format
+			_, _, fallbackErr := c.api.PostMessage(channelID, fallbackOptions...)
+			if fallbackErr != nil {
+				c.logger.ErrorKV("Error posting fallback message to channel", "channel", channelID, "error", fallbackErr)
+			}
+		}
 	}
 }
