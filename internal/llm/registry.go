@@ -32,32 +32,41 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 	registeredFactories := ListProviderFactories()
 	registryLogger.DebugKV("Available provider factories", "factories", registeredFactories)
 
+	// Always use LangChain as the gateway for all LLM providers
+	langchainFactory, exists := GetProviderFactory(ProviderNameLangChain)
+	if !exists {
+		registryLogger.Error("LangChain provider factory not registered, cannot continue")
+		return nil, fmt.Errorf("LangChain provider factory not registered")
+	}
+
 	// Iterate through the providers defined in the configuration
 	for name, providerConfig := range cfg.LLMProviders {
 		registryLogger.DebugKV("Attempting to initialize provider", "name", name)
-		factory, exists := GetProviderFactory(name)
-		if !exists {
-			registryLogger.WarnKV("No factory registered for configured provider, skipping.", "provider_name", name)
-			continue
+		
+		// Ensure all providers use LangChain
+		langchainConfig := make(map[string]interface{})
+		for k, v := range providerConfig {
+			langchainConfig[k] = v
 		}
-
-		// Create the provider instance using the factory
-		providerInstance, err := factory(providerConfig, logger)
+		
+		// Use the LangChain factory we already retrieved
+		
+		// Create the provider instance using the LangChain factory
+		providerInstance, err := langchainFactory(langchainConfig, logger)
 		if err != nil {
-			registryLogger.ErrorKV("Failed to create provider instance using factory", "provider_name", name, "error", err)
+			registryLogger.ErrorKV("Failed to initialize LangChain provider", "provider_name", name, "error", err)
 			continue
 		}
 
 		// Store the initialized provider
 		r.providers[name] = providerInstance
 		initializedProviders++
-		registryLogger.InfoKV("Successfully initialized and registered LLM provider", "name", name)
+		registryLogger.InfoKV("Successfully initialized and registered LLM provider through LangChain", "name", name)
 	}
 
 	if initializedProviders == 0 {
-		registryLogger.Warn("No LLM providers were successfully initialized from the configuration.")
-		// Depending on requirements, this could be an error
-		// return nil, fmt.Errorf("no LLM providers initialized")
+		registryLogger.Error("No LLM providers were successfully initialized from the configuration.")
+		return nil, fmt.Errorf("no LLM providers initialized")
 	}
 
 	// Set the primary provider from the configuration
@@ -68,11 +77,16 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 		} else {
 			// Primary provider specified in config was not successfully initialized
 			registryLogger.ErrorKV("Primary LLM provider specified in config could not be initialized or found", "configured_primary", cfg.LLMProvider)
-			// Attempt to set a fallback primary (e.g., the first initialized one)
-			if len(r.providers) > 0 {
+			
+			// Default to OpenAI if the specified provider is not available
+			if _, exists := r.providers[ProviderTypeOpenAI]; exists {
+				r.primary = ProviderTypeOpenAI
+				registryLogger.WarnKV("Falling back to OpenAI as primary provider", "name", r.primary)
+			} else if len(r.providers) > 0 {
+				// If OpenAI is not available, use the first available provider
 				for name := range r.providers {
 					r.primary = name
-					registryLogger.WarnKV("Falling back to using provider as primary", "name", r.primary)
+					registryLogger.WarnKV("Falling back to available provider as primary", "name", r.primary)
 					break
 				}
 			} else {
@@ -81,17 +95,23 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 				return nil, fmt.Errorf("failed to set a primary LLM provider, none are available")
 			}
 		}
-	} else if len(r.providers) > 0 {
-		// No primary provider specified, use the first initialized one
-		for name := range r.providers {
-			r.primary = name
-			registryLogger.InfoKV("No primary LLM provider specified in config, defaulting to first initialized", "name", r.primary)
-			break
-		}
 	} else {
-		// No primary specified and no providers initialized
-		registryLogger.Error("No LLM provider specified in config and none could be initialized.")
-		return nil, fmt.Errorf("no LLM provider specified or initialized")
+		// No primary provider specified, default to OpenAI if available
+		if _, exists := r.providers[ProviderTypeOpenAI]; exists {
+			r.primary = ProviderTypeOpenAI
+			registryLogger.InfoKV("No primary LLM provider specified, defaulting to OpenAI", "name", r.primary)
+		} else if len(r.providers) > 0 {
+			// If OpenAI is not available, use the first available provider
+			for name := range r.providers {
+				r.primary = name
+				registryLogger.InfoKV("No primary LLM provider specified and OpenAI not available, using first available provider", "name", r.primary)
+				break
+			}
+		} else {
+			// No providers initialized
+			registryLogger.Error("No LLM providers could be initialized.")
+			return nil, fmt.Errorf("no LLM providers initialized")
+		}
 	}
 
 	return r, nil

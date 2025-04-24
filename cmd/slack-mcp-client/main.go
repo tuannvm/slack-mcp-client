@@ -35,6 +35,11 @@ var (
 func main() {
 	flag.Parse()
 
+	// Set LLM_PROVIDER=openai by default if not already set
+	if os.Getenv("LLM_PROVIDER") == "" {
+		os.Setenv("LLM_PROVIDER", "openai")
+	}
+
 	// Setup logging with structured logger
 	logger := setupLogging()
 	logger.Info("Starting Slack MCP Client (debug=%v)", *debug)
@@ -297,7 +302,14 @@ func applyCommandLineOverrides(logger *logging.Logger, cfg *config.Config) error
 func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 	// Log the primary provider being used
 	logger.Info("Primary LLM Provider Selected: %s", cfg.LLMProvider)
-	// Optionally, log details for the selected provider if needed
+	
+	// Check if the provider was set via environment variable
+	llmProviderEnv := os.Getenv("LLM_PROVIDER")
+	if llmProviderEnv != "" {
+		logger.Info("LLM Provider set from environment variable: %s", llmProviderEnv)
+	}
+	
+	// Log details for the selected provider if available
 	if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
 		// Be careful logging sensitive info like API keys
 		loggableConfig := make(map[string]interface{})
@@ -306,6 +318,9 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 				loggableConfig[k] = v
 			}
 		}
+		
+		// Log that we're using LangChain as the gateway
+		logger.Info("Using LangChain as gateway for provider: %s", cfg.LLMProvider)
 		logger.Info("Configuration for %s: %v", cfg.LLMProvider, loggableConfig)
 	} else {
 		logger.Warn("No specific configuration found for selected provider: %s", cfg.LLMProvider)
