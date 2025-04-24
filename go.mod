@@ -3,6 +3,7 @@ module github.com/tuannvm/slack-mcp-client
 go 1.24.2
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.21.0
 	github.com/slack-go/slack v0.16.0
 	github.com/tmc/langchaingo v0.1.13

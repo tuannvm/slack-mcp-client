@@ -59,8 +59,10 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 	if !strings.HasPrefix(appToken, "xapp-") {
 		return nil, fmt.Errorf("SLACK_APP_TOKEN must have the prefix \"xapp-\"")
 	}
-	if len(mcpClients) == 0 {
-		return nil, fmt.Errorf("mcpClients map cannot be empty")
+	// MCP clients are now optional - if none are provided, we'll just use LLM capabilities
+	if mcpClients == nil {
+		mcpClients = make(map[string]*mcp.Client)
+		logger.Printf("No MCP clients provided, running in LLM-only mode")
 	}
 	if cfg == nil {
 		return nil, fmt.Errorf("config cannot be nil")

@@ -133,9 +133,9 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 	}
 	logger.Info("Total unique discovered tools across all initialized servers: %d", len(allDiscoveredTools))
 
-	// Check if we have at least one usable client
+	// Log a warning if no clients were initialized, but continue running
 	if initializedClientCount == 0 {
-		logger.Fatal("No MCP clients could be successfully initialized. Check configuration and server status.")
+		logger.Warn("No MCP clients could be successfully initialized. Application will run with LLM capabilities only.")
 	}
 
 	return mcpClients, allDiscoveredTools

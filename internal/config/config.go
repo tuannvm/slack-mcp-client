@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
@@ -33,6 +34,15 @@ type Config struct {
 
 // LoadConfig loads configuration from file and environment variables
 func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		// Only log as info since .env file is optional
+		if logger != nil {
+			logger.InfoKV("No .env file loaded", "error", err)
+		}
+	} else if logger != nil {
+		logger.InfoKV("Loaded environment variables from .env file", "success", true)
+	}
 	// Initialize default config
 	cfg := &Config{
 		LLMProvider: ProviderOpenAI, // Default to OpenAI if not specified
