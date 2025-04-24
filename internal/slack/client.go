@@ -103,7 +103,15 @@ func NewClient(botToken, appToken string, logger *log.Logger, mcpClients map[str
 			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 
-	llmMCPBridge := handlers.NewLLMMCPBridgeFromClients(mcpClients, logger, discoveredTools)
+	// Create a map of interfaces to avoid type assertion issues
+	rawClientMap := make(map[string]interface{})
+	for name, client := range mcpClients {
+		rawClientMap[name] = client
+		logger.Printf("DEBUG: Adding MCP client '%s' to raw map for bridge", name)
+	}
+
+	// Pass the raw map to the bridge
+	llmMCPBridge := handlers.NewLLMMCPBridgeFromClients(rawClientMap, logger, discoveredTools)
 	logger.Printf("LLM-MCP bridge initialized with %d MCP clients and %d tools", len(mcpClients), len(discoveredTools))
 
 	// --- Initialize the LLM provider registry using the config ---

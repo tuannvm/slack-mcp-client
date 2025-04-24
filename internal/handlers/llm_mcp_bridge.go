@@ -7,18 +7,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/common"
 )
 
 // MCPClientInterface defines the interface for an MCP client
 // This allows us to break the circular dependency between packages
 type MCPClientInterface interface {
-	CallTool(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
 }
 
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
@@ -45,11 +45,44 @@ func NewLLMMCPBridgeFromClients(mcpClients interface{}, logger *log.Logger, disc
 	// This is a workaround for the type system to avoid import cycles
 	interfaceClients := make(map[string]MCPClientInterface)
 
-	// Type assertion to get the original map
-	if clientMap, ok := mcpClients.(map[string]interface{}); ok {
-		for name, client := range clientMap {
+	// Log the type of mcpClients for debugging
+	logger.Printf("DEBUG: mcpClients type: %T", mcpClients)
+	
+	// Try different type assertions based on the actual type
+	switch typedClients := mcpClients.(type) {
+	case map[string]interface{}:
+		// Original implementation for map[string]interface{}
+		for name, client := range typedClients {
 			if mcpClient, ok := client.(MCPClientInterface); ok {
 				interfaceClients[name] = mcpClient
+				logger.Printf("DEBUG: Added client for '%s' from map[string]interface{}", name)
+			}
+		}
+		
+	case map[string]MCPClientInterface:
+		// Direct case if already the right type
+		for name, client := range typedClients {
+			interfaceClients[name] = client
+			logger.Printf("DEBUG: Added client for '%s' from map[string]MCPClientInterface", name)
+		}
+		
+	default:
+		// Try to reflect and extract the map
+		logger.Printf("DEBUG: Using reflection to extract clients from %T", mcpClients)
+		
+		// Use reflection to iterate over the map
+		val := reflect.ValueOf(mcpClients)
+		if val.Kind() == reflect.Map {
+			iter := val.MapRange()
+			for iter.Next() {
+				key := iter.Key().String()
+				value := iter.Value().Interface()
+				
+				// Try to convert the value to MCPClientInterface
+				if client, ok := value.(MCPClientInterface); ok {
+					interfaceClients[key] = client
+					logger.Printf("DEBUG: Added client for '%s' using reflection", key)
+				}
 			}
 		}
 	}
@@ -238,13 +271,8 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 	serverName := b.availableTools[toolCall.Tool].ServerName // Get server name for logging
 	b.logger.Printf("Calling MCP tool '%s' on server '%s' with args: %v", toolCall.Tool, serverName, toolCall.Args)
 
-	// Create a CallToolRequest with the correct structure
-	request := mcp.CallToolRequest{}
-	request.Params.Name = toolCall.Tool
-	request.Params.Arguments = toolCall.Args
-
-	// Call the tool using the MCPClientInterface
-	result, err := client.CallTool(ctx, request)
+	// Call the tool directly with the tool name and args
+	result, err := client.CallTool(ctx, toolCall.Tool, toolCall.Args)
 	if err != nil {
 		b.logger.Printf("Error calling MCP tool %s: %v", toolCall.Tool, err)
 		return "", fmt.Errorf("failed to execute tool %s: %w", toolCall.Tool, err) // Propagate error
@@ -252,21 +280,12 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 
 	b.logger.Printf("Successfully executed MCP tool: %s", toolCall.Tool)
 
-	// Format the result based on its type
-	var resultStr string
-	if result != nil {
-		// Convert the result to a string representation
-		resultBytes, err := json.Marshal(result)
-		if err != nil {
-			return "", fmt.Errorf("failed to marshal tool result: %w", err)
-		}
-		resultStr = string(resultBytes)
-	} else {
-		resultStr = "{}"
+	// The result is already a string with the updated interface
+	if result == "" {
+		return "{}", nil
 	}
-
-	// Return the result string
-	return resultStr, nil
+	
+	return result, nil
 }
 
 // extractSimpleKeyValuePairs attempts to extract simple key-value pairs from text
