@@ -1,3 +1,11 @@
+# [1.4.0](https://github.com/tuannvm/slack-mcp-client/compare/v1.3.0...v1.4.0) (2025-04-24)
+
+
+### Features
+
+* **slack:** add fallback to plain text for Block Kit errors ([1260fb8](https://github.com/tuannvm/slack-mcp-client/commit/1260fb8ee72a83783d1edf7752de93e5813736ec))
+* **slack:** add message formatting and detection capabilities ([7dbeda3](https://github.com/tuannvm/slack-mcp-client/commit/7dbeda33bd014eb7183dd77f1d1d72517b3648b9))
+
 # [1.3.0](https://github.com/tuannvm/slack-mcp-client/compare/v1.2.0...v1.3.0) (2025-04-24)
 
 
