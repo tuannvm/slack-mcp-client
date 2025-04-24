@@ -14,9 +14,8 @@ import (
 type ProviderRegistry struct {
 	providers map[string]LLMProvider
 	primary   string
-	// fallbacks map[string]string // Fallback logic might be simplified or removed depending on requirements
-	logger *logging.Logger
-	mu     sync.RWMutex
+	logger    *logging.Logger
+	mu        sync.RWMutex
 }
 
 // NewProviderRegistry creates a new provider registry and initializes providers from config.
@@ -31,29 +30,28 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 	registryLogger.Info("Initializing LLM providers from configuration...")
 	initializedProviders := 0
 	registeredFactories := ListProviderFactories()
-	registryLogger.Debug("Available provider factories", "factories", registeredFactories)
+	registryLogger.DebugKV("Available provider factories", "factories", registeredFactories)
 
 	// Iterate through the providers defined in the configuration
 	for name, providerConfig := range cfg.LLMProviders {
-		registryLogger.Debug("Attempting to initialize provider", "name", name)
+		registryLogger.DebugKV("Attempting to initialize provider", "name", name)
 		factory, exists := GetProviderFactory(name)
 		if !exists {
-			registryLogger.Warn("No factory registered for configured provider, skipping.", "provider_name", name)
+			registryLogger.WarnKV("No factory registered for configured provider, skipping.", "provider_name", name)
 			continue
 		}
 
 		// Create the provider instance using the factory
-		// Dereference logger pointer to pass the interface value
-		providerInstance, err := factory(providerConfig, *logger)
+		providerInstance, err := factory(providerConfig, logger)
 		if err != nil {
-			registryLogger.Error("Failed to create provider instance using factory", "provider_name", name, "error", err)
+			registryLogger.ErrorKV("Failed to create provider instance using factory", "provider_name", name, "error", err)
 			continue
 		}
 
 		// Store the initialized provider
 		r.providers[name] = providerInstance
 		initializedProviders++
-		registryLogger.Info("Successfully initialized and registered LLM provider", "name", name)
+		registryLogger.InfoKV("Successfully initialized and registered LLM provider", "name", name)
 	}
 
 	if initializedProviders == 0 {
@@ -66,15 +64,15 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 	if cfg.LLMProvider != "" {
 		if _, exists := r.providers[cfg.LLMProvider]; exists {
 			r.primary = cfg.LLMProvider
-			registryLogger.Info("Set primary LLM provider", "name", r.primary)
+			registryLogger.InfoKV("Set primary LLM provider", "name", r.primary)
 		} else {
 			// Primary provider specified in config was not successfully initialized
-			registryLogger.Error("Primary LLM provider specified in config could not be initialized or found", "configured_primary", cfg.LLMProvider)
+			registryLogger.ErrorKV("Primary LLM provider specified in config could not be initialized or found", "configured_primary", cfg.LLMProvider)
 			// Attempt to set a fallback primary (e.g., the first initialized one)
 			if len(r.providers) > 0 {
 				for name := range r.providers {
 					r.primary = name
-					registryLogger.Warn("Falling back to using provider as primary", "name", r.primary)
+					registryLogger.WarnKV("Falling back to using provider as primary", "name", r.primary)
 					break
 				}
 			} else {
@@ -87,7 +85,7 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 		// No primary provider specified, use the first initialized one
 		for name := range r.providers {
 			r.primary = name
-			registryLogger.Info("No primary LLM provider specified in config, defaulting to first initialized", "name", r.primary)
+			registryLogger.InfoKV("No primary LLM provider specified in config, defaulting to first initialized", "name", r.primary)
 			break
 		}
 	} else {
@@ -98,24 +96,6 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 
 	return r, nil
 }
-
-/* // RegisterProvider might be deprecated if initialization is solely config-driven
-// RegisterProvider adds a provider to the registry
-func (r *ProviderRegistry) RegisterProvider(provider LLMProvider) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	info := provider.GetInfo()
-	r.providers[info.Name] = provider
-	r.logger.Info("Registered LLM provider: %s", info.Name)
-
-	// If this is the first provider or it's langchain, set it as primary
-	if len(r.providers) == 1 || info.Name == "langchain-openai" || info.Name == "langchain-ollama" {
-		r.primary = info.Name
-		r.logger.Info("Set primary provider to: %s", info.Name)
-	}
-}
-*/
 
 // GetPrimaryProvider returns the configured primary provider.
 func (r *ProviderRegistry) GetPrimaryProvider() (LLMProvider, error) {
@@ -161,84 +141,12 @@ func (r *ProviderRegistry) GetProviderWithAvailabilityCheck(name string) (LLMPro
 
 	if !provider.IsAvailable() {
 		info := provider.GetInfo()
-		r.logger.Warn("Requested provider is not available", "name", info.Name)
+		r.logger.WarnKV("Requested provider is not available", "name", info.Name)
 		return nil, fmt.Errorf("provider '%s' is not available", info.Name)
 	}
 
 	return provider, nil
 }
-
-/* // Fallback logic might need rethinking based on config
-// SetFallback sets a fallback provider for a primary provider
-func (r *ProviderRegistry) SetFallback(primary, fallback string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if _, exists := r.providers[primary]; !exists {
-		return fmt.Errorf("primary provider '%s' not registered", primary)
-	}
-
-	if _, exists := r.providers[fallback]; !exists {
-		return fmt.Errorf("fallback provider '%s' not registered", fallback)
-	}
-
-	r.fallbacks[primary] = fallback
-	r.logger.Info("Set fallback from '%s' to '%s'", primary, fallback)
-	return nil
-}
-
-// GetProviderWithFallback tries to get the specified provider or falls back if needed
-func (r *ProviderRegistry) GetProviderWithFallback(name string) (LLMProvider, string, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	// If no name specified, use the primary provider
-	if name == "" {
-		name = r.primary
-	}
-
-	// Try to get the original provider
-	originalName := name
-	provider, exists := r.providers[name]
-
-	// Check if provider exists and is available
-	if exists && provider.IsAvailable() {
-		return provider, name, nil
-	}
-
-	// Provider doesn't exist or isn't available, try fallback
-	if fallback, hasFallback := r.fallbacks[name]; hasFallback {
-		fallbackProvider, fallbackExists := r.providers[fallback]
-		if fallbackExists && fallbackProvider.IsAvailable() {
-			r.logger.Warn("Using fallback provider '%s' instead of '%s'", fallback, name)
-			return fallbackProvider, fallback, nil
-		}
-	}
-
-	// No fallback or fallback also unavailable, try primary
-	if name != r.primary {
-		primaryProvider, primaryExists := r.providers[r.primary]
-		if primaryExists && primaryProvider.IsAvailable() {
-			r.logger.Warn("Using primary provider '%s' instead of '%s'", r.primary, name)
-			return primaryProvider, r.primary, nil
-		}
-	}
-
-	// Still no provider found, try any available provider
-	for providerName, candidate := range r.providers {
-		if candidate.IsAvailable() {
-			r.logger.Warn("Using available provider '%s' instead of '%s'", providerName, name)
-			return candidate, providerName, nil
-		}
-	}
-
-	// No available providers
-	if !exists {
-		return nil, "", fmt.Errorf("provider '%s' not found and no fallbacks available", originalName)
-	}
-	return nil, "", fmt.Errorf("provider '%s' is not available and no fallbacks available", originalName)
-}
-*/
 
 // ListProviders returns information about all registered providers
 func (r *ProviderRegistry) ListProviders() []ProviderInfo {
@@ -264,7 +172,7 @@ func (r *ProviderRegistry) GenerateCompletion(ctx context.Context, providerName 
 	}
 
 	info := provider.GetInfo()
-	r.logger.Debug("Using provider for completion", "name", info.Name)
+	r.logger.DebugKV("Using provider for completion", "name", info.Name)
 	// Note: GenerateCompletion is deprecated in the interface, but we keep the registry method for now.
 	return provider.GenerateCompletion(ctx, prompt, options)
 }
@@ -278,6 +186,6 @@ func (r *ProviderRegistry) GenerateChatCompletion(ctx context.Context, providerN
 	}
 
 	info := provider.GetInfo()
-	r.logger.Debug("Using provider for chat completion", "name", info.Name)
+	r.logger.DebugKV("Using provider for chat completion", "name", info.Name)
 	return provider.GenerateChatCompletion(ctx, messages, options)
 }

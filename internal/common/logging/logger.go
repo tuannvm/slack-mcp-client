@@ -83,29 +83,55 @@ func (l *Logger) SetMinLevel(level LogLevel) {
 	l.minLevel = level
 }
 
-// Debug logs a message at debug level
+// Debug logs a message at debug level using printf-style formatting
 func (l *Logger) Debug(format string, v ...interface{}) {
 	l.log(LevelDebug, format, v...)
 }
 
-// Info logs a message at info level
+// DebugKV logs a message at debug level with key-value pairs
+func (l *Logger) DebugKV(msg string, keyValues ...interface{}) {
+	l.logKV(LevelDebug, msg, keyValues...)
+}
+
+// Info logs a message at info level using printf-style formatting
 func (l *Logger) Info(format string, v ...interface{}) {
 	l.log(LevelInfo, format, v...)
 }
 
-// Warn logs a message at warning level
+// InfoKV logs a message at info level with key-value pairs
+func (l *Logger) InfoKV(msg string, keyValues ...interface{}) {
+	l.logKV(LevelInfo, msg, keyValues...)
+}
+
+// Warn logs a message at warning level using printf-style formatting
 func (l *Logger) Warn(format string, v ...interface{}) {
 	l.log(LevelWarn, format, v...)
 }
 
-// Error logs a message at error level
+// WarnKV logs a message at warning level with key-value pairs
+func (l *Logger) WarnKV(msg string, keyValues ...interface{}) {
+	l.logKV(LevelWarn, msg, keyValues...)
+}
+
+// Error logs a message at error level using printf-style formatting
 func (l *Logger) Error(format string, v ...interface{}) {
 	l.log(LevelError, format, v...)
+}
+
+// ErrorKV logs a message at error level with key-value pairs
+func (l *Logger) ErrorKV(msg string, keyValues ...interface{}) {
+	l.logKV(LevelError, msg, keyValues...)
 }
 
 // Fatal logs a message at fatal level and then exits
 func (l *Logger) Fatal(format string, v ...interface{}) {
 	l.log(LevelFatal, format, v...)
+	os.Exit(1)
+}
+
+// FatalKV logs a message at fatal level with key-value pairs and then exits
+func (l *Logger) FatalKV(msg string, keyValues ...interface{}) {
+	l.logKV(LevelFatal, msg, keyValues...)
 	os.Exit(1)
 }
 
@@ -119,7 +145,7 @@ func (l *Logger) Println(v ...interface{}) {
 	l.Info("%s", fmt.Sprint(v...))
 }
 
-// log formats and writes a log message at the specified level
+// log formats and writes a log message at the specified level using printf-style formatting
 func (l *Logger) log(level LogLevel, format string, v ...interface{}) {
 	if level < l.minLevel {
 		return
@@ -128,8 +154,37 @@ func (l *Logger) log(level LogLevel, format string, v ...interface{}) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	// Traditional printf-style logging
 	msg := fmt.Sprintf(format, v...)
 	l.stdLogger.Printf("[%s] %s: %s", levelNames[level], l.name, msg)
+}
+
+// logKV writes a log message with key-value pairs at the specified level
+func (l *Logger) logKV(level LogLevel, msg string, keyValues ...interface{}) {
+	if level < l.minLevel {
+		return
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	// Ensure we have an even number of key-value pairs
+	if len(keyValues)%2 != 0 {
+		keyValues = append(keyValues, "<missing value>")
+	}
+
+	// Format key-value pairs
+	kvPairs := make([]string, 0, len(keyValues)/2)
+	for i := 0; i < len(keyValues); i += 2 {
+		key, ok := keyValues[i].(string)
+		if !ok {
+			key = fmt.Sprintf("%v", keyValues[i])
+		}
+		value := keyValues[i+1]
+		kvPairs = append(kvPairs, fmt.Sprintf("%s=%v", key, value))
+	}
+
+	l.stdLogger.Printf("[%s] %s: %s %s", levelNames[level], l.name, msg, strings.Join(kvPairs, " "))
 }
 
 // ParseLevel converts a string level to a LogLevel

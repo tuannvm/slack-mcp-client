@@ -1,0 +1,49 @@
+package llm
+
+import (
+	"fmt"
+
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/openai"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+)
+
+// OpenAIModelFactory creates OpenAI LangChain model instances
+type OpenAIModelFactory struct{}
+
+// Validate checks if the configuration is valid for OpenAI
+func (f *OpenAIModelFactory) Validate(config map[string]interface{}) error {
+	// API key is optional if base_url points to compatible API
+	// Model is already validated in the parent factory
+	return nil
+}
+
+// Create returns a new OpenAI LangChain model instance
+func (f *OpenAIModelFactory) Create(config map[string]interface{}, logger *logging.Logger) (llms.Model, error) {
+	modelName, _ := config["model"].(string) // Already validated in parent factory
+	apiKey, _ := config["api_key"].(string)  // API key is optional if base_url points to compatible API
+	baseURL, _ := config["base_url"].(string)
+
+	opts := []openai.Option{
+		openai.WithModel(modelName), // Set model during initialization
+	}
+
+	if apiKey != "" {
+		opts = append(opts, openai.WithToken(apiKey))
+	}
+
+	if baseURL != "" {
+		opts = append(opts, openai.WithBaseURL(baseURL))
+		logger.InfoKV("Configuring LangChain with OpenAI", "base_url", baseURL, "model", modelName)
+	} else {
+		logger.InfoKV("Configuring LangChain with OpenAI (default endpoint)", "model", modelName)
+	}
+
+	llmClient, err := openai.New(opts...)
+	if err != nil {
+		logger.ErrorKV("Failed to initialize LangChainGo OpenAI client", "error", err)
+		return nil, fmt.Errorf("failed to initialize OpenAI client: %w", err)
+	}
+
+	return llmClient, nil
+}

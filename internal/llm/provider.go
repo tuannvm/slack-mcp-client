@@ -20,7 +20,7 @@ const (
 
 // ProviderFactory defines the function signature for creating an LLMProvider instance.
 // It takes provider-specific configuration and a logger.
-type ProviderFactory func(config map[string]interface{}, logger logging.Logger) (LLMProvider, error)
+type ProviderFactory func(config map[string]interface{}, logger *logging.Logger) (LLMProvider, error)
 
 // Global map to store provider factories
 var (
@@ -72,10 +72,6 @@ type ProviderInfo struct {
 	Configured    bool              // Whether the provider has been configured
 	Available     bool              // Whether the provider is currently reachable/available
 	Configuration map[string]string // Non-sensitive configuration details (e.g., model, base URL)
-	// --- Original fields --- (Consider if these are still needed or covered by the above)
-	// DefaultModel    string   // Default model to use (Covered by Configuration?)
-	// SupportedModels []string // List of supported models (Hard to determine dynamically for all providers)
-	// Endpoint        string   // API endpoint (Covered by Configuration?)
 }
 
 // RequestMessage represents a single message in a chat request

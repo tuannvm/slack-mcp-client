@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/viper"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
 // Constants for provider types
@@ -34,7 +35,7 @@ type Config struct {
 }
 
 // LoadConfig loads configuration from file and environment variables
-func LoadConfig(configFile string) (*Config, error) {
+func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 	viper.SetConfigName("config")
 	viper.SetConfigType("json")
 	viper.AddConfigPath(".")
@@ -56,17 +57,21 @@ func LoadConfig(configFile string) (*Config, error) {
 	})
 
 	// Environment variable bindings
-	viper.BindEnv("slack_bot_token", "SLACK_BOT_TOKEN")
-	viper.BindEnv("slack_app_token", "SLACK_APP_TOKEN")
-	viper.BindEnv("llm_provider", "LLM_PROVIDER")
-
-	// Bind environment variables for specific provider settings (example for OpenAI API Key)
-	// Note: Viper doesn't easily bind nested map structures directly from env vars.
-	// API keys are best handled directly via os.Getenv in the provider constructor for security.
-	// viper.BindEnv("llm_providers.openai.api_key", "OPENAI_API_KEY") // This might not work as expected
-	// viper.BindEnv("llm_providers.openai.model", "OPENAI_MODEL") // Prefer config file for model
-	// viper.BindEnv("llm_providers.ollama.endpoint", "OLLAMA_API_ENDPOINT") // Prefer config file
-	// viper.BindEnv("llm_providers.ollama.model", "OLLAMA_MODEL") // Prefer config file
+	if err := viper.BindEnv("slack_bot_token", "SLACK_BOT_TOKEN"); err != nil {
+		if logger != nil {
+			logger.WarnKV("Failed to bind env var", "key", "slack_bot_token", "error", err)
+		}
+	}
+	if err := viper.BindEnv("slack_app_token", "SLACK_APP_TOKEN"); err != nil {
+		if logger != nil {
+			logger.WarnKV("Failed to bind env var", "key", "slack_app_token", "error", err)
+		}
+	}
+	if err := viper.BindEnv("llm_provider", "LLM_PROVIDER"); err != nil {
+		if logger != nil {
+			logger.WarnKV("Failed to bind env var", "key", "llm_provider", "error", err)
+		}
+	}
 
 	// Unmarshal config into Config struct
 	var cfg Config

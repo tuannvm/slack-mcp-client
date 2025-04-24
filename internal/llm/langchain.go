@@ -7,8 +7,6 @@ import (
 	"strings"
 
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/ollama"
-	"github.com/tmc/langchaingo/llms/openai"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -19,27 +17,65 @@ const (
 )
 
 // LangChainProvider implements the LLMProvider interface using LangChainGo
-// It acts as a gateway, configured to use either OpenAI or Ollama underneath.
+// It acts as a gateway, configured to use various LLM providers underneath.
 type LangChainProvider struct {
 	llm          llms.Model
-	providerType string // "openai" or "ollama"
+	providerType string // The underlying provider type (e.g., "openai", "ollama")
 	modelName    string // The specific model configured (e.g., "gpt-4o", "llama3")
 	logger       *logging.Logger
 }
 
-// init registers the LangChain provider factory.
+// LangChainModelFactory defines an interface for creating LangChain model instances
+type LangChainModelFactory interface {
+	// Create returns a new LangChain model instance based on the provided configuration
+	Create(config map[string]interface{}, logger *logging.Logger) (llms.Model, error)
+	// Validate checks if the configuration is valid for this factory
+	Validate(config map[string]interface{}) error
+}
+
+// langChainModelFactories stores registered model factories
+var langChainModelFactories = make(map[string]LangChainModelFactory)
+
+// init registers the LangChain provider factory and built-in model factories.
 func init() {
+	// Register the LangChain provider factory
 	err := RegisterProviderFactory(langchainProviderName, NewLangChainProviderFactory)
 	if err != nil {
 		panic(fmt.Sprintf("Failed to register langchain provider factory: %v", err))
 	}
+
+	// Register built-in model factories
+	RegisterLangChainModelFactory(ProviderTypeOpenAI, &OpenAIModelFactory{})
+	RegisterLangChainModelFactory(ProviderTypeOllama, &OllamaModelFactory{})
+}
+
+// RegisterLangChainModelFactory registers a new model factory for the given provider type
+func RegisterLangChainModelFactory(providerType string, factory LangChainModelFactory) {
+	langChainModelFactories[providerType] = factory
+}
+
+// GetSupportedLangChainProviders returns a list of supported provider types
+func GetSupportedLangChainProviders() []string {
+	providers := make([]string, 0, len(langChainModelFactories))
+	for provider := range langChainModelFactories {
+		providers = append(providers, provider)
+	}
+	return providers
 }
 
 // NewLangChainProviderFactory creates a LangChain provider instance from configuration.
-func NewLangChainProviderFactory(config map[string]interface{}, logger logging.Logger) (LLMProvider, error) {
+func NewLangChainProviderFactory(config map[string]interface{}, logger *logging.Logger) (LLMProvider, error) {
 	underlyingProviderType, ok := config["type"].(string)
-	if !ok || (underlyingProviderType != "openai" && underlyingProviderType != "ollama") {
-		return nil, fmt.Errorf("langchain config requires 'type' (string, either 'openai' or 'ollama')")
+	if !ok || underlyingProviderType == "" {
+		return nil, fmt.Errorf("langchain config requires 'type' (string)")
+	}
+
+	// Get the factory for the requested provider type
+	factory, exists := langChainModelFactories[underlyingProviderType]
+	if !exists {
+		supportedProviders := GetSupportedLangChainProviders()
+		return nil, fmt.Errorf("unsupported langchain provider type '%s', supported types: %v",
+			underlyingProviderType, supportedProviders)
 	}
 
 	modelName, ok := config["model"].(string)
@@ -47,56 +83,20 @@ func NewLangChainProviderFactory(config map[string]interface{}, logger logging.L
 		return nil, fmt.Errorf("langchain config requires 'model' (string)")
 	}
 
-	var llmClient llms.Model
-	var err error
-	// Corrected logging: Use key-value pairs directly with the logger instance.
+	// Validate the configuration for this provider type
+	if err := factory.Validate(config); err != nil {
+		return nil, err
+	}
+
+	// Create a named logger for this provider
 	providerLogger := logger.WithName("langchain-provider")
+	providerLogger.InfoKV("Configuring LangChain provider", "type", underlyingProviderType, "model", modelName)
 
-	switch underlyingProviderType {
-	case "openai":
-		apiKey, _ := config["api_key"].(string) // API key is optional if base_url points to compatible API
-		baseURL, _ := config["base_url"].(string)
-
-		opts := []openai.Option{
-			openai.WithModel(modelName), // Set model during initialization
-		}
-		if apiKey != "" {
-			opts = append(opts, openai.WithToken(apiKey))
-		}
-		if baseURL != "" {
-			opts = append(opts, openai.WithBaseURL(baseURL))
-			providerLogger.Info("Configuring LangChain with OpenAI", "base_url", baseURL, "model", modelName)
-		} else {
-			providerLogger.Info("Configuring LangChain with OpenAI (default endpoint)", "model", modelName)
-		}
-
-		llmClient, err = openai.New(opts...)
-		if err != nil {
-			providerLogger.Error("Failed to initialize LangChainGo OpenAI client", "error", err)
-			return nil, fmt.Errorf("failed to initialize langchain openai client: %w", err)
-		}
-
-	case "ollama":
-		baseURL, ok := config["base_url"].(string)
-		if !ok || baseURL == "" {
-			return nil, fmt.Errorf("langchain ollama config requires 'base_url' (string)")
-		}
-
-		opts := []ollama.Option{
-			ollama.WithModel(modelName),
-			ollama.WithServerURL(baseURL),
-		}
-		providerLogger.Info("Configuring LangChain with Ollama", "base_url", baseURL, "model", modelName)
-
-		llmClient, err = ollama.New(opts...)
-		if err != nil {
-			providerLogger.Error("Failed to initialize LangChainGo Ollama client", "error", err)
-			return nil, fmt.Errorf("failed to initialize langchain ollama client: %w", err)
-		}
-
-	default:
-		// This case should not be reached due to the initial check
-		return nil, fmt.Errorf("internal error: unsupported langchain type '%s'", underlyingProviderType)
+	// Create the LLM client using the factory
+	llmClient, err := factory.Create(config, providerLogger)
+	if err != nil {
+		providerLogger.ErrorKV("Failed to initialize LangChainGo client", "type", underlyingProviderType, "error", err)
+		return nil, fmt.Errorf("failed to initialize langchain %s client: %w", underlyingProviderType, err)
 	}
 
 	return &LangChainProvider{
@@ -113,16 +113,16 @@ func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt strin
 		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
-	p.logger.Debug("Calling LangChainGo GenerateCompletion", "prompt_length", len(prompt))
+	p.logger.DebugKV("Calling LangChainGo GenerateCompletion", "prompt_length", len(prompt))
 	callOptions := p.buildOptions(options)
 
 	completion, err := llms.GenerateFromSinglePrompt(ctx, p.llm, prompt, callOptions...)
 	if err != nil {
-		p.logger.Error("LangChainGo GenerateCompletion request failed", "error", err)
+		p.logger.ErrorKV("LangChainGo GenerateCompletion request failed", "error", err)
 		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
 	}
 
-	p.logger.Debug("Received GenerateCompletion response", "length", len(completion))
+	p.logger.DebugKV("Received GenerateCompletion response", "length", len(completion))
 	return completion, nil
 }
 
@@ -134,7 +134,7 @@ func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages
 		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
-	p.logger.Debug("Calling LangChainGo GenerateChatCompletion", "num_messages", len(messages))
+	p.logger.DebugKV("Calling LangChainGo GenerateChatCompletion", "num_messages", len(messages))
 
 	// Convert our message format to a single prompt string
 	var promptBuilder strings.Builder
@@ -185,7 +185,7 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 	modelToUse := p.modelName // Default to the configured model
 	if options.Model != "" {
 		modelToUse = options.Model
-		p.logger.Debug("Overriding model per-request", "new_model", modelToUse)
+		p.logger.DebugKV("Overriding model per-request", "new_model", modelToUse)
 	}
 	// Add WithModel only if it differs from the initialized one or if the underlying LLM supports it.
 	// For simplicity now, we always add it if options.Model is set.
@@ -196,13 +196,13 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 	// Temperature: Apply if > 0
 	if options.Temperature > 0 {
 		callOptions = append(callOptions, llms.WithTemperature(options.Temperature))
-		p.logger.Debug("Adding Temperature option", "value", options.Temperature)
+		p.logger.DebugKV("Adding Temperature option", "value", options.Temperature)
 	}
 
 	// MaxTokens: Apply if > 0
 	if options.MaxTokens > 0 {
 		callOptions = append(callOptions, llms.WithMaxTokens(options.MaxTokens))
-		p.logger.Debug("Adding MaxTokens option", "value", options.MaxTokens)
+		p.logger.DebugKV("Adding MaxTokens option", "value", options.MaxTokens)
 	}
 
 	// Note: options.TargetProvider is handled during factory creation, not here.

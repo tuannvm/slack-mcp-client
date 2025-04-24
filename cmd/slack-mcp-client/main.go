@@ -72,7 +72,7 @@ func setupLogging() *logging.Logger {
 // loadAndPrepareConfig loads the configuration and applies any overrides
 func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 	// Load configuration
-	cfg, err := config.LoadConfig(*configFile)
+	cfg, err := config.LoadConfig(*configFile, logger)
 	if err != nil {
 		logger.Fatal("Failed to load configuration: %v", err)
 	}
