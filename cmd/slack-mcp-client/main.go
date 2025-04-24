@@ -253,24 +253,51 @@ func processSingleMCPServer(
 	}
 }
 
-// createMCPClient creates an MCP client based on configuration (assuming http/sse)
+// createMCPClient creates an MCP client based on configuration
 // Use mcp.Client and mcp.NewClient from the internal mcp package
 func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, mcpLogger *log.Logger) (*mcp.Client, error) {
-	address := serverConf.URL
-	if address == "" {
-		logger.Error("Skipping server: No 'url' specified in config")
-		return nil, fmt.Errorf("missing url")
+	// Check if this is a URL-based (HTTP/SSE) configuration
+	if serverConf.URL != "" {
+		// Assume "sse" mode by default for HTTP-based connections
+		mode := "sse"
+		logger.Info("Creating %s MCP client for address: %s", mode, serverConf.URL)
+		
+		// Use the imported mcp.NewClient from internal/mcp/client.go
+		mcpClient, createErr := mcp.NewClient(mode, serverConf.URL, nil, nil, mcpLogger)
+		return mcpClient, createErr
 	}
-
-	// Assume "sse" mode by default for HTTP-based connections.
-	mode := "sse"
-	logger.Info("Creating %s MCP client for address: %s", mode, address)
-
-	// Use the imported mcp.NewClient from internal/mcp/client.go
-	// Pass nil for args and env as they are not used by the internal NewClient for http/sse
-	mcpClient, createErr := mcp.NewClient(mode, address, nil, nil, mcpLogger)
-
-	return mcpClient, createErr
+	
+	// Check if this is a command-based (stdio) configuration
+	if serverConf.Command != "" {
+		mode := "stdio"
+		logger.Info("Creating %s MCP client for command: %s %v", mode, serverConf.Command, serverConf.Args)
+		
+		// Process environment variables
+		env := make(map[string]string)
+		for k, v := range serverConf.Env {
+			// Handle variable substitution from environment
+			if strings.HasPrefix(v, "${")	&& strings.HasSuffix(v, "}") {
+				envVar := strings.TrimSuffix(strings.TrimPrefix(v, "${"), "}")
+				if envValue := os.Getenv(envVar); envValue != "" {
+					env[k] = envValue
+					logger.Debug("Substituted environment variable %s for MCP server", envVar)
+				} else {
+					logger.Warn("Environment variable %s not found for substitution", envVar)
+					env[k] = "" // Set empty value
+				}
+			} else {
+				env[k] = v
+			}
+		}
+		
+		// Create the MCP client
+		mcpClient, createErr := mcp.NewClient(mode, serverConf.Command, serverConf.Args, env, mcpLogger)
+		return mcpClient, createErr
+	}
+	
+	// Neither URL nor Command specified
+	logger.Error("Skipping server: Neither 'url' nor 'command' specified in config")
+	return nil, fmt.Errorf("missing both url and command")
 }
 
 // initializeMCPClientInstance initializes an MCP client with proper timeout

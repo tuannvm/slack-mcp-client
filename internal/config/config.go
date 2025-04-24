@@ -19,8 +19,16 @@ const (
 
 // ServerConfig defines the configuration for a single MCP server
 type ServerConfig struct {
-	URL      string `json:"url"`
-	Disabled bool   `json:"disabled"`
+	URL      string            `json:"url,omitempty"`      // For HTTP/SSE mode
+	Command  string            `json:"command,omitempty"`  // For stdio mode
+	Args     []string          `json:"args,omitempty"`     // Command arguments
+	Env      map[string]string `json:"env,omitempty"`      // Environment variables
+	Disabled bool              `json:"disabled,omitempty"` // Whether this server is disabled
+}
+
+// MCPServersConfig is the top-level structure for the MCP servers configuration
+type MCPServersConfig struct {
+	MCPServers map[string]ServerConfig `json:"mcpServers"`
 }
 
 // Config defines the overall application configuration
@@ -67,13 +75,23 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 			return nil, fmt.Errorf("failed to read config file: %s", err)
 		}
 
-		// Parse JSON into config struct
-		if err := json.Unmarshal(configData, cfg); err != nil {
-			return nil, fmt.Errorf("failed to parse config file: %s", err)
-		}
-
-		if logger != nil {
-			logger.InfoKV("Loaded configuration from file", "file", configFile)
+		// First try to parse as MCPServersConfig (new format)
+		var mcpConfig MCPServersConfig
+		if err := json.Unmarshal(configData, &mcpConfig); err == nil && len(mcpConfig.MCPServers) > 0 {
+			// Successfully parsed as MCPServersConfig
+			cfg.Servers = mcpConfig.MCPServers
+			if logger != nil {
+				logger.InfoKV("Loaded MCP servers configuration from file", "file", configFile, "server_count", len(mcpConfig.MCPServers))
+			}
+		} else {
+			// Try to parse as regular Config
+			if err := json.Unmarshal(configData, cfg); err != nil {
+				return nil, fmt.Errorf("failed to parse config file: %s", err)
+			}
+			
+			if logger != nil {
+				logger.InfoKV("Loaded configuration from file", "file", configFile)
+			}
 		}
 	}
 
