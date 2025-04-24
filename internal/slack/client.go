@@ -22,6 +22,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/slack/formatter"
 )
 
 // Client represents the Slack client application.
@@ -529,7 +530,7 @@ func truncateForLog(s string, maxLen int) string {
 // postMessage sends a message back to Slack, replying in a thread if threadTS is provided.
 func (c *Client) postMessage(channelID, threadTS, text string) {
 	if text == "" {
-		c.logger.Warn("Attempted to send empty message, skipping")
+		c.logger.WarnKV("Attempted to send empty message, skipping", "channel", channelID)
 		return
 	}
 
@@ -551,12 +552,39 @@ func (c *Client) postMessage(channelID, threadTS, text string) {
 		}
 	}
 
-	_, _, err = c.api.PostMessage(
-		channelID,
-		slack.MsgOptionText(text, false),
-		slack.MsgOptionTS(threadTS),
-	)
+	// Detect message type and format accordingly
+	messageType := formatter.DetectMessageType(text)
+	c.logger.DebugKV("Detected message type", "type", messageType, "length", len(text))
+
+	var msgOptions []slack.MsgOption
+
+	switch messageType {
+	case formatter.JSONBlock:
+		// Message is already in Block Kit JSON format
+		options := formatter.DefaultOptions()
+		options.Format = formatter.BlockFormat
+		options.ThreadTS = threadTS
+		msgOptions = formatter.FormatMessage(text, options)
+
+	case formatter.StructuredData:
+		// Convert structured data to Block Kit format
+		formattedText := formatter.FormatStructuredData(text)
+		options := formatter.DefaultOptions()
+		options.Format = formatter.BlockFormat
+		options.ThreadTS = threadTS
+		msgOptions = formatter.FormatMessage(formattedText, options)
+
+	case formatter.MarkdownText, formatter.PlainText:
+		// Apply Markdown formatting and use default text formatting
+		formattedText := formatter.FormatMarkdown(text)
+		options := formatter.DefaultOptions()
+		options.ThreadTS = threadTS
+		msgOptions = formatter.FormatMessage(formattedText, options)
+	}
+
+	// Send the message
+	_, _, err = c.api.PostMessage(channelID, msgOptions...)
 	if err != nil {
-		c.logger.ErrorKV("Error posting message to channel", "channel", channelID, "error", err)
+		c.logger.ErrorKV("Error posting message to channel", "channel", channelID, "error", err, "messageType", messageType)
 	}
 }
