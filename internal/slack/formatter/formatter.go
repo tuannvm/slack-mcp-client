@@ -274,6 +274,15 @@ func CreateBlockMessage(text string, blockOptions BlockOptions) string {
 func FormatMarkdown(text string) string {
 	// Convert quoted strings to code blocks for better visualization
 	text = ConvertQuotedStringsToCode(text)
+
+	// Replace standard Markdown bold (**text**) with Slack bold (*text*)
+	boldPattern := regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	text = boldPattern.ReplaceAllString(text, "*$1*")
+
+	// Replace standard Markdown block quotes (>) with Slack block quotes (>)
+	quotePattern := regexp.MustCompile(`(?m)^\s*>\s+(.*)$`)
+	text = quotePattern.ReplaceAllString(text, "> $1")
+
 	return text
 }
 
@@ -286,16 +295,16 @@ func ConvertQuotedStringsToCode(text string) string {
 
 	// Replace each match with a code block
 	text = pattern.ReplaceAllString(text, "`$1`")
-	
+
 	// Also handle specific patterns like "yyyy-MM-ddTHH:mm:ssZ" timestamps
 	// which are common in Kubernetes and other outputs
 	timestampPattern := regexp.MustCompile(`"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"`)
 	text = timestampPattern.ReplaceAllString(text, "`$1`")
-	
+
 	// Handle quoted namespace names and other identifiers
 	identifierPattern := regexp.MustCompile(`"([\w-]+)"`)
 	text = identifierPattern.ReplaceAllString(text, "`$1`")
-	
+
 	return text
 }
 
