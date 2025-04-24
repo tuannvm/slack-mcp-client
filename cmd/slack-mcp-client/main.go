@@ -15,9 +15,12 @@ import (
 	"time"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use the internal mcp package
+
+	// internal/mcp is no longer needed here - This comment is now incorrect
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
 
@@ -25,14 +28,20 @@ import (
 
 var (
 	// Define command-line flags
-	configFile  = flag.String("config", "", "Path to the MCP server configuration JSON file")
-	debug       = flag.Bool("debug", false, "Enable debug logging")
-	mcpDebug    = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
-	openaiModel = flag.String("openai-model", "", "OpenAI model to use (overrides config/env)")
+	configFile = flag.String("config", "", "Path to the MCP server configuration JSON file")
+	debug      = flag.Bool("debug", false, "Enable debug logging")
+	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
 )
 
 func main() {
 	flag.Parse()
+
+	// Set LLM_PROVIDER=openai by default if not already set
+	if os.Getenv("LLM_PROVIDER") == "" {
+		if err := os.Setenv("LLM_PROVIDER", "openai"); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to set LLM_PROVIDER environment variable: %v\n", err)
+		}
+	}
 
 	// Setup logging with structured logger
 	logger := setupLogging()
@@ -50,12 +59,29 @@ func main() {
 
 // setupLogging initializes the logging system
 func setupLogging() *logging.Logger {
+	// Determine log level from debug flag or existing environment variable
 	logLevel := logging.LevelInfo
-	if *debug {
+	logLevelName := "info"
+
+	// Check if LOG_LEVEL is already set in the environment
+	envLogLevel := os.Getenv("LOG_LEVEL")
+	if envLogLevel != "" {
+		// Use the environment variable if it's set
+		logLevel = logging.ParseLevel(envLogLevel)
+		logLevelName = envLogLevel
+	} else if *debug {
+		// Otherwise use the debug flag
 		logLevel = logging.LevelDebug
+		logLevelName = "debug"
+
+		// Set LOG_LEVEL environment variable for other components
+		if err := os.Setenv("LOG_LEVEL", logLevelName); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to set LOG_LEVEL environment variable: %v\n", err)
+		}
 	}
 
 	logger := logging.New("slack-mcp-client", logLevel)
+	logger.Info("Log level set to: %s", logLevelName)
 
 	// Setup library debugging if requested
 	if *mcpDebug {
@@ -71,16 +97,15 @@ func setupLogging() *logging.Logger {
 // loadAndPrepareConfig loads the configuration and applies any overrides
 func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 	// Load configuration
-	cfg, err := config.LoadConfig(*configFile)
+	cfg, err := config.LoadConfig(*configFile, logger)
 	if err != nil {
 		logger.Fatal("Failed to load configuration: %v", err)
 	}
 
-	// Validate LLM provider - now supporting both OpenAI direct and LangChain
-	if cfg.LLMProvider != config.ProviderOpenAI && cfg.LLMProvider != config.ProviderLangChain {
-		logger.Warn("Config/Env specified unsupported LLM provider '%s'. Supported: 'openai' or 'langchain'. Defaulting to LangChain.", cfg.LLMProvider)
-		cfg.LLMProvider = config.ProviderLangChain
-	}
+	// Validate LLM provider - Check against known providers from the factory
+	// This validation might be better placed after registry initialization if needed
+	// For now, just log the configured provider.
+	logger.Info("LLM Provider specified in config: %s", cfg.LLMProvider)
 
 	// Apply command-line overrides AFTER loading config
 	if err := applyCommandLineOverrides(logger, cfg); err != nil {
@@ -90,14 +115,14 @@ func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 	// Log configuration information
 	logger.Info("Configuration loaded. Slack Bot Token Present: %t, Slack App Token Present: %t",
 		cfg.SlackBotToken != "", cfg.SlackAppToken != "")
-	logger.Info("Final LLM Provider: %s", cfg.LLMProvider)
-	logLLMSettings(logger, cfg)
+	logLLMSettings(logger, cfg) // Log LLM settings
 	logger.Info("MCP Servers Configured (in file): %d", len(cfg.Servers))
 
 	return cfg
 }
 
 // initializeMCPClients initializes all MCP clients and discovers available tools
+// Use mcp.Client from the internal mcp package
 func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[string]*mcp.Client, map[string]common.ToolInfo) {
 	// Initialize MCP Clients and Discover Tools Sequentially
 	mcpClients := make(map[string]*mcp.Client)
@@ -121,15 +146,16 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 	logger.Info("--- Finished MCP Client Initialization and Tool Discovery --- ")
 
 	// Log summary
-	logger.Info("Successfully initialized %d MCP clients: %v", initializedClientCount, getMapKeys(mcpClients))
+	// Use the imported function from the mcp package
+	logger.Info("Successfully initialized %d MCP clients: %v", initializedClientCount, mcp.GetClientMapKeys(mcpClients))
 	if len(failedServers) > 0 {
 		logger.Info("Failed to fully initialize/get tools from %d servers: %v", len(failedServers), failedServers)
 	}
 	logger.Info("Total unique discovered tools across all initialized servers: %d", len(allDiscoveredTools))
 
-	// Check if we have at least one usable client
+	// Log a warning if no clients were initialized, but continue running
 	if initializedClientCount == 0 {
-		logger.Fatal("No MCP clients could be successfully initialized. Check configuration and server status.")
+		logger.Warn("No MCP clients could be successfully initialized. Application will run with LLM capabilities only.")
 	}
 
 	return mcpClients, allDiscoveredTools
@@ -140,7 +166,7 @@ func processSingleMCPServer(
 	logger *logging.Logger,
 	serverName string,
 	serverConf config.ServerConfig,
-	mcpClients map[string]*mcp.Client,
+	mcpClients map[string]*mcp.Client, // Use mcp.Client
 	discoveredTools map[string]common.ToolInfo,
 	failedServers *[]string,
 	initializedClientCount *int,
@@ -156,14 +182,12 @@ func processSingleMCPServer(
 	// Create a component-specific logger for this server
 	serverLogger := logger.WithName(serverName)
 
-	// Determine mode
-	mode := determineServerMode(serverLogger, serverConf)
-
 	// Create dedicated logger for this MCP client
 	mcpLoggerStd := log.New(os.Stdout, fmt.Sprintf("mcp-%s: ", strings.ToLower(serverName)), log.LstdFlags)
 
-	// Create client instance
-	mcpClient, err := createMCPClient(serverLogger, mode, serverConf, mcpLoggerStd)
+	// Create client instance (assuming HTTP/SSE based on simplified config)
+	// Use mcp.NewClient from the internal package
+	mcpClient, err := createMCPClient(serverLogger, serverConf, mcpLoggerStd)
 	if err != nil {
 		*failedServers = append(*failedServers, serverName+fmt.Sprintf("(create: %s)", err))
 		return
@@ -171,25 +195,37 @@ func processSingleMCPServer(
 
 	serverLogger.Info("Successfully created MCP client instance")
 
-	// Defer client closure
-	defer func() {
-		if mcpClient != nil {
-			serverLogger.Info("Closing MCP client")
-			mcpClient.Close()
+	// Only close the client if initialization fails
+	// We'll keep successful clients open for the lifetime of the application
+	closeClientOnFailure := func() {
+		if mcpClient != nil && mcpClients[serverName] == nil { // Only close if not stored in mcpClients
+			serverLogger.Info("Closing unused MCP client")
+			if err := mcpClient.Close(); err != nil {
+				serverLogger.ErrorKV("Failed to close MCP client", "error", err)
+			}
 		}
-	}()
+	}
+	defer closeClientOnFailure()
 
 	// Initialize client
+	// Use mcp.Client from the internal mcp package (via mcpClient variable)
 	if err := initializeMCPClientInstance(serverLogger, mcpClient); err != nil {
 		*failedServers = append(*failedServers, serverName+"(initialize failed)")
 		return
 	}
 
 	// Store successfully initialized client
+	serverLogger.Info("Adding MCP client for '%s' to active client map", serverName)
 	mcpClients[serverName] = mcpClient
 	*initializedClientCount++
 
+	// Special debugging for Kubernetes server
+	if serverName == "kubernetes" {
+		serverLogger.Info("Successfully initialized Kubernetes MCP client")
+	}
+
 	// Discover tools
+	// Use mcp.Client from the internal mcp package (via mcpClient variable)
 	serverLogger.Info("Discovering tools (timeout: 20s)...")
 	discoveryCtx, discoveryCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer discoveryCancel()
@@ -247,61 +283,108 @@ func processSingleMCPServer(
 	}
 }
 
-// determineServerMode determines the mode for a server based on configuration
-func determineServerMode(logger *logging.Logger, serverConf config.ServerConfig) string {
-	mode := strings.ToLower(serverConf.Mode)
-	if mode == "" {
-		if serverConf.Command != "" {
-			mode = "stdio"
-		} else {
-			mode = "http"
-		}
-		logger.Warn("No mode specified, defaulting to '%s'", mode)
-	} else {
-		logger.Debug("Mode: '%s'", mode)
-	}
-	return mode
-}
+// createMCPClient creates an MCP client based on configuration
+// Use mcp.Client and mcp.NewClient from the internal mcp package
+func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *log.Logger) (*mcp.Client, error) {
+	// Check if this is a URL-based (HTTP/SSE) configuration
+	if serverConf.URL != "" {
+		// Assume "sse" mode by default for HTTP-based connections
+		mode := "sse"
+		logger.InfoKV("Creating MCP client", "mode", mode, "address", serverConf.URL)
 
-// createMCPClient creates an MCP client based on mode and configuration
-func createMCPClient(logger *logging.Logger, mode string, serverConf config.ServerConfig, mcpLogger *log.Logger) (*mcp.Client, error) {
-	var mcpClient *mcp.Client
-	var createErr error
+		// Use the imported mcp.NewClient from internal/mcp/client.go with structured logger
+		mcpClient, createErr := mcp.NewClient(mode, serverConf.URL, nil, nil, logger)
+		if createErr != nil {
+			logger.Error("Failed to create MCP client for URL %s: %v", serverConf.URL, createErr)
+			// Create a domain-specific error with additional context
+			domainErr := customErrors.WrapMCPError(createErr, "client_creation_failed",
+				fmt.Sprintf("Failed to create MCP client for URL '%s'", serverConf.URL))
 
-	if mode == "stdio" {
-		if serverConf.Command == "" {
-			logger.Error("Skipping stdio server: 'command' field is required")
-			return nil, fmt.Errorf("missing command")
+			// Add additional context data
+			domainErr = domainErr.WithData("mode", mode)
+			domainErr = domainErr.WithData("url", serverConf.URL)
+			return nil, domainErr
 		}
-		logger.Info("Creating stdio MCP client for command: '%s' with args: %v", serverConf.Command, serverConf.Args)
-		mcpClient, createErr = mcp.NewClient(mode, serverConf.Command, serverConf.Args, serverConf.Env, mcpLogger)
-	} else { // http or sse
-		address := serverConf.Address
-		if address == "" && serverConf.URL != "" {
-			logger.Info("Using 'url' field as address: %s", serverConf.URL)
-			address = serverConf.URL
-		} else if address == "" {
-			logger.Error("Skipping %s server: No 'address' or 'url' specified", mode)
-			return nil, fmt.Errorf("missing address/url")
-		}
-		logger.Info("Creating %s MCP client for address: %s", mode, address)
-		mcpClient, createErr = mcp.NewClient(mode, address, nil, serverConf.Env, mcpLogger) // Pass nil for args
+		return mcpClient, nil
 	}
 
-	return mcpClient, createErr
+	// Check if this is a command-based (stdio) configuration
+	if serverConf.Command != "" {
+		mode := "stdio"
+		logger.InfoKV("Creating MCP client", "mode", mode, "command", serverConf.Command, "args", serverConf.Args)
+
+		// Process environment variables
+		env := make(map[string]string)
+		for k, v := range serverConf.Env {
+			// Handle variable substitution from environment
+			if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
+				envVar := strings.TrimSuffix(strings.TrimPrefix(v, "${"), "}")
+				if envValue := os.Getenv(envVar); envValue != "" {
+					env[k] = envValue
+					logger.Debug("Substituted environment variable %s for MCP server", envVar)
+				} else {
+					logger.Warn("Environment variable %s not found for substitution", envVar)
+					env[k] = "" // Set empty value
+				}
+			} else {
+				env[k] = v
+			}
+		}
+
+		// Create the MCP client
+		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env)
+		mcpClient, createErr := mcp.NewClient(mode, serverConf.Command, serverConf.Args, env, logger)
+		if createErr != nil {
+			logger.Error("Failed to create MCP client: %v", createErr)
+			// Create a domain-specific error with additional context
+			domainErr := customErrors.WrapMCPError(createErr, "client_creation_failed",
+				fmt.Sprintf("Failed to create MCP client for command '%s'", serverConf.Command))
+
+			// Add additional context data
+			domainErr = domainErr.WithData("mode", mode)
+			domainErr = domainErr.WithData("command", serverConf.Command)
+			return nil, domainErr
+		}
+		return mcpClient, nil
+	}
+
+	// Neither URL nor Command specified
+	logger.Error("Skipping server: Neither 'url' nor 'command' specified in config")
+	return nil, customErrors.NewMCPError("invalid_config", "Missing both URL and command in server configuration")
 }
 
 // initializeMCPClientInstance initializes an MCP client with proper timeout
+// Use mcp.Client from the internal mcp package
 func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client) error {
-	logger.Info("Attempting to initialize MCP client (timeout: 1s)...")
-	initCtx, initCancel := context.WithTimeout(context.Background(), 1*time.Second)
+	logger.Info("Attempting to initialize MCP client (timeout: 5s)...")
+
+	// Create a context with timeout for initialization
+	initCtx, initCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer initCancel()
 
+	// Try to initialize the client
 	initErr := client.Initialize(initCtx)
 	if initErr != nil {
-		logger.Warn("Failed to initialize MCP client: %v", initErr)
+		// Log detailed error information
+		logger.Error("Failed to initialize MCP client: %v", initErr)
+
+		// Create a domain-specific error with additional context
+		domainErr := customErrors.WrapMCPError(initErr, "initialization_failed", "Failed to initialize MCP client")
+
+		// Check for specific error conditions and add more context
+		if strings.Contains(initErr.Error(), "context deadline exceeded") {
+			logger.Error("Initialization timed out. The MCP server may be slow to start or not responding.")
+			logger.Error("Try increasing the timeout or check if the NPM package is installed correctly.")
+			domainErr = domainErr.WithData("timeout_exceeded", true)
+			domainErr = domainErr.WithData("suggestion", "Increase timeout or check NPM package installation")
+		} else if strings.Contains(initErr.Error(), "file already closed") {
+			logger.Error("The MCP server process exited prematurely. Check command and arguments.")
+			domainErr = domainErr.WithData("process_exited", true)
+			domainErr = domainErr.WithData("suggestion", "Check command and arguments")
+		}
+
 		logger.Warn("Client will not be used for tool discovery or execution")
-		return initErr
+		return domainErr
 	}
 
 	logger.Info("MCP client successfully initialized")
@@ -310,34 +393,50 @@ func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client) err
 
 // applyCommandLineOverrides applies command-line flags directly to the loaded config
 func applyCommandLineOverrides(logger *logging.Logger, cfg *config.Config) error {
-	// Apply OpenAI model override if specified
-	if *openaiModel != "" {
-		// Both OpenAI direct and LangChain providers can use the OpenAI model setting
-		if cfg.LLMProvider == config.ProviderOpenAI || cfg.LLMProvider == config.ProviderLangChain {
-			logger.Info("Overriding OpenAI model from command line: %s", *openaiModel)
-			cfg.OpenAIModelName = *openaiModel
-		} else {
-			logger.Warn("Warning: --openai-model flag provided, but configured provider '%s' doesn't use OpenAI models. Flag ignored.", cfg.LLMProvider)
-		}
-	}
+	// Command-line overrides for LLM settings are not applied directly.
+	logger.Debug("Command-line overrides for LLM settings are not applied directly to the config map.")
 	return nil // No errors
 }
 
 // logLLMSettings logs the current LLM configuration
 func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
-	logger.Info("OpenAI Model: %s", cfg.OpenAIModelName)
+	// Log the primary provider being used
+	logger.Info("Primary LLM Provider Selected: %s", cfg.LLMProvider)
+
+	// Check if the provider was set via environment variable
+	llmProviderEnv := os.Getenv("LLM_PROVIDER")
+	if llmProviderEnv != "" {
+		logger.Info("LLM Provider set from environment variable: %s", llmProviderEnv)
+	}
+
+	// Log details for the selected provider if available
+	if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
+		// Be careful logging sensitive info like API keys
+		loggableConfig := make(map[string]interface{})
+		for k, v := range providerConfig {
+			if k != "api_key" && k != "apiKey" { // Avoid logging keys
+				loggableConfig[k] = v
+			}
+		}
+
+		// Log that we're using LangChain as the gateway
+		logger.Info("Using LangChain as gateway for provider: %s", cfg.LLMProvider)
+		logger.Info("Configuration for %s: %v", cfg.LLMProvider, loggableConfig)
+	} else {
+		logger.Warn("No specific configuration found for selected provider: %s", cfg.LLMProvider)
+	}
 }
 
 // startSlackClient starts the Slack client and handles shutdown
+// Use mcp.Client from the internal mcp package
 func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
-	// Continue using standard logger for Slack client for now, as it expects *log.Logger
-	slackLogger := log.New(os.Stdout, "slack: ", log.LstdFlags)
+	// Use the structured logger for the Slack client
 	client, err := slackbot.NewClient(
 		cfg.SlackBotToken,
 		cfg.SlackAppToken,
-		slackLogger,
+		logger,          // Pass the structured logger
 		mcpClients,      // Pass the map of initialized clients
 		discoveredTools, // Pass the map of tool information
 		cfg,             // Pass the whole config object
@@ -361,14 +460,15 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 	sig := <-sigChan
 
 	logger.Info("Received signal %v, shutting down...", sig)
-	// Client closures are handled by defer statements
-}
 
-// Helper function to get keys from a map[string]*mcp.Client
-func getMapKeys(m map[string]*mcp.Client) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
+	// Gracefully close all MCP clients
+	logger.Info("Closing all MCP clients...")
+	for name, client := range mcpClients {
+		if client != nil {
+			logger.InfoKV("Closing MCP client", "name", name)
+			if err := client.Close(); err != nil {
+				logger.ErrorKV("Failed to close MCP client", "name", name, "error", err)
+			}
+		}
 	}
-	return keys
 }

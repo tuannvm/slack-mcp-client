@@ -1,11 +1,10 @@
-// Package client provides an implementation of the Model Context Protocol client
-package client
+// Package mcp provides MCP client and server implementations
+package mcp
 
 import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -16,12 +15,13 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
 // Client provides an interface for interacting with an MCP server.
 // It handles tool discovery and execution of tool calls.
 type Client struct {
-	log         *log.Logger
+	logger      *logging.Logger
 	client      client.MCPClient
 	serverAddr  string
 	initialized bool // Track if the client has been successfully initialized
@@ -33,12 +33,17 @@ type Client struct {
 // NewClient creates a new MCP client handler.
 // For stdio mode, addressOrCommand should be the command path, and args should be provided.
 // For http/sse modes, addressOrCommand is the URL, and args is ignored.
-func NewClient(mode, addressOrCommand string, args []string, env map[string]string, logger *log.Logger) (*Client, error) {
-	if logger == nil {
-		logger = log.New(os.Stderr, "MCP_CLIENT: ", log.LstdFlags|log.Lshortfile)
+func NewClient(mode, addressOrCommand string, args []string, env map[string]string, stdLogger *logging.Logger) (*Client, error) {
+	// Determine log level from environment variable
+	logLevel := logging.LevelInfo // Default to INFO
+	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
+		logLevel = logging.ParseLevel(envLevel)
 	}
 
-	logger.Printf("Creating new MCP client: mode='%s'", mode)
+	// Create a structured logger for the MCP client
+	mcpLogger := logging.New("mcp-client", logLevel)
+
+	mcpLogger.InfoKV("Creating new MCP client", "mode", mode)
 
 	// Create underlying MCP client based on mode
 	modeLower := strings.ToLower(mode)
@@ -74,9 +79,10 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 
 	// Create the wrapper client
 	wrapperClient := &Client{
-		log:        logger,
-		client:     mcpClient,
-		serverAddr: addressOrCommand,
+		logger:      mcpLogger,
+		client:      mcpClient,
+		serverAddr:  addressOrCommand,
+		initialized: false,
 	}
 
 	return wrapperClient, nil
@@ -85,27 +91,26 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 // StartListener connects to the MCP server and listens for events.
 // This should be run in a goroutine.
 func (c *Client) StartListener(_ context.Context) error { // nolint:revive // Using underscore for unused parameter
-	c.log.Printf("Starting event listener for %s...", c.serverAddr)
+	c.logger.InfoKV("Starting event listener", "server", c.serverAddr)
 
 	// The official MCP Go client handles the connection and event listening
 	// This is a no-op for now as the client library handles this internally
 	return nil
 }
 
-// Initialize explicitly initializes the MCP client.
-// This should be called before making any tool calls.
+// Initialize initializes the MCP client by connecting to the server and discovering tools.
 func (c *Client) Initialize(ctx context.Context) error {
 	if c.client == nil {
 		return customErrors.NewMCPError("client_nil", "MCP client is nil")
 	}
 
-	// If already successfully initialized, skip
+	// Check if already initialized
 	if c.initialized {
-		c.log.Printf("DEBUG: Client for %s already initialized, skipping Initialize call", c.serverAddr)
+		c.logger.DebugKV("Client already initialized, skipping Initialize call", "server", c.serverAddr)
 		return nil
 	}
 
-	c.log.Printf("Attempting to initialize MCP client for %s...", c.serverAddr)
+	c.logger.InfoKV("Attempting to initialize MCP client", "server", c.serverAddr)
 
 	var initErr error
 	initReq := mcp.InitializeRequest{}
@@ -116,21 +121,11 @@ func (c *Client) Initialize(ctx context.Context) error {
 
 	// Handle the result
 	if initErr != nil {
-		c.log.Printf("ERROR: MCP client initialization failed for %s: %v", c.serverAddr, initErr)
+		c.logger.ErrorKV("MCP client initialization failed", "server", c.serverAddr, "error", initErr)
 
-		// Specific error hints
-		if strings.Contains(initErr.Error(), "endpoint not received") {
-			c.log.Printf("  Hint: Server did not respond as an SSE endpoint. Check URL and mode (should be 'sse' with /sse suffix, or maybe 'http' without suffix?).")
-		} else if strings.Contains(initErr.Error(), "connection refused") {
-			c.log.Printf("  Hint: Connection refused. Ensure the server process/container is running at %s.", c.serverAddr)
-		} else if strings.Contains(initErr.Error(), "file already closed") {
-			c.log.Printf("  Hint: Stdio process may have exited prematurely. Check command, args, and ensure required env vars are set correctly in mcp-servers.json.")
-		}
-
-		return customErrors.WrapMCPError(initErr, "initialization_failed", "MCP client initialization failed")
 	}
 
-	c.log.Printf("MCP client for %s successfully initialized.", c.serverAddr)
+	c.logger.InfoKV("Initialize request successful", "server", c.serverAddr)
 	c.initialized = true // Set flag ONLY on success
 	return nil
 }
@@ -143,18 +138,14 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 
 	// Ensure the client is initialized before making any tool calls.
 	if !c.initialized {
-		c.log.Printf("DEBUG: Client for %s not initialized before CallTool, attempting Initialize...", c.serverAddr)
-		initCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // 20s timeout for initialization
-		if err := c.Initialize(initCtx); err != nil {
-			cancel()
-			c.log.Printf("ERROR: Failed to initialize MCP client before CallTool: %v", err)
-			return "", customErrors.WrapMCPError(err, "init_before_call", "Failed to initialize MCP client before tool call")
+		c.logger.Warn("Client not initialized, attempting to initialize before tool call")
+		if err := c.Initialize(ctx); err != nil {
+			c.logger.ErrorKV("Failed to initialize client", "error", err)
+			return "", customErrors.WrapMCPError(err, "client_not_initialized", "MCP client not initialized before tool call")
 		}
-		cancel()
-		c.log.Printf("DEBUG: Initialization successful during CallTool attempt.") // Added log
 	}
 
-	c.log.Printf("Calling tool '%s' with args: %v", toolName, args)
+	c.logger.InfoKV("Calling tool", "tool", toolName, "server", c.serverAddr)
 
 	// Create a proper CallToolRequest
 	req := mcp.CallToolRequest{}
@@ -165,8 +156,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	// Call the tool using the official client
 	result, err := c.client.CallTool(ctx, req)
 	if err != nil {
-		c.log.Printf("Error calling tool '%s': %v", toolName, err)
-		// Optional: add transport-specific hints here
+		c.logger.ErrorKV("Tool call failed", "tool", toolName, "error", err)
 		return "", customErrors.WrapMCPError(err, "tool_call_failed", fmt.Sprintf("Failed to call tool '%s'", toolName))
 	}
 
@@ -184,7 +174,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 			errMsgText = "Unknown error"
 		}
 
-		c.log.Printf("Error: Tool '%s' returned an error: %s", toolName, errMsgText)
+		c.logger.ErrorKV("Tool execution error", "tool", toolName, "error", errMsgText)
 		return "", customErrors.NewMCPError("tool_execution_error",
 			fmt.Sprintf("Tool '%s' returned an error", toolName)).WithData("error_message", errMsgText)
 	}
@@ -197,28 +187,26 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 		}
 	}
 
-	c.log.Printf("Tool '%s' call successful", toolName)
+	c.logger.InfoKV("Tool call successful", "tool", toolName)
 	return resultText, nil
 }
 
 // GetAvailableTools retrieves the list of available tools from the MCP server.
 // It now returns the full ListToolsResult to include schema information.
 func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, error) {
-	c.log.Printf("Attempting to get available tools from %s", c.serverAddr)
+	c.logger.InfoKV("Discovering tools", "server", c.serverAddr)
 
 	// Ensure the client is initialized. Attempt once with a longer timeout if not.
 	if !c.initialized {
-		c.log.Printf("DEBUG: Client for %s not initialized before GetAvailableTools, attempting Initialize...", c.serverAddr)
-		initCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // 20s timeout for initialization
-		if err := c.Initialize(initCtx); err != nil {
-			cancel()
-			c.log.Printf("ERROR: Initialization attempt failed during GetAvailableTools: %v", err)
-			return nil, customErrors.WrapMCPError(err, "init_before_list", "Client not initialized before getting available tools")
+		// Attempt to initialize with a timeout
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+
+		c.logger.DebugKV("Sending initialize request", "server", c.serverAddr)
+		if err := c.Initialize(ctx); err != nil {
+			c.logger.ErrorKV("Failed to initialize client", "error", err)
+			return nil, customErrors.WrapMCPError(err, "client_not_initialized", "MCP client not initialized before getting available tools")
 		}
-		cancel()
-		c.log.Printf("DEBUG: Initialization successful during GetAvailableTools attempt.")
-	} else {
-		c.log.Printf("DEBUG: Client %s already initialized.", c.serverAddr)
 	}
 
 	// Define the necessary interface
@@ -228,21 +216,21 @@ func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, e
 
 	// Check if the client implements the ListTools method
 	if lister, ok := c.client.(toolLister); ok {
-		c.log.Printf("DEBUG: Client (%T) implements toolLister. Calling native ListTools method for %s", c.client, c.serverAddr)
+		c.logger.DebugKV("Client implements toolLister", "server", c.serverAddr)
 		req := mcp.ListToolsRequest{}
 
 		listResult, err := lister.ListTools(ctx, req)
 
 		// Simple retry logic if first attempt fails
 		if err != nil {
-			c.log.Printf("DEBUG: First ListTools attempt failed for %s: %v. Trying Ping and retrying...", c.serverAddr, err)
+			c.logger.WarnKV("First ListTools attempt failed", "server", c.serverAddr, "error", err)
 			pingCtx, pingCancel := context.WithTimeout(ctx, 5*time.Second)
 			if pingErr := c.client.Ping(pingCtx); pingErr != nil {
 				pingCancel()
-				c.log.Printf("DEBUG: Ping also failed for %s: %v. Not retrying ListTools.", c.serverAddr, pingErr)
+				c.logger.WarnKV("Ping also failed", "server", c.serverAddr, "error", pingErr)
 			} else {
 				pingCancel()
-				c.log.Printf("DEBUG: Ping succeeded for %s, retrying ListTools", c.serverAddr)
+				c.logger.InfoKV("Ping succeeded, retrying ListTools", "server", c.serverAddr)
 				listResult, err = lister.ListTools(ctx, req) // Retry the call
 			}
 		}
@@ -250,55 +238,68 @@ func (c *Client) GetAvailableTools(ctx context.Context) (*mcp.ListToolsResult, e
 		// Process result if successful
 		if err == nil {
 			if listResult == nil {
-				c.log.Printf("Warning: ListTools for %s returned nil result despite nil error", c.serverAddr)
+				c.logger.WarnKV("ListTools returned nil result", "server", c.serverAddr)
 				// Return an empty result struct instead of just nil
 				return &mcp.ListToolsResult{}, nil
 			}
-			// Extract tool names just for logging here
-			toolNames := make([]string, 0, len(listResult.Tools))
-			for _, toolDef := range listResult.Tools {
-				toolNames = append(toolNames, toolDef.Name)
+			// Log discovered tools
+			for _, tool := range listResult.Tools {
+				c.logger.DebugKV("Discovered tool", "name", tool.Name, "description", tool.Description)
 			}
-			c.log.Printf("Native ListTools for %s returned %d tools: %v", c.serverAddr, len(toolNames), toolNames)
+			c.logger.InfoKV("Tool discovery completed", "server", c.serverAddr, "tools", len(listResult.Tools))
 			return listResult, nil // <-- Return the full result struct
 		}
 
 		// If we got here, ListTools failed even after potential retry
-		c.log.Printf("ERROR: Failed to get tools via native ListTools method for %s: %v", c.serverAddr, err)
-		return nil, customErrors.WrapMCPError(err, "tool_discovery_failed", "Failed to get tools via native ListTools method")
+		c.logger.ErrorKV("Tool discovery failed", "server", c.serverAddr, "error", err)
+		return nil, customErrors.WrapMCPError(err, "tool_discovery_failed", fmt.Sprintf("Failed to discover tools for %s", c.serverAddr))
 	}
 
 	// --- Fallback if client type does not implement ListTools ---
-	c.log.Printf("Error: Underlying MCP client (%T) for %s does not implement the toolLister interface. Cannot discover tools.", c.client, c.serverAddr)
+	c.logger.WarnKV("Client does not implement toolLister", "server", c.serverAddr)
 	// Return nil struct and error
 	return nil, customErrors.NewMCPError("unsupported_operation", fmt.Sprintf("Client type %T does not support tool discovery", c.client))
 }
 
-// Close cleans up the MCP client resources.
-func (c *Client) Close() {
+// GetClientMapKeys extracts the keys (server names) from a map of MCP clients.
+func GetClientMapKeys(m map[string]*Client) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// Close closes the MCP client connection.
+func (c *Client) Close() error {
+	c.logger.InfoKV("Closing MCP client", "server", c.serverAddr)
+
 	c.closeMu.Lock()
 	defer c.closeMu.Unlock()
 
+	var closeErr error
+	// Use sync.Once to ensure we only run the close logic once
 	c.closeOnce.Do(func() {
-		c.log.Printf("Closing MCP client resources for %s...", c.serverAddr)
+		c.logger.InfoKV("Closing MCP client resources", "server", c.serverAddr)
 
 		// Close the underlying library client if possible
 		if closer, ok := c.client.(io.Closer); ok {
 			if err := closer.Close(); err != nil {
-				// Log underlying close error, especially if it's 'file already closed'
-				c.log.Printf("Error closing underlying MCP client for %s: %v", c.serverAddr, err)
+				c.logger.ErrorKV("Error closing MCP client", "error", err)
+				closeErr = err
 			}
 		} else {
-			c.log.Printf("Underlying client type %T does not implement io.Closer", c.client)
+			c.logger.WarnKV("Underlying client type does not implement io.Closer", "server", c.serverAddr)
 		}
 
-		c.log.Printf("Finished closing MCP client for %s.", c.serverAddr)
+		c.logger.InfoKV("Finished closing MCP client", "server", c.serverAddr)
 	})
+	return closeErr
 }
 
 // PrintEnvironment logs all environment variables for debugging
 func (c *Client) PrintEnvironment() {
-	c.log.Printf("DEBUGGING: Environment variables for this process:")
+	c.logger.InfoKV("Environment variables for MCP client", "server", c.serverAddr)
 
 	// Print relevant env vars that might affect MCP clients
 	relevantVars := []string{
@@ -306,46 +307,23 @@ func (c *Client) PrintEnvironment() {
 		"MCP_DEBUG", "MCP_MODE", "MCP_SERVER_PORT",
 	}
 
-	for _, key := range relevantVars {
-		value := os.Getenv(key)
-		if value != "" {
-			// Redact passwords
-			if strings.Contains(strings.ToLower(key), "password") {
-				c.log.Printf("  %s: <redacted>", key)
-			} else {
-				c.log.Printf("  %s: %s", key, value)
-			}
+	for _, env := range relevantVars {
+		val := os.Getenv(env)
+		if val != "" {
+			c.logger.DebugKV("Environment variable", "name", env, "value", val)
 		} else {
-			c.log.Printf("  %s: <not set>", key)
+			c.logger.DebugKV("Environment variable not set", "name", env)
 		}
 	}
 
 	// For stdio mode, check if command exists
-	if strings.Contains(c.serverAddr, "mcp-trino") {
-		c.log.Printf("DEBUGGING: Checking mcp-trino command...")
+	if c.serverAddr == "http://localhost:8080" {
+		c.logger.DebugKV("Checking mcp-trino command", "server", c.serverAddr)
 		path, err := exec.LookPath("mcp-trino")
 		if err != nil {
-			c.log.Printf("  Error: mcp-trino not found in PATH: %v", err)
+			c.logger.WarnKV("mcp-trino not found in PATH", "error", err)
 		} else {
-			c.log.Printf("  mcp-trino found at: %s", path)
+			c.logger.DebugKV("mcp-trino found", "path", path)
 		}
 	}
-}
-
-// runNetworkDiagnostics performs basic network checks to diagnose connection issues
-//
-//nolint:unused // Reserved for future use
-func (c *Client) runNetworkDiagnostics(_ context.Context, serverAddr string) error { // nolint:revive // Using underscore for unused parameter
-	// Parse URL to extract host and port
-	c.log.Printf("Running network diagnostics for %s", serverAddr)
-
-	// Simple check - can we make a HTTP request to the server?
-	// This is just a basic check, not a full SSE validation
-	c.log.Printf("Attempting HTTP GET to %s (note: this is just a connectivity test, not an SSE test)", serverAddr)
-
-	// This is a simplified version - just log the diagnostic steps
-	// In a real implementation, we'd actually make the HTTP request
-
-	c.log.Printf("Diagnostics complete for %s", serverAddr)
-	return nil
 }
