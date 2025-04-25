@@ -6,15 +6,16 @@ module.exports = {
             {
                 preset: 'angular',
                 releaseRules: [
-                    // Consider any changes to Go files as a patch release
-                    { files: ['**/*.go'], release: 'patch' },
-                    // Keep conventional commit standard rules
+                    // Keep conventional commit standard rules first
                     { type: 'feat', release: 'minor' },
                     { type: 'fix', release: 'patch' },
                     { type: 'perf', release: 'patch' },
                     { type: 'docs', scope: 'README', release: 'patch' },
                     { type: 'refactor', release: 'patch' },
-                    { type: 'chore', scope: 'deps', release: 'patch' }
+                    { type: 'chore', scope: 'deps', release: 'patch' },
+                    // Consider any changes to Go files as a patch release (fallback)
+                    { files: ['**/*.go'], release: 'patch' },
+                    { type: 'release', release: 'patch' }
                 ]
             }
         ],

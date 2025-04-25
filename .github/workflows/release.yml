@@ -60,10 +60,22 @@ jobs:
         id: extract_version
         if: steps.semantic.outcome == 'success'
         run: |
-          VERSION=$(git describe --tags --abbrev=0)
+          VERSION=$(git describe --tags --abbrev=0 --always)
           VERSION=${VERSION#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Released version: $VERSION"
+          # Dynamically set the tag name for use in later steps
+          TAG_NAME="v$VERSION"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_ENV
+
+      - name: Validate Git Tag
+        run: |
+          TAG_NAME=${{ env.TAG_NAME }}
+          EXISTING_TAG=$(git tag --points-at ${GITHUB_SHA})
+          if [ "$EXISTING_TAG" != "$TAG_NAME" ]; then
+            git tag -f $TAG_NAME ${GITHUB_SHA}
+            git push origin $TAG_NAME --force
+          fi
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -75,6 +87,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
           GORELEASER_CURRENT_TAG: v${{ steps.extract_version.outputs.version }}
 
 
@@ -120,14 +133,14 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: 'arm64,amd64,arm'
+          platforms: 'arm64,amd64'
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          platforms: linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
