@@ -20,6 +20,7 @@ const (
 // ServerConfig defines the configuration for a single MCP server
 type ServerConfig struct {
 	URL      string            `json:"url,omitempty"`      // For HTTP/SSE mode
+	Mode     string            `json:"mode,omitempty"`     // Mode of operation (e.g., "http", "sse")
 	Command  string            `json:"command,omitempty"`  // For stdio mode
 	Args     []string          `json:"args,omitempty"`     // Command arguments
 	Env      map[string]string `json:"env,omitempty"`      // Environment variables

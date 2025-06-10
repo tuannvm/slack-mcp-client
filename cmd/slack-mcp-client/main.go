@@ -289,7 +289,10 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *
 	// Check if this is a URL-based (HTTP/SSE) configuration
 	if serverConf.URL != "" {
 		// Assume "sse" mode by default for HTTP-based connections
-		mode := "sse"
+		mode := serverConf.Mode
+		if mode == "" {
+			mode = "sse" // Default to SSE if not specified
+		}
 		logger.InfoKV("Creating MCP client", "mode", mode, "address", serverConf.URL)
 
 		// Use the imported mcp.NewClient from internal/mcp/client.go with structured logger
