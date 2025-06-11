@@ -47,7 +47,7 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 
 	// Create underlying MCP client based on mode
 	modeLower := strings.ToLower(mode)
-	var mcpClient client.MCPClient
+	var mcpClient *client.Client
 	var err error
 	switch modeLower {
 	case "stdio":
@@ -75,6 +75,10 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 	}
 	if err != nil {
 		return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
+	}
+
+	if err := mcpClient.Start(context.Background()); err != nil {
+		return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to start MCP client for %s", addressOrCommand))
 	}
 
 	// Create the wrapper client
