@@ -26,8 +26,9 @@ type Client struct {
 	serverAddr  string
 	initialized bool // Track if the client has been successfully initialized
 
-	closeOnce sync.Once  // Ensures close logic runs only once
-	closeMu   sync.Mutex // Protects access during close
+	cancel    context.CancelFunc // Cancel the MCP client
+	closeOnce sync.Once          // Ensures close logic runs only once
+	closeMu   sync.Mutex         // Protects access during close
 }
 
 // NewClient creates a new MCP client handler.
@@ -77,7 +78,9 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 		return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 	}
 
-	if err := mcpClient.Start(context.Background()); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := mcpClient.Start(ctx); err != nil {
+		cancel()
 		return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to start MCP client for %s", addressOrCommand))
 	}
 
@@ -87,6 +90,7 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 		client:      mcpClient,
 		serverAddr:  addressOrCommand,
 		initialized: false,
+		cancel:      cancel,
 	}
 
 	return wrapperClient, nil
@@ -294,6 +298,10 @@ func (c *Client) Close() error {
 			}
 		} else {
 			c.logger.WarnKV("Underlying client type does not implement io.Closer", "server", c.serverAddr)
+		}
+
+		if c.cancel != nil {
+			c.cancel()
 		}
 
 		c.logger.InfoKV("Finished closing MCP client", "server", c.serverAddr)
