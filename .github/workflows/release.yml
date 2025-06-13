@@ -1,11 +1,9 @@
 name: Release Pipeline
 
 on:
-  workflow_run:
-    workflows: ["Build & Verify Pipeline"]
-    branches: [main]
-    types:
-      - completed
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -16,7 +14,6 @@ permissions:
 jobs:
   semantic-release:
     name: Semantic Release
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.extract_version.outputs.version }}
@@ -90,7 +87,6 @@ jobs:
           GITHUB_REPOSITORY_NAME: ${{ github.event.repository.name }}
           GORELEASER_CURRENT_TAG: v${{ steps.extract_version.outputs.version }}
 
-
   # Build and publish Docker image with semantic version tags
   publish-docker-image:
     name: Publish Docker Image
@@ -133,7 +129,7 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: 'arm64,amd64'
+          platforms: "arm64,amd64"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
