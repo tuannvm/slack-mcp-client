@@ -360,7 +360,7 @@ func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client, tim
 	if timeoutSeconds != nil {
 		initTimeout = *timeoutSeconds
 	}
-	logger.Info(fmt.Sprintf("Attempting to initialize MCP client (timeout: %d)...", initTimeout))
+	logger.Info("Attempting to initialize MCP client (timeout: %d)...", initTimeout)
 	// Create a context with timeout for initialization
 	initCtx, initCancel := context.WithTimeout(context.Background(), time.Duration(initTimeout)*time.Second)
 	defer initCancel()
