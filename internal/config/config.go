@@ -19,11 +19,12 @@ const (
 
 // ServerConfig defines the configuration for a single MCP server
 type ServerConfig struct {
-	URL      string            `json:"url,omitempty"`      // For HTTP/SSE mode
-	Command  string            `json:"command,omitempty"`  // For stdio mode
-	Args     []string          `json:"args,omitempty"`     // Command arguments
-	Env      map[string]string `json:"env,omitempty"`      // Environment variables
-	Disabled bool              `json:"disabled,omitempty"` // Whether this server is disabled
+	URL                      string            `json:"url,omitempty"`                        // For HTTP/SSE mode
+	Command                  string            `json:"command,omitempty"`                    // For stdio mode
+	Args                     []string          `json:"args,omitempty"`                       // Command arguments
+	Env                      map[string]string `json:"env,omitempty"`                        // Environment variables
+	Disabled                 bool              `json:"disabled,omitempty"`                   // Whether this server is disabled
+	InitializeTimeoutSeconds *int              `json:"initialize_timeout_seconds,omitempty"` // Timeout for server initialization
 }
 
 // MCPServersConfig is the top-level structure for the MCP servers configuration
