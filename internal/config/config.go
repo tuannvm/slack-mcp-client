@@ -25,6 +25,7 @@ type ServerConfig struct {
 	Args     []string          `json:"args,omitempty"`     // Command arguments
 	Env      map[string]string `json:"env,omitempty"`      // Environment variables
 	Disabled bool              `json:"disabled,omitempty"` // Whether this server is disabled
+	InitializeTimeoutSeconds *int              `json:"initialize_timeout_seconds,omitempty"` // Timeout for server initialization
 }
 
 // MCPServersConfig is the top-level structure for the MCP servers configuration
