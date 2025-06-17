@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/tmc/langchaingo/llms"
+
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
@@ -83,10 +85,11 @@ type RequestMessage struct {
 
 // ProviderOptions contains options for LLM requests
 type ProviderOptions struct {
-	Model          string  // Model to use (specific model name, e.g., gpt-4o)
-	Temperature    float64 // Temperature for response generation (0-1)
-	MaxTokens      int     // Maximum number of tokens to generate
-	TargetProvider string  // For gateway providers: specifies the underlying provider (e.g., "openai", "ollama")
+	Model          string      // Model to use (specific model name, e.g., gpt-4o)
+	Temperature    float64     // Temperature for response generation (0-1)
+	MaxTokens      int         // Maximum number of tokens to generate
+	TargetProvider string      // For gateway providers: specifies the underlying provider (e.g., "openai", "ollama")
+	Tools          []llms.Tool // Optional tools for the request (e.g., function calling)
 }
 
 // LLMProvider defines the interface for language model providers

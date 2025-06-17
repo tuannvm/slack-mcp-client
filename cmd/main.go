@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/tmc/langchaingo/llms"
+
 	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -51,10 +53,10 @@ func main() {
 	cfg := loadAndPrepareConfig(logger)
 
 	// Initialize MCP clients and discover tools
-	mcpClients, discoveredTools := initializeMCPClients(logger, cfg)
+	mcpClients, discoveredTools, llmsTools := initializeMCPClients(logger, cfg)
 
 	// Initialize and run Slack client
-	startSlackClient(logger, mcpClients, discoveredTools, cfg)
+	startSlackClient(logger, mcpClients, discoveredTools, llmsTools, cfg)
 }
 
 // setupLogging initializes the logging system
@@ -123,10 +125,11 @@ func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 
 // initializeMCPClients initializes all MCP clients and discovers available tools
 // Use mcp.Client from the internal mcp package
-func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[string]*mcp.Client, map[string]common.ToolInfo) {
+func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[string]*mcp.Client, map[string]common.ToolInfo, []llms.Tool) {
 	// Initialize MCP Clients and Discover Tools Sequentially
 	mcpClients := make(map[string]*mcp.Client)
 	allDiscoveredTools := make(map[string]common.ToolInfo) // Map: toolName -> common.ToolInfo
+	llmsTools := []llms.Tool{}                             // Map: toolName -> llms.Tool
 	failedServers := []string{}
 	initializedClientCount := 0
 
@@ -138,6 +141,7 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 			serverConf,
 			mcpClients,
 			allDiscoveredTools,
+			&llmsTools,
 			&failedServers,
 			&initializedClientCount,
 		)
@@ -158,7 +162,7 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 		logger.Warn("No MCP clients could be successfully initialized. Application will run with LLM capabilities only.")
 	}
 
-	return mcpClients, allDiscoveredTools
+	return mcpClients, allDiscoveredTools, llmsTools
 }
 
 // processSingleMCPServer processes a single MCP server configuration
@@ -168,6 +172,7 @@ func processSingleMCPServer(
 	serverConf config.ServerConfig,
 	mcpClients map[string]*mcp.Client, // Use mcp.Client
 	discoveredTools map[string]common.ToolInfo,
+	llmsTools *[]llms.Tool, // Use llms.Tool
 	failedServers *[]string,
 	initializedClientCount *int,
 ) {
@@ -247,31 +252,37 @@ func processSingleMCPServer(
 	for _, toolDef := range listResult.Tools {
 		toolName := toolDef.Name
 		if _, exists := discoveredTools[toolName]; !exists {
-			var inputSchemaMap map[string]interface{}
-			// Marshal the ToolInputSchema struct to JSON bytes
-			schemaBytes, err := json.Marshal(toolDef.InputSchema)
-			if err != nil {
-				serverLogger.Error("    Failed to marshal input schema struct for tool '%s': %v", toolName, err)
-				inputSchemaMap = make(map[string]interface{}) // Use empty map on error
-			} else {
-				// Unmarshal the JSON bytes into the map
-				if err := json.Unmarshal(schemaBytes, &inputSchemaMap); err != nil {
-					serverLogger.Error("    Failed to unmarshal input schema JSON for tool '%s': %v", toolName, err)
-					inputSchemaMap = make(map[string]interface{}) // Use empty map on error
+			llmTool := llms.Tool{
+				Type: "function",
+				Function: &llms.FunctionDefinition{
+					Name:        toolDef.Name,
+					Description: toolDef.Description,
+				},
+			}
+			if toolDef.InputSchema.Type != "" {
+				parameters := map[string]any{
+					"type": toolDef.InputSchema.Type,
 				}
+				if toolDef.InputSchema.Properties != nil {
+					parameters["properties"] = toolDef.InputSchema.Properties
+				}
+				if toolDef.InputSchema.Required != nil {
+					parameters["required"] = toolDef.InputSchema.Required
+				}
+				llmTool.Function.Parameters = parameters
+			}
+			*llmsTools = append(*llmsTools, llmTool)
+
+			discoveredTools[toolName] = common.ToolInfo{
+				ServerName: serverName,
+				Tool:       &llmTool,
 			}
 
-			// Use common.ToolInfo
-			discoveredTools[toolName] = common.ToolInfo{
-				ServerName:  serverName,
-				Description: toolDef.Description,
-				InputSchema: inputSchemaMap,
-			}
 			if *mcpDebug {
 				serverLogger.Debug("Stored tool: '%s' (Desc: %s)", toolName, toolDef.Description)
 				if *debug {
 					// Only log the full schema if debug mode is enabled
-					schemaJSON, _ := json.MarshalIndent(inputSchemaMap, "", "  ")
+					schemaJSON, _ := json.MarshalIndent(toolDef.InputSchema, "", "  ")
 					serverLogger.Debug("Tool schema: %s", string(schemaJSON))
 				}
 			}
@@ -435,7 +446,7 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 
 // startSlackClient starts the Slack client and handles shutdown
 // Use mcp.Client from the internal mcp package
-func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
+func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, llmsTools []llms.Tool, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 	var err error
 
@@ -459,6 +470,7 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		logger,          // Pass the structured logger
 		mcpClients,      // Pass the map of initialized clients
 		discoveredTools, // Pass the map of tool information
+		llmsTools,       // Pass the list of LLM tools
 		cfg,             // Pass the whole config object
 	)
 	if err != nil {
