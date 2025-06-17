@@ -434,11 +434,25 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 // Use mcp.Client from the internal mcp package
 func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
+	var err error
+
+	var userFrontend slackbot.UserFrontend
+	if cfg.UseStdIOClient != nil && *cfg.UseStdIOClient {
+		userFrontend = slackbot.NewStidioClient(logger)
+	} else {
+		userFrontend, err = slackbot.GetSlackClient(
+			cfg.SlackBotToken,
+			cfg.SlackAppToken,
+			logger,
+		)
+		if err != nil {
+			logger.Fatal("Failed to initialize Slack client: %v", err)
+		}
+	}
 
 	// Use the structured logger for the Slack client
 	client, err := slackbot.NewClient(
-		cfg.SlackBotToken,
-		cfg.SlackAppToken,
+		userFrontend,
 		logger,          // Pass the structured logger
 		mcpClients,      // Pass the map of initialized clients
 		discoveredTools, // Pass the map of tool information

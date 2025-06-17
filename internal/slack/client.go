@@ -6,12 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"regexp"
 	"strings"
 	"time"
 
-	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
@@ -22,16 +19,12 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
-	"github.com/tuannvm/slack-mcp-client/internal/slack/formatter"
 )
 
 // Client represents the Slack client application.
 type Client struct {
 	logger          *logging.Logger // Structured logger
-	api             *slack.Client
-	Socket          *socketmode.Client
-	botUserID       string
-	botMentionRgx   *regexp.Regexp
+	userFrontend    UserFrontend
 	mcpClients      map[string]*mcp.Client
 	llmMCPBridge    *handlers.LLMMCPBridge
 	llmRegistry     *llm.ProviderRegistry // LLM provider registry
@@ -49,17 +42,9 @@ type Message struct {
 }
 
 // NewClient creates a new Slack client instance.
-func NewClient(botToken, appToken string, stdLogger *logging.Logger, mcpClients map[string]*mcp.Client,
+func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients map[string]*mcp.Client,
 	discoveredTools map[string]common.ToolInfo, cfg *config.Config) (*Client, error) {
-	if botToken == "" {
-		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
-	}
-	if appToken == "" {
-		return nil, fmt.Errorf("SLACK_APP_TOKEN must be set")
-	}
-	if !strings.HasPrefix(appToken, "xapp-") {
-		return nil, fmt.Errorf("SLACK_APP_TOKEN must have the prefix \"xapp-\"")
-	}
+
 	// MCP clients are now optional - if none are provided, we'll just use LLM capabilities
 	if mcpClients == nil {
 		mcpClients = make(map[string]*mcp.Client)
@@ -69,49 +54,17 @@ func NewClient(botToken, appToken string, stdLogger *logging.Logger, mcpClients 
 		return nil, fmt.Errorf("config cannot be nil")
 	}
 
-	// Determine log level from environment variable
-	logLevel := logging.LevelInfo // Default to INFO
-	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
-		logLevel = logging.ParseLevel(envLevel)
-		stdLogger.InfoKV("Setting Slack client log level from environment", "level", envLevel)
-	}
-
-	// Create a structured logger for the Slack client
-	slackLogger := logging.New("slack-client", logLevel)
-
-	// Initialize the API client
-	api := slack.New(
-		botToken,
-		slack.OptionAppLevelToken(appToken),
-		// Still using standard logger for Slack API as it expects a standard logger
-		slack.OptionLog(slackLogger.StdLogger()),
-	)
-
-	// Authenticate with Slack
-	authTest, err := api.AuthTestContext(context.Background())
-	if err != nil {
-		return nil, customErrors.WrapSlackError(err, "authentication_failed", "Failed to authenticate with Slack")
-	}
-
-	// Create the socket mode client
-	client := socketmode.New(
-		api,
-		// Still using standard logger for socket mode as it expects a standard logger
-		socketmode.OptionLog(slackLogger.StdLogger()),
-		socketmode.OptionDebug(false),
-	)
-
-	mentionRegex := regexp.MustCompile(fmt.Sprintf("<@%s>", authTest.UserID))
+	clientLogger := userFrontend.GetLogger()
 
 	// --- MCP/Bridge setup ---
-	slackLogger.Printf("Available MCP servers (%d):", len(mcpClients))
+	clientLogger.Printf("Available MCP servers (%d):", len(mcpClients))
 	for name := range mcpClients {
-		slackLogger.Printf("- %s", name)
+		clientLogger.Printf("- %s", name)
 	}
 
-	slackLogger.Printf("Available tools (%d):", len(discoveredTools))
+	clientLogger.Printf("Available tools (%d):", len(discoveredTools))
 	for toolName, toolInfo := range discoveredTools {
-		slackLogger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)",
+		clientLogger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)",
 			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 
@@ -119,18 +72,14 @@ func NewClient(botToken, appToken string, stdLogger *logging.Logger, mcpClients 
 	rawClientMap := make(map[string]interface{})
 	for name, client := range mcpClients {
 		rawClientMap[name] = client
-		slackLogger.DebugKV("Adding MCP client to raw map for bridge", "name", name)
+		clientLogger.DebugKV("Adding MCP client to raw map for bridge", "name", name)
 	}
 
-	// Determine log level from environment variable
-	logLevel = logging.LevelInfo // Default to INFO
-	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
-		logLevel = logging.ParseLevel(envLevel)
-	}
+	logLevel := getLogLevel(stdLogger)
 
 	// Pass the raw map to the bridge with the configured log level
-	llmMCPBridge := handlers.NewLLMMCPBridgeFromClientsWithLogLevel(rawClientMap, slackLogger.StdLogger(), discoveredTools, logLevel)
-	slackLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
+	llmMCPBridge := handlers.NewLLMMCPBridgeFromClientsWithLogLevel(rawClientMap, clientLogger.StdLogger(), discoveredTools, logLevel)
+	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
 
 	// --- Initialize the LLM provider registry using the config ---
 	// Use the internal structured logger for the registry with the same log level as the bridge
@@ -138,25 +87,22 @@ func NewClient(botToken, appToken string, stdLogger *logging.Logger, mcpClients 
 	registry, err := llm.NewProviderRegistry(cfg, registryLogger)
 	if err != nil {
 		// Log the error using the structured logger
-		slackLogger.ErrorKV("Failed to initialize LLM provider registry", "error", err)
+		clientLogger.ErrorKV("Failed to initialize LLM provider registry", "error", err)
 		return nil, customErrors.WrapLLMError(err, "llm_registry_init_failed", "Failed to initialize LLM provider registry")
 	}
-	slackLogger.Info("LLM provider registry initialized successfully")
+	clientLogger.Info("LLM provider registry initialized successfully")
 	// Set the primary provider
 	primaryProvider := cfg.LLMProvider
 	if primaryProvider == "" {
-		slackLogger.Warn("No LLM provider specified in config, using default")
+		clientLogger.Warn("No LLM provider specified in config, using default")
 		primaryProvider = "openai" // Default to OpenAI if not specified
 	}
-	slackLogger.InfoKV("Primary LLM provider set", "provider", primaryProvider)
+	clientLogger.InfoKV("Primary LLM provider set", "provider", primaryProvider)
 
 	// --- Create and return Client instance ---
 	return &Client{
-		logger:          slackLogger,
-		api:             api,
-		Socket:          client,
-		botUserID:       authTest.UserID,
-		botMentionRgx:   mentionRegex,
+		logger:          clientLogger,
+		userFrontend:    userFrontend,
 		mcpClients:      mcpClients,
 		llmMCPBridge:    llmMCPBridge,
 		llmRegistry:     registry,
@@ -171,12 +117,12 @@ func NewClient(botToken, appToken string, stdLogger *logging.Logger, mcpClients 
 func (c *Client) Run() error {
 	go c.handleEvents()
 	c.logger.Info("Starting Slack Socket Mode listener...")
-	return c.Socket.Run()
+	return c.userFrontend.Run()
 }
 
 // handleEvents listens for incoming events and dispatches them.
 func (c *Client) handleEvents() {
-	for evt := range c.Socket.Events {
+	for evt := range c.userFrontend.GetEventChannel() {
 		switch evt.Type {
 		case socketmode.EventTypeConnecting:
 			c.logger.Info("Connecting to Slack...")
@@ -190,7 +136,7 @@ func (c *Client) handleEvents() {
 				c.logger.WarnKV("Ignored unexpected EventsAPI event type", "type", fmt.Sprintf("%T", evt.Data))
 				continue
 			}
-			c.Socket.Ack(*evt.Request)
+			c.userFrontend.Ack(*evt.Request)
 			c.logger.InfoKV("Received EventsAPI event", "type", eventsAPIEvent.Type)
 			c.handleEventMessage(eventsAPIEvent)
 		default:
@@ -208,7 +154,7 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 		switch ev := innerEvent.Data.(type) {
 		case *slackevents.AppMentionEvent:
 			c.logger.InfoKV("Received app mention in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
-			messageText := c.botMentionRgx.ReplaceAllString(ev.Text, "")
+			messageText := c.userFrontend.RemoveBotMention(ev.Text)
 			// Add to message history
 			c.addToHistory(ev.Channel, "user", messageText)
 			// Use handleUserPrompt for app mentions too, for consistency
@@ -216,7 +162,7 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 
 		case *slackevents.MessageEvent:
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
-			isValidUser := ev.User != "" && ev.User != c.botUserID
+			isValidUser := c.userFrontend.IsValidUser(ev.User)
 			isNotEdited := ev.SubType != "message_changed"
 			isBot := ev.BotID != "" || ev.SubType == "bot_message"
 
@@ -303,9 +249,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
 	// Show a temporary "typing" indicator
-	if _, _, err := c.api.PostMessage(channelID, slack.MsgOptionText("Thinking...", false), slack.MsgOptionTS(threadTS)); err != nil {
-		c.logger.ErrorKV("Error posting typing indicator", "error", err)
-	}
+	c.userFrontend.SendMessage(channelID, threadTS, "Thinking...")
 
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID)
@@ -314,7 +258,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	llmResponse, err := c.callLLM(providerName, userPrompt, contextHistory)
 	if err != nil {
 		c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
-		c.postMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
+		c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
 		return
 	}
 
@@ -479,7 +423,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 
 	if toolProcessingErr != nil {
 		c.logger.ErrorKV("Tool processing error", "error", toolProcessingErr)
-		c.postMessage(channelID, threadTS, finalResponse) // Post the error message
+		c.userFrontend.SendMessage(channelID, threadTS, finalResponse) // Post the error message
 		return
 	}
 
@@ -513,9 +457,9 @@ func (c *Client) processLLMResponseAndReply(llmResponse, userPrompt, channelID, 
 
 	// Send the final response back to Slack
 	if finalResponse == "" {
-		c.postMessage(channelID, threadTS, "(LLM returned an empty response)")
+		c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
 	} else {
-		c.postMessage(channelID, threadTS, finalResponse)
+		c.userFrontend.SendMessage(channelID, threadTS, finalResponse)
 	}
 }
 
@@ -525,86 +469,4 @@ func truncateForLog(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
-}
-
-// postMessage sends a message back to Slack, replying in a thread if threadTS is provided.
-func (c *Client) postMessage(channelID, threadTS, text string) {
-	if text == "" {
-		c.logger.WarnKV("Attempted to send empty message, skipping", "channel", channelID)
-		return
-	}
-
-	// Delete "typing" indicator messages if any
-	// This is a simplistic approach - more sophisticated approaches might track message IDs
-	history, err := c.api.GetConversationHistory(&slack.GetConversationHistoryParameters{
-		ChannelID: channelID,
-		Limit:     10,
-	})
-	if err == nil && history != nil {
-		for _, msg := range history.Messages {
-			if msg.User == c.botUserID && msg.Text == "..." {
-				_, _, err := c.api.DeleteMessage(channelID, msg.Timestamp)
-				if err != nil {
-					c.logger.ErrorKV("Error deleting typing indicator message", "error", err)
-				}
-				break // Just delete the most recent one
-			}
-		}
-	}
-
-	// Detect message type and format accordingly
-	messageType := formatter.DetectMessageType(text)
-	c.logger.DebugKV("Detected message type", "type", messageType, "length", len(text))
-
-	var msgOptions []slack.MsgOption
-
-	switch messageType {
-	case formatter.JSONBlock:
-		// Message is already in Block Kit JSON format
-		options := formatter.DefaultOptions()
-		options.Format = formatter.BlockFormat
-		options.ThreadTS = threadTS
-		msgOptions = formatter.FormatMessage(text, options)
-
-	case formatter.StructuredData:
-		// Convert structured data to Block Kit format
-		formattedText := formatter.FormatStructuredData(text)
-		options := formatter.DefaultOptions()
-		options.Format = formatter.BlockFormat
-		options.ThreadTS = threadTS
-		msgOptions = formatter.FormatMessage(formattedText, options)
-
-	case formatter.MarkdownText, formatter.PlainText:
-		// Apply Markdown formatting and use default text formatting
-		formattedText := formatter.FormatMarkdown(text)
-		options := formatter.DefaultOptions()
-		options.ThreadTS = threadTS
-		msgOptions = formatter.FormatMessage(formattedText, options)
-	}
-
-	// Send the message
-	_, _, err = c.api.PostMessage(channelID, msgOptions...)
-	if err != nil {
-		c.logger.ErrorKV("Error posting message to channel", "channel", channelID, "error", err, "messageType", messageType)
-
-		// If we get an error with Block Kit format, try falling back to plain text
-		if messageType == formatter.JSONBlock || messageType == formatter.StructuredData {
-			c.logger.InfoKV("Falling back to plain text format due to Block Kit error", "channel", channelID)
-
-			// Apply markdown formatting to the original text and send as plain text
-			formattedText := formatter.FormatMarkdown(text)
-			fallbackOptions := []slack.MsgOption{
-				slack.MsgOptionText(formattedText, false),
-			}
-			if threadTS != "" {
-				fallbackOptions = append(fallbackOptions, slack.MsgOptionTS(threadTS))
-			}
-
-			// Try sending with plain text format
-			_, _, fallbackErr := c.api.PostMessage(channelID, fallbackOptions...)
-			if fallbackErr != nil {
-				c.logger.ErrorKV("Error posting fallback message to channel", "channel", channelID, "error", fallbackErr)
-			}
-		}
-	}
 }
