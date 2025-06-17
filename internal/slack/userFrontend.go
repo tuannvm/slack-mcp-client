@@ -3,14 +3,16 @@ package slackbot
 import (
 	"context"
 	"fmt"
-	"github.com/slack-go/slack"
-	"github.com/slack-go/slack/socketmode"
-	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
-	"github.com/tuannvm/slack-mcp-client/internal/slack/formatter"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/socketmode"
+
+	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/internal/slack/formatter"
 )
 
 type UserFrontend interface {
@@ -123,7 +125,7 @@ func (slackClient *SlackClient) SendMessage(channelID, threadTS, text string) {
 	})
 	if err == nil && history != nil {
 		for _, msg := range history.Messages {
-			if slackClient.IsBotUser(msg.User) && msg.Text == "..." {
+			if slackClient.IsBotUser(msg.User) && msg.Text == thinkingMessage {
 				_, _, err := slackClient.DeleteMessage(channelID, msg.Timestamp)
 				if err != nil {
 					slackClient.logger.ErrorKV("Error deleting typing indicator message", "error", err)
