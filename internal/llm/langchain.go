@@ -4,7 +4,6 @@ package llm
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/tmc/langchaingo/llms"
 
@@ -15,6 +14,8 @@ import (
 const (
 	langchainProviderName = "langchain"
 )
+
+type Message llms.MessageContent
 
 // LangChainProvider implements the LLMProvider interface using LangChainGo
 // It acts as a gateway, configured to use various LLM providers underneath.
@@ -109,46 +110,40 @@ func NewLangChainProviderFactory(config map[string]interface{}, logger *logging.
 }
 
 // GenerateCompletion generates a completion using LangChainGo
-func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error) {
+func (p *LangChainProvider) GenerateCompletion(ctx context.Context, messages []llms.MessageContent, options ProviderOptions) (*llms.ContentChoice, error) {
 	if p.llm == nil {
-		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+		return nil, errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
-	p.logger.DebugKV("Calling LangChainGo GenerateCompletion", "prompt_length", len(prompt))
 	callOptions := p.buildOptions(options)
 
-	completion, err := llms.GenerateFromSinglePrompt(ctx, p.llm, prompt, callOptions...)
+	resp, err := p.llm.GenerateContent(ctx, messages, callOptions...)
 	if err != nil {
 		p.logger.ErrorKV("LangChainGo GenerateCompletion request failed", "error", err)
-		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
+		return nil, errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
 	}
+	if len(resp.Choices) == 0 {
+		p.logger.ErrorKV("LangChainGo GenerateCompletion returned no choices")
+		return nil, errors.NewLLMError("no_choices", "No choices returned from LangChainGo completion request")
+	}
+	choice := resp.Choices[0]
 
-	p.logger.DebugKV("Received GenerateCompletion response", "length", len(completion))
-	return completion, nil
+	p.logger.DebugKV("Received GenerateCompletion response", "length", len(choice.Content))
+	return choice, nil
 }
 
 // GenerateChatCompletion generates a chat completion using LangChainGo
 // Note: LangChainGo's basic llms.Model interface doesn't directly support chat messages.
 // We simulate it by formatting messages into a single prompt.
-func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error) {
+func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages []llms.MessageContent, options ProviderOptions) (*llms.ContentChoice, error) {
 	if p.llm == nil {
-		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+		return nil, errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
 	p.logger.DebugKV("Calling LangChainGo GenerateChatCompletion", "num_messages", len(messages))
 
-	// Convert our message format to a single prompt string
-	var promptBuilder strings.Builder
-	for _, msg := range messages {
-		promptBuilder.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(msg.Role), msg.Content))
-	}
-	prompt := promptBuilder.String()
-	// Add one final assistant prefix to indicate where the response should go
-	// This might need adjustment depending on the specific model's fine-tuning
-	prompt += "ASSISTANT: "
-
 	// Call the underlying GenerateCompletion method with the formatted prompt
-	return p.GenerateCompletion(ctx, prompt, options)
+	return p.GenerateCompletion(ctx, messages, options)
 }
 
 // GetInfo returns information about the provider.

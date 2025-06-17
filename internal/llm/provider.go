@@ -79,8 +79,7 @@ type ProviderInfo struct {
 
 // RequestMessage represents a single message in a chat request
 type RequestMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	llms.MessageContent
 }
 
 // ProviderOptions contains options for LLM requests
@@ -96,10 +95,10 @@ type ProviderOptions struct {
 type LLMProvider interface {
 	// GenerateCompletion generates a text completion (less common now, prefer chat)
 	// Deprecated: Prefer GenerateChatCompletion
-	GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error)
+	GenerateCompletion(ctx context.Context, messages []llms.MessageContent, options ProviderOptions) (*llms.ContentChoice, error)
 
 	// GenerateChatCompletion generates a chat completion using a message history
-	GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error)
+	GenerateChatCompletion(ctx context.Context, messages []llms.MessageContent, options ProviderOptions) (*llms.ContentChoice, error)
 
 	// GetInfo returns information about the provider
 	GetInfo() ProviderInfo
