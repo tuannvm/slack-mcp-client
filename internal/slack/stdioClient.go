@@ -18,7 +18,7 @@ type StdioClient struct {
 	logger *logging.Logger
 }
 
-func NewStidioClient(stdLogger *logging.Logger) *StdioClient {
+func NewStdioClient(stdLogger *logging.Logger) *StdioClient {
 	logLevel := getLogLevel(stdLogger)
 	stdioLogger := logging.New("stdio-client", logLevel)
 	return &StdioClient{
