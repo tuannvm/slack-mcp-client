@@ -333,7 +333,7 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 		return "", domainErr
 	}
 
-	b.logger.InfoKV("Successfully executed MCP tool", "tool", toolCall.Tool)
+	b.logger.InfoKV("Successfully executed MCP tool", "tool", toolCall.Tool, "result", len(result))
 
 	// The result is already a string with the updated interface
 	if result == "" {
