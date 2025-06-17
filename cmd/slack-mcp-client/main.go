@@ -438,7 +438,7 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 
 	var userFrontend slackbot.UserFrontend
 	if cfg.UseStdIOClient != nil && *cfg.UseStdIOClient {
-		userFrontend = slackbot.NewStidioClient(logger)
+		userFrontend = slackbot.NewStdioClient(logger)
 	} else {
 		userFrontend, err = slackbot.GetSlackClient(
 			cfg.SlackBotToken,
