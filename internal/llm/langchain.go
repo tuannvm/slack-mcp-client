@@ -201,6 +201,13 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 		p.logger.DebugKV("Adding MaxTokens option", "value", options.MaxTokens)
 	}
 
+	if len(options.Tools) > 0 {
+		// Convert tools to LangChainGo format if needed
+		// For now, we assume tools are compatible or handled by the underlying LLM
+		p.logger.DebugKV("Adding tools to call options", "count", len(options.Tools))
+		callOptions = append(callOptions, llms.WithTools(options.Tools))
+	}
+
 	// Note: options.TargetProvider is handled during factory creation, not here.
 
 	return callOptions
