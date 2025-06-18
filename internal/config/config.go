@@ -35,11 +35,12 @@ type MCPServersConfig struct {
 
 // Config defines the overall application configuration
 type Config struct {
-	SlackBotToken string                            `json:"slack_bot_token"`
-	SlackAppToken string                            `json:"slack_app_token"`
-	Servers       map[string]ServerConfig           `json:"servers"`
-	LLMProvider   string                            `json:"llm_provider"`  // Name of the provider to USE (e.g., "openai", "ollama")
-	LLMProviders  map[string]map[string]interface{} `json:"llm_providers"` // Configuration for ALL potential providers
+	UseStdIOClient *bool                             `json:"use_stdio_client,omitempty"` // Use stdio client instead of Slack API
+	SlackBotToken  string                            `json:"slack_bot_token"`
+	SlackAppToken  string                            `json:"slack_app_token"`
+	Servers        map[string]ServerConfig           `json:"servers"`
+	LLMProvider    string                            `json:"llm_provider"`  // Name of the provider to USE (e.g., "openai", "ollama")
+	LLMProviders   map[string]map[string]interface{} `json:"llm_providers"` // Configuration for ALL potential providers
 }
 
 // LoadConfig loads configuration from file and environment variables
