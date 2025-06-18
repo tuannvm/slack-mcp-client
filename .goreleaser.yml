@@ -28,9 +28,9 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
-# Use simpler snapshot naming to ensure compatibility
 snapshot:
-  name_template: "next"
+  # renamed in v2.2: old `name_template` is deprecated
+  version_template: "next"  
 
 changelog:
   sort: asc
@@ -43,11 +43,12 @@ changelog:
       - Merge pull request
       - Merge branch
 
-# Explicitly configure GitHub Releases
 release:
   github:
-    owner: "{{.Env.GITHUB_REPOSITORY_OWNER}}"
-    name: "{{.Env.GITHUB_REPOSITORY_NAME}}"
+    # split "owner/name" from the built-in GITHUB_REPOSITORY
+    owner: "{{ (split .Env.GITHUB_REPOSITORY \"/\").0 }}"
+    name:  "{{ (split .Env.GITHUB_REPOSITORY \"/\").1 }}"
   draft: false
   prerelease: auto
   name_template: "{{.ProjectName}} v{{.Version}}"
+
