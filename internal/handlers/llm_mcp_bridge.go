@@ -6,11 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"log"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
@@ -30,19 +33,76 @@ type LLMMCPBridge struct {
 	logger         *logging.Logger
 	stdLogger      *log.Logger                // Standard logger for backward compatibility
 	availableTools map[string]common.ToolInfo // Map of tool names to info about the tool
+	llmRegistry    *llm.ProviderRegistry      // LLM provider registry
+	useNativeTools bool                       // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
+}
+
+// generateToolPrompt generates the prompt string for available tools
+func (b *LLMMCPBridge) generateToolPrompt() string {
+	if len(b.availableTools) == 0 {
+		return "" // No tools available
+	}
+
+	var promptBuilder strings.Builder
+	promptBuilder.WriteString("You have access to the following tools. Analyze the user's request to determine if a tool is needed.\n\n")
+
+	// Clear instructions on how to format the JSON response
+	promptBuilder.WriteString("TOOL USAGE INSTRUCTIONS:\n")
+	promptBuilder.WriteString("1. If a tool is appropriate AND you have ALL required arguments from the user's request, respond with ONLY the JSON object.\n")
+	promptBuilder.WriteString("2. The JSON MUST be properly formatted with no additional text before or after.\n")
+	promptBuilder.WriteString("3. Do NOT include explanations, markdown formatting, or extra text with the JSON.\n")
+	promptBuilder.WriteString("4. If any required arguments are missing, do NOT generate the JSON. Instead, ask the user for the missing information.\n")
+	promptBuilder.WriteString("5. If no tool is needed, respond naturally to the user's request.\n\n")
+
+	promptBuilder.WriteString("Available Tools:\n")
+
+	for name, toolInfo := range b.availableTools {
+		promptBuilder.WriteString(fmt.Sprintf("\nTool Name: %s\n", name))
+		promptBuilder.WriteString(fmt.Sprintf("  Description: %s\n", toolInfo.Description))
+		// Attempt to marshal the input schema map into a JSON string for display
+		schemaBytes, err := json.MarshalIndent(toolInfo.InputSchema, "  ", "  ")
+		if err != nil {
+			b.logger.ErrorKV("Error marshaling schema for tool", "tool", name, "error", err)
+			promptBuilder.WriteString("  Input Schema: (Error rendering schema)\n")
+		} else {
+			promptBuilder.WriteString(fmt.Sprintf("  Input Schema (JSON):\n  %s\n", string(schemaBytes)))
+		}
+	}
+
+	// Add example formats for clarity
+	promptBuilder.WriteString("\nEXACT JSON FORMAT FOR TOOL CALLS:\n")
+	promptBuilder.WriteString("{\n")
+	promptBuilder.WriteString("  \"tool\": \"<tool_name>\",\n")
+	promptBuilder.WriteString("  \"args\": { <arguments matching the tool's input schema> }\n")
+	promptBuilder.WriteString("}\n\n")
+
+	// Add a concrete example
+	promptBuilder.WriteString("EXAMPLE:\n")
+	promptBuilder.WriteString("If the user asks 'Show me the files in the current directory' and 'list_dir' is an available tool:\n")
+	promptBuilder.WriteString("{\n")
+	promptBuilder.WriteString("  \"tool\": \"list_dir\",\n")
+	promptBuilder.WriteString("  \"args\": { \"relative_workspace_path\": \".\" }\n")
+	promptBuilder.WriteString("}\n\n")
+
+	// Emphasize again to help model handle this correctly
+	promptBuilder.WriteString("IMPORTANT: Return ONLY the raw JSON object with no explanations or formatting when using a tool.\n")
+
+	return promptBuilder.String()
 }
 
 // NewLLMMCPBridge creates a new LLMMCPBridge with the given MCP clients and tools
 // Uses INFO as the default log level
-func NewLLMMCPBridge(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+func NewLLMMCPBridge(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo,
+	useNativeTools bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// Create a structured logger from the standard logger with INFO level by default
 	// If debug logging is needed, use NewLLMMCPBridgeWithLogLevel instead
-	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo)
+	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, llmRegistry)
 }
 
 // NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
 func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger,
-	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel) *LLMMCPBridge {
+	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel, useNativeTools bool,
+	llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -51,21 +111,25 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]MCPClientInterface, stdLo
 		logger:         structLogger,
 		stdLogger:      stdLogger,
 		availableTools: discoveredTools,
+		useNativeTools: useNativeTools,
+		llmRegistry:    llmRegistry,
 	}
 }
 
 // NewLLMMCPBridgeFromClients creates a new LLMMCPBridge with the given MCP Client objects
 // This is a convenience function that wraps the concrete clients in the interface
 // Uses INFO as the default log level
-func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo) *LLMMCPBridge {
+func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo,
+	useNativeTools bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// If debug logging is needed, use NewLLMMCPBridgeFromClientsWithLogLevel instead
-	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo)
+	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, llmRegistry)
 }
 
 // NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
 // This is a convenience function that wraps the concrete clients in the interface
 func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger,
-	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel) *LLMMCPBridge {
+	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel, useNativeTools bool,
+	llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -115,14 +179,30 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 		}
 	}
 
-	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel)
+	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, llmRegistry)
 }
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
 // It no longer uses natural language detection.
-func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, _ string) (string, error) {
+func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse *llms.ContentChoice, _ string) (string, error) {
+	var toolCall *ToolCall
+	var err error
+	funcCall := llmResponse.FuncCall
 	// Check for a tool call in JSON format
-	if toolCall := b.detectSpecificJSONToolCall(llmResponse); toolCall != nil {
+	if len(llmResponse.ToolCalls) > 0 {
+		funcCall = llmResponse.ToolCalls[0].FunctionCall
+	}
+
+	if funcCall != nil {
+		toolCall, err = b.getToolCall(funcCall)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		toolCall = b.detectSpecificJSONToolCall(llmResponse.Content)
+	}
+
+	if toolCall != nil {
 		// Execute the tool call
 		result, err := b.executeToolCall(ctx, toolCall)
 		if err != nil {
@@ -149,7 +229,7 @@ func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, _ st
 	}
 
 	// Just return the LLM response as-is if no tool call was detected
-	return llmResponse, nil
+	return llmResponse.Content, nil
 }
 
 // ToolCall represents the expected JSON structure for a tool call from the LLM
@@ -178,6 +258,18 @@ func (b *LLMMCPBridge) detectSpecificJSONToolCall(response string) *ToolCall {
 
 	b.logger.DebugKV("No valid JSON tool call detected")
 	return nil
+}
+
+func (b *LLMMCPBridge) getToolCall(funcCall *llms.FunctionCall) (*ToolCall, error) {
+	var args map[string]interface{}
+	err := json.Unmarshal([]byte(funcCall.Arguments), &args)
+	if err != nil {
+		return nil, customErrors.NewMCPError("invalid_json_args", fmt.Sprintf("Args not valid json for call '%s'", funcCall.Name))
+	}
+	return &ToolCall{
+		Tool: funcCall.Name,
+		Args: args,
+	}, nil
 }
 
 // tryDirectJSONParsing attempts direct JSON parsing of the entire response
@@ -393,4 +485,77 @@ func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]inter
 	}
 
 	return result, len(result) > 0
+}
+
+// CallLLM generates a text completion using the specified provider from the registry.
+func (b *LLMMCPBridge) CallLLM(providerName, prompt, contextHistory string) (*llms.ContentChoice, error) {
+	// Create a context with appropriate timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	// Prepare messages with system prompt and context history
+	messages := []llm.RequestMessage{}
+	// Build options based on the config (provider might override or use these)
+	// Note: TargetProvider is removed as it's handled by config/factory
+	options := llm.ProviderOptions{
+		// Model: Let the provider use its configured default or handle overrides if needed.
+		// Model: c.cfg.OpenAIModelName, // Example: If you still want a global default hint
+		Temperature: 0.7,  // Consider making configurable
+		MaxTokens:   2048, // Consider making configurable
+	}
+
+	if !b.useNativeTools {
+		// Generate the system prompt with tool information
+		systemPrompt := b.generateToolPrompt()
+
+		// Add system prompt with tool info if available
+		if systemPrompt != "" {
+			messages = append(messages, llm.RequestMessage{
+				Role:    "system",
+				Content: systemPrompt,
+			})
+		}
+	} else {
+		tools := []llms.Tool{}
+		for name, tool := range b.availableTools {
+			tools = append(tools, llms.Tool{
+				Type: "function",
+				Function: &llms.FunctionDefinition{
+					Name:        name,
+					Description: tool.Description,
+					Parameters:  tool.InputSchema,
+				},
+			})
+		}
+		options.Tools = tools
+	}
+
+	// Add conversation context if provided
+	if contextHistory != "" {
+		messages = append(messages, llm.RequestMessage{
+			Role:    "system",
+			Content: "Previous conversation: " + contextHistory,
+		})
+	}
+
+	// Add the user's prompt
+	messages = append(messages, llm.RequestMessage{
+		Role:    "user",
+		Content: prompt,
+	})
+
+	// --- Use the specified provider via the registry ---
+	b.logger.InfoKV("Attempting to use LLM provider for chat completion", "provider", providerName)
+
+	// Call the registry's method which includes availability check
+	completion, err := b.llmRegistry.GenerateChatCompletion(ctx, providerName, messages, options)
+	if err != nil {
+		// Error already logged by registry method potentially, but log here too for context
+		b.logger.ErrorKV("GenerateChatCompletion failed", "provider", providerName, "error", err)
+		return nil, customErrors.WrapSlackError(err, "llm_request_failed", fmt.Sprintf("LLM request failed for provider '%s'", providerName))
+	}
+
+	b.logger.InfoKV("Successfully received chat completion", "provider", providerName)
+
+	return completion, nil
 }
