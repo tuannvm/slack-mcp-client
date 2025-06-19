@@ -6,8 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/tools"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
+	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"log"
 	"reflect"
 	"regexp"
@@ -15,26 +18,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
-// MCPClientInterface defines the interface for an MCP client
-// This allows us to break the circular dependency between packages
-type MCPClientInterface interface {
-	CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
-}
-
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
 // It detects when an LLM response should trigger a tool call and executes it.
 type LLMMCPBridge struct {
-	mcpClients     map[string]MCPClientInterface // Map of MCP clients keyed by server name
+	mcpClients     map[string]mcp.MCPClientInterface // Map of MCP clients keyed by server name
 	logger         *logging.Logger
-	stdLogger      *log.Logger                // Standard logger for backward compatibility
-	availableTools map[string]common.ToolInfo // Map of tool names to info about the tool
-	llmRegistry    *llm.ProviderRegistry      // LLM provider registry
-	useNativeTools bool                       // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
+	stdLogger      *log.Logger             // Standard logger for backward compatibility
+	availableTools map[string]mcp.ToolInfo // Map of tool names to info about the tool
+	llmRegistry    *llm.ProviderRegistry   // LLM provider registry
+	useNativeTools bool                    // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
+	UseAgent       bool                    // Flag to indicate if the agent should be used instead of chat
 }
 
 // generateToolPrompt generates the prompt string for available tools
@@ -92,16 +89,16 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 
 // NewLLMMCPBridge creates a new LLMMCPBridge with the given MCP clients and tools
 // Uses INFO as the default log level
-func NewLLMMCPBridge(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo,
-	useNativeTools bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
+func NewLLMMCPBridge(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
+	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// Create a structured logger from the standard logger with INFO level by default
 	// If debug logging is needed, use NewLLMMCPBridgeWithLogLevel instead
-	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, llmRegistry)
+	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry)
 }
 
 // NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
-func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]MCPClientInterface, stdLogger *log.Logger,
-	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel, useNativeTools bool,
+func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger,
+	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
 	llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
@@ -113,29 +110,30 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]MCPClientInterface, stdLo
 		availableTools: discoveredTools,
 		useNativeTools: useNativeTools,
 		llmRegistry:    llmRegistry,
+		UseAgent:       useAgent,
 	}
 }
 
 // NewLLMMCPBridgeFromClients creates a new LLMMCPBridge with the given MCP Client objects
 // This is a convenience function that wraps the concrete clients in the interface
 // Uses INFO as the default log level
-func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]common.ToolInfo,
-	useNativeTools bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
+func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
+	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// If debug logging is needed, use NewLLMMCPBridgeFromClientsWithLogLevel instead
-	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, llmRegistry)
+	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry)
 }
 
 // NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
 // This is a convenience function that wraps the concrete clients in the interface
 func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger,
-	discoveredTools map[string]common.ToolInfo, logLevel logging.LogLevel, useNativeTools bool,
+	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
 	llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
 	// Convert the concrete client map to the interface map
 	// This is a workaround for the type system to avoid import cycles
-	interfaceClients := make(map[string]MCPClientInterface)
+	interfaceClients := make(map[string]mcp.MCPClientInterface)
 
 	// Log the type of mcpClients for debugging
 	structLogger.DebugKV("Initializing bridge with clients", "client_type", fmt.Sprintf("%T", mcpClients))
@@ -145,13 +143,13 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 	case map[string]interface{}:
 		// Original implementation for map[string]interface{}
 		for name, client := range typedClients {
-			if mcpClient, ok := client.(MCPClientInterface); ok {
+			if mcpClient, ok := client.(mcp.MCPClientInterface); ok {
 				interfaceClients[name] = mcpClient
 				structLogger.DebugKV("Added MCP client", "name", name, "source", "map[string]interface{}")
 			}
 		}
 
-	case map[string]MCPClientInterface:
+	case map[string]mcp.MCPClientInterface:
 		// Direct case if already the right type
 		for name, client := range typedClients {
 			interfaceClients[name] = client
@@ -171,7 +169,7 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 				value := iter.Value().Interface()
 
 				// Try to convert the value to MCPClientInterface
-				if client, ok := value.(MCPClientInterface); ok {
+				if client, ok := value.(mcp.MCPClientInterface); ok {
 					interfaceClients[key] = client
 					structLogger.DebugKV("Added MCP client", "name", key, "source", "reflection")
 				}
@@ -179,7 +177,7 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 		}
 	}
 
-	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, llmRegistry)
+	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, useAgent, llmRegistry)
 }
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
@@ -384,7 +382,7 @@ func (b *LLMMCPBridge) isValidToolCall(toolCall ToolCall) bool {
 }
 
 // getClientForTool returns the appropriate client for a given tool (using the new map)
-func (b *LLMMCPBridge) getClientForTool(toolName string) MCPClientInterface {
+func (b *LLMMCPBridge) getClientForTool(toolName string) mcp.MCPClientInterface {
 	if toolInfo, exists := b.availableTools[toolName]; exists {
 		if client, clientExists := b.mcpClients[toolInfo.ServerName]; clientExists {
 			return client
@@ -487,6 +485,40 @@ func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]inter
 	return result, len(result) > 0
 }
 
+func (b *LLMMCPBridge) CallLLMAgent(providerName, systemPrompt, prompt, contextHistory string, callbackHandler callbacks.Handler) (string, error) {
+	// Create a context with an appropriate timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	toolArr := make([]tools.Tool, 0, len(b.availableTools))
+	for _, t := range b.availableTools {
+		toolArr = append(toolArr, &t)
+	}
+
+	// Prepare messages with system prompt and context history
+	history := []llm.RequestMessage{}
+
+	// Add conversation context if provided
+	if contextHistory != "" {
+		history = append(history, llm.RequestMessage{
+			Role:    "system",
+			Content: "Previous conversation: " + contextHistory,
+		})
+	}
+
+	// --- Use the specified provider via the registry ---
+	b.logger.InfoKV("Attempting to use LLM provider for chat completion", "provider", providerName)
+
+	completion, err := b.llmRegistry.GenerateAgentCompletion(ctx, providerName, systemPrompt, prompt, history, toolArr, callbackHandler)
+	if err != nil {
+		// Error already logged by registry method potentially, but log here too for context
+		b.logger.ErrorKV("GenerateAgentCompletion failed", "provider", providerName, "error", err)
+		return "", customErrors.WrapSlackError(err, "llm_request_failed", fmt.Sprintf("LLM request failed for provider '%s'", providerName))
+	}
+
+	return completion, nil
+}
+
 // CallLLM generates a text completion using the specified provider from the registry.
 func (b *LLMMCPBridge) CallLLM(providerName, prompt, contextHistory string) (*llms.ContentChoice, error) {
 	// Create a context with appropriate timeout
@@ -522,7 +554,7 @@ func (b *LLMMCPBridge) CallLLM(providerName, prompt, contextHistory string) (*ll
 				Type: "function",
 				Function: &llms.FunctionDefinition{
 					Name:        name,
-					Description: tool.Description,
+					Description: tool.ToolDescription,
 					Parameters:  tool.InputSchema,
 				},
 			})

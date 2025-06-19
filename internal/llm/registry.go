@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/tools"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config" // Import config
 )
@@ -209,4 +211,17 @@ func (r *ProviderRegistry) GenerateChatCompletion(ctx context.Context, providerN
 	info := provider.GetInfo()
 	r.logger.DebugKV("Using provider for chat completion", "name", info.Name)
 	return provider.GenerateChatCompletion(ctx, messages, options)
+}
+
+// GenerateAgentCompletion generates a chat completion using an agent using the specified provider (or primary if empty).
+// It checks for provider availability before making the call.
+func (r *ProviderRegistry) GenerateAgentCompletion(ctx context.Context, providerName string, systemPrompt string, prompt string, history []RequestMessage, llmTools []tools.Tool, callbackHandler callbacks.Handler) (string, error) {
+	provider, err := r.GetProviderWithAvailabilityCheck(providerName) // Use the availability check method
+	if err != nil {
+		return "", err
+	}
+
+	info := provider.GetInfo()
+	r.logger.DebugKV("Using provider for chat completion", "name", info.Name)
+	return provider.GenerateAgentCompletion(ctx, systemPrompt, prompt, history, llmTools, callbackHandler)
 }

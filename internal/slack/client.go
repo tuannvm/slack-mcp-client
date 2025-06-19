@@ -11,8 +11,8 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
@@ -31,7 +31,7 @@ type Client struct {
 	cfg             *config.Config        // Holds the application configuration
 	messageHistory  map[string][]Message
 	historyLimit    int
-	discoveredTools map[string]common.ToolInfo
+	discoveredTools map[string]mcp.ToolInfo
 }
 
 // Message represents a message in the conversation history
@@ -43,7 +43,7 @@ type Message struct {
 
 // NewClient creates a new Slack client instance.
 func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients map[string]*mcp.Client,
-	discoveredTools map[string]common.ToolInfo, cfg *config.Config) (*Client, error) {
+	discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) (*Client, error) {
 
 	// MCP clients are now optional - if none are provided, we'll just use LLM capabilities
 	if mcpClients == nil {
@@ -65,7 +65,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	clientLogger.Printf("Available tools (%d):", len(discoveredTools))
 	for toolName, toolInfo := range discoveredTools {
 		clientLogger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)",
-			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
+			toolName, toolInfo.ToolDescription, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 
 	// Create a map of raw clients to pass to the bridge
@@ -95,6 +95,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		discoveredTools,
 		logLevel,
 		*cfg.UseNativeTools,
+		*cfg.UseAgent,
 		registry,
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
@@ -244,26 +245,53 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", providerName)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
+	// Get context from history
+	contextHistory := c.getContextFromHistory(channelID)
+
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, "Thinking...")
 
-	// Get context from history
-	contextHistory := c.getContextFromHistory(channelID)
+	if !c.llmMCPBridge.UseAgent {
+		// Call LLM using the integrated logic
+		llmResponse, err := c.llmMCPBridge.CallLLM(providerName, userPrompt, contextHistory)
+		if err != nil {
+			c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
+			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
+			return
+		}
 
-	// Call LLM using the integrated logic
-	llmResponse, err := c.llmMCPBridge.CallLLM(providerName, userPrompt, contextHistory)
-	if err != nil {
-		c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
-		c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
-		return
+		c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse.Content))
+
+		// Process the LLM response through the MCP pipeline
+		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
+	} else {
+		sendMsg := func(msg string) {
+			c.addToHistory(channelID, "assistant", msg) // Original LLM response (tool call JSON)
+			c.userFrontend.SendMessage(channelID, threadTS, msg)
+		}
+
+		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
+			providerName,
+			c.cfg.AgentConfig.PromptPrefix,
+			userPrompt,
+			contextHistory,
+			&agentCallbackHandler{
+				callbacks.SimpleHandler{},
+				sendMsg,
+			})
+		if err != nil {
+			c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
+			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
+			return
+		}
+		c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse))
+		// Send the final response back to Slack
+		if llmResponse == "" {
+			c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
+		}
 	}
-
-	c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse.Content))
-
-	// Process the LLM response through the MCP pipeline
-	c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
