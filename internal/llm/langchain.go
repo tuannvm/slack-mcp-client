@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/callbacks"
+	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/tools"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -14,6 +18,8 @@ import (
 
 const (
 	langchainProviderName = "langchain"
+
+	maxAgentIterations = 20
 )
 
 // LangChainProvider implements the LLMProvider interface using LangChainGo
@@ -108,30 +114,39 @@ func NewLangChainProviderFactory(config map[string]interface{}, logger *logging.
 }
 
 // GenerateCompletion generates a completion using LangChainGo
-func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error) {
+func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (*llms.ContentChoice, error) {
 	if p.llm == nil {
-		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+		return nil, errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
 	p.logger.DebugKV("Calling LangChainGo GenerateCompletion", "prompt_length", len(prompt))
 	callOptions := p.buildOptions(options)
 
-	completion, err := llms.GenerateFromSinglePrompt(ctx, p.llm, prompt, callOptions...)
-	if err != nil {
-		p.logger.ErrorKV("LangChainGo GenerateCompletion request failed", "error", err)
-		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
+	msg := llms.MessageContent{
+		Role:  llms.ChatMessageTypeHuman,
+		Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
 	}
 
-	p.logger.DebugKV("Received GenerateCompletion response", "length", len(completion))
-	return completion, nil
+	resp, err := p.llm.GenerateContent(ctx, []llms.MessageContent{msg}, callOptions...)
+	if err != nil {
+		p.logger.ErrorKV("LangChainGo GenerateContent request failed", "error", err)
+		return nil, errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
+	}
+
+	choices := resp.Choices
+	if len(choices) < 1 {
+		return nil, fmt.Errorf("empty response from model")
+	}
+	c1 := choices[0]
+	return c1, nil
 }
 
 // GenerateChatCompletion generates a chat completion using LangChainGo
 // Note: LangChainGo's basic llms.Model interface doesn't directly support chat messages.
 // We simulate it by formatting messages into a single prompt.
-func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error) {
+func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (*llms.ContentChoice, error) {
 	if p.llm == nil {
-		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+		return nil, errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
 	p.logger.DebugKV("Calling LangChainGo GenerateChatCompletion", "num_messages", len(messages))
@@ -148,6 +163,95 @@ func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages
 
 	// Call the underlying GenerateCompletion method with the formatted prompt
 	return p.GenerateCompletion(ctx, prompt, options)
+}
+
+// GenerateAgentCompletion generates a chat completion using LangChainGo agent
+// Note: LangChainGo's basic llms.Model interface doesn't directly support chat messages.
+// We simulate it by formatting messages into a single prompt.
+func (p *LangChainProvider) GenerateAgentCompletion(ctx context.Context,
+	systemPrompt string,
+	prompt string,
+	history []RequestMessage,
+	llmTools []tools.Tool,
+	callbackHandler callbacks.Handler,
+) (string, error) {
+	if p.llm == nil {
+		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+	}
+
+	p.logger.DebugKV("Calling LangChainGo GenerateAgentCompletion", "num_messages", len(history))
+
+	// Convert our message format to a single prompt string
+	var historyBuilder strings.Builder
+	for _, msg := range history {
+		historyBuilder.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(msg.Role), msg.Content))
+	}
+
+	ag := agents.NewConversationalAgent(p.llm, llmTools, agents.WithCallbacksHandler(callbackHandler),
+		// Based on the default prompt prefix, with the user provided prefix.
+		agents.WithPromptPrefix(fmt.Sprintf(`%s
+For any data you receive from a tool, it is absolutely critical that you do not modify the results. The tool results should be used as-is, without any changes or assumptions. If you need to reference the data, do so directly.
+
+You may invoke multiple tools as needed to solve a problem. Use any and all tools at your disposal.
+
+Chain together tools if you need to. Always make sure you follow the tool schema perfectly.
+  
+
+TOOLS:
+------
+
+Assistant has access to the following tools:
+
+{{.tool_descriptions}}
+
+`, systemPrompt)),
+		// Based on the default conversational agent prompt format, just added the Justification part
+		agents.WithPromptFormatInstructions(`To use a tool, please use the following format:
+
+Thought: Do I need to use a tool? Yes
+Justification: Why you think you should invoke the tool that you are invoking
+Action: the action to take, should be one of [{{.tool_names}}]
+Action Input: the input to the action. This should always be a single line JSON object. This should be raw json, no extra quotes or backticks
+Observation: the result of the action
+
+When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
+
+Thought: Do I need to use a tool? No
+AI: [your response here]
+`),
+		// When testing with Gemini, it would often not actually invoke the tool, so we need this to make sure it actually does it
+		// Also providing the conversation history
+		agents.WithPromptSuffix(fmt.Sprintf(`
+It is absolutely critical that you don't assume the answers of the tools. You must return the appropriate tool invocation to us.
+When you want to use a tool, we will provide the output. Don't give the final answer yourself, just return the tool invocation.
+
+Once you have completed invoking all the tools you need to, and you have all the information you need, you can return a final answer.
+
+Begin!
+
+Previous conversation history:
+%s
+
+New input: {{.input}}
+
+Thought:{{.agent_scratchpad}}
+`, historyBuilder.String())),
+	)
+
+	e := agents.NewExecutor(ag, agents.WithMaxIterations(maxAgentIterations))
+
+	call, err := e.Call(ctx, map[string]any{
+		"input": prompt,
+	}, chains.WithTemperature(0.1))
+	if err != nil {
+		p.logger.ErrorKV("LangChainGo Call request failed", "error", err)
+		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
+	}
+	output, ok := call[ag.OutputKey]
+	if !ok {
+		return "", fmt.Errorf("agent call did not return expected output key '%s'", ag.OutputKey)
+	}
+	return output.(string), nil
 }
 
 // GetInfo returns information about the provider.
@@ -203,6 +307,11 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 	if options.MaxTokens > 0 {
 		callOptions = append(callOptions, llms.WithMaxTokens(options.MaxTokens))
 		p.logger.DebugKV("Adding MaxTokens option", "value", options.MaxTokens)
+	}
+
+	if len(options.Tools) > 0 {
+		callOptions = append(callOptions, llms.WithTools(options.Tools))
+		p.logger.DebugKV("Adding functions for tools", "tools", len(options.Tools))
 	}
 
 	// Note: options.TargetProvider is handled during factory creation, not here.

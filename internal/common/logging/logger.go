@@ -209,3 +209,11 @@ func ParseLevel(level string) LogLevel {
 func (l *Logger) StdLogger() *log.Logger {
 	return l.stdLogger
 }
+
+// TruncateForLog truncates a string for log output
+func TruncateForLog(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
