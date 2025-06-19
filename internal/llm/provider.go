@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/tmc/langchaingo/llms"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
@@ -86,16 +87,17 @@ type ProviderOptions struct {
 	Temperature    float64 // Temperature for response generation (0-1)
 	MaxTokens      int     // Maximum number of tokens to generate
 	TargetProvider string  // For gateway providers: specifies the underlying provider (e.g., "openai", "ollama")
+	Tools          []llms.Tool
 }
 
 // LLMProvider defines the interface for language model providers
 type LLMProvider interface {
 	// GenerateCompletion generates a text completion (less common now, prefer chat)
 	// Deprecated: Prefer GenerateChatCompletion
-	GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error)
+	GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (*llms.ContentChoice, error)
 
 	// GenerateChatCompletion generates a chat completion using a message history
-	GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error)
+	GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (*llms.ContentChoice, error)
 
 	// GetInfo returns information about the provider
 	GetInfo() ProviderInfo
