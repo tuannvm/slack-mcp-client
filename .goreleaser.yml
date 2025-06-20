@@ -1,11 +1,14 @@
 # GoReleaser configuration
+
+version: 2
+
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - main: ./cmd/slack-mcp-client/main.go
-    binary: "{{ .ProjectName }}"
+  - binary: "{{ .ProjectName }}"
+    main: ./cmd
     env:
       - CGO_ENABLED=0
     goos:
@@ -25,12 +28,9 @@ archives:
         format: zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
 
-checksum:
-  name_template: "checksums.txt"
-
+# Use simpler snapshot naming to ensure compatibility
 snapshot:
-  # renamed in v2.2: old `name_template` is deprecated
-  version_template: "next"  
+  name_template: "next"
 
 changelog:
   sort: asc
@@ -38,17 +38,9 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
-      - "^chore:"
-      - "^ci:"
-      - Merge pull request
-      - Merge branch
 
+# Explicitly configure GitHub Releases
 release:
-  github:
-    # split "owner/name" from the built-in GITHUB_REPOSITORY
-    owner: "{{ (split .Env.GITHUB_REPOSITORY \"/\").0 }}"
-    name:  "{{ (split .Env.GITHUB_REPOSITORY \"/\").1 }}"
   draft: false
   prerelease: auto
   name_template: "{{.ProjectName}} v{{.Version}}"
-
