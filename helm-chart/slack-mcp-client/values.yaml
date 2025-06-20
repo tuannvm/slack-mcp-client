@@ -10,8 +10,12 @@ nameOverride: ""
 fullnameOverride: ""
 
 serviceAccount:
-  create: false
-  name: ""
+  create: true
+  clusterRoleName: ""
+
+networkPolicy:
+  enabled: true
+  type: "cilium"
 
 podAnnotations: {}
 

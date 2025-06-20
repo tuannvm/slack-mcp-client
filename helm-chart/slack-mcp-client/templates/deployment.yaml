@@ -24,6 +24,9 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if and .Values.serviceAccount.create .Values.serviceAccount.clusterRoleName }}
+      serviceAccountName: {{ include "slack-mcp-client.fullname" . }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -31,7 +34,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if or .Values.configMap.create .Values.configMap.name }}
-          arguments:
+          args:
             - --config
             - /app/config/mcp-servers.json
           {{- end }}

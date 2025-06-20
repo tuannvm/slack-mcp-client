@@ -1,0 +1,15 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "slack-mcp-client.fullname" . }}
+  labels:
+    {{- include "slack-mcp-client.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "slack-mcp-client.selectorLabels" . | nindent 4 }}
+  ports:
+    - port: 1111
+  sessionAffinity: None
+  type: ClusterIP
+{{- end }}
