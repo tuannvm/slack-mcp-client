@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	flag "github.com/spf13/pflag"
+
 	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -21,6 +22,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use the internal mcp package
 
 	// internal/mcp is no longer needed here - This comment is now incorrect
+
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
 
