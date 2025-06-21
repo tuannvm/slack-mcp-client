@@ -336,10 +336,30 @@ LLM providers can be configured via environment variables or command-line flags:
 export LLM_PROVIDER="openai"
 export OPENAI_MODEL="gpt-4o"
 
+# Use Anthropic
+export LLM_PROVIDER="anthropic"
+export ANTHROPIC_API_KEY="your-anthropic-api-key"
+export ANTHROPIC_MODEL="claude-3-5-sonnet-20241022"
+
 # Or use Ollama
 export LLM_PROVIDER="ollama"
 export LANGCHAIN_OLLAMA_URL="http://localhost:11434"
 export LANGCHAIN_OLLAMA_MODEL="llama3"
+```
+
+### Switching Between Providers
+
+You can easily switch between providers by changing the `LLM_PROVIDER` environment variable:
+
+```bash
+# Use OpenAI
+export LLM_PROVIDER=openai
+
+# Use Anthropic
+export LLM_PROVIDER=anthropic
+
+# Use Ollama (local)
+export LLM_PROVIDER=ollama
 ```
 
 ## Configuration
@@ -352,8 +372,10 @@ The client can be configured using the following environment variables:
 | SLACK_APP_TOKEN       | App-level token for Socket Mode              | (required) |
 | OPENAI_API_KEY        | API key for OpenAI authentication            | (required) |
 | OPENAI_MODEL          | OpenAI model to use                          | gpt-4o     |
+| ANTHROPIC_API_KEY     | API key for Anthropic authentication         | (required for Anthropic) |
+| ANTHROPIC_MODEL       | Anthropic model to use                       | claude-3-5-sonnet-20241022 |
 | LOG_LEVEL             | Logging level (debug, info, warn, error)     | info       |
-| LLM_PROVIDER          | LLM provider to use (openai, ollama, etc.)   | openai     |
+| LLM_PROVIDER          | LLM provider to use (openai, anthropic, ollama) | openai     |
 | LANGCHAIN_OLLAMA_URL  | URL for Ollama when using LangChain          | http://localhost:11434 |
 | LANGCHAIN_OLLAMA_MODEL| Model name for Ollama when using LangChain   | llama3     |
 

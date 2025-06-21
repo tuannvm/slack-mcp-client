@@ -14,6 +14,7 @@ import (
 const (
 	ProviderOpenAI    = "openai"
 	ProviderOllama    = "ollama"
+	ProviderAnthropic = "anthropic"
 	ProviderLangChain = "langchain" // Keep for potential direct LangChain use if needed
 )
 
@@ -58,9 +59,9 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 	cfg := &Config{
 		LLMProvider: ProviderOpenAI, // Default to OpenAI if not specified
 		LLMProviders: map[string]map[string]interface{}{
-			ProviderOpenAI: {"type": "openai", "model": "gpt-4o"},                                       // Default OpenAI model
-			ProviderOllama: {"type": "ollama", "model": "llama3", "base_url": "http://localhost:11434"}, // Default Ollama settings
-			// Add other providers with defaults here if needed
+			ProviderOpenAI:    {"type": "openai", "model": "gpt-4o"},                                       // Default OpenAI model
+			ProviderOllama:    {"type": "ollama", "model": "llama3", "base_url": "http://localhost:11434"}, // Default Ollama settings
+			ProviderAnthropic: {"type": "anthropic", "model": "claude-3-5-sonnet-20241022"},                // Default Anthropic model
 		},
 		Servers: make(map[string]ServerConfig),
 	}
@@ -137,6 +138,11 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 				"model":    "llama3",
 				"base_url": "http://localhost:11434",
 			}
+		case ProviderAnthropic:
+			cfg.LLMProviders[ProviderAnthropic] = map[string]interface{}{
+				"type":  "anthropic",
+				"model": "claude-3-5-sonnet-20241022",
+			}
 		default:
 			// For any other provider, create a basic config with langchain as the type
 			cfg.LLMProviders[cfg.LLMProvider] = map[string]interface{}{
@@ -155,6 +161,16 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 			providerConfig["model"] = model
 		}
 		cfg.LLMProviders[ProviderOpenAI] = providerConfig
+	}
+
+	if providerConfig, ok := cfg.LLMProviders[ProviderAnthropic]; ok {
+		if apiKey := os.Getenv("ANTHROPIC_API_KEY"); apiKey != "" {
+			providerConfig["api_key"] = apiKey
+		}
+		if model := os.Getenv("ANTHROPIC_MODEL"); model != "" {
+			providerConfig["model"] = model
+		}
+		cfg.LLMProviders[ProviderAnthropic] = providerConfig
 	}
 
 	return cfg, nil
