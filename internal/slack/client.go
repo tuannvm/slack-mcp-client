@@ -21,6 +21,8 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
 
+const thinkingMessage = "Thinking..."
+
 // Client represents the Slack client application.
 type Client struct {
 	logger          *logging.Logger // Structured logger
@@ -251,7 +253,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
 	// Show a temporary "typing" indicator
-	c.userFrontend.SendMessage(channelID, threadTS, "Thinking...")
+	c.userFrontend.SendMessage(channelID, threadTS, thinkingMessage)
 
 	if !c.llmMCPBridge.UseAgent {
 		// Call LLM using the integrated logic

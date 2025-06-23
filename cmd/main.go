@@ -27,7 +27,7 @@ import (
 
 var (
 	// Define command-line flags
-	configFile = flag.String("config", "", "Path to the MCP server configuration JSON file")
+	configFile = flag.String("config", "mcp-servers.json", "Path to the MCP server configuration JSON file")
 	debug      = flag.Bool("debug", false, "Enable debug logging")
 	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
 )
