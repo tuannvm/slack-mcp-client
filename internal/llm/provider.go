@@ -14,6 +14,7 @@ import (
 const (
 	ProviderTypeOpenAI        = "openai"
 	ProviderTypeOllama        = "ollama"
+	ProviderTypeAnthropic     = "anthropic"
 	ProviderNameLangChain     = "langchain"
 	DefaultLLMGatewayProvider = ProviderNameLangChain
 )
