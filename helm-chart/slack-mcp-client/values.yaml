@@ -15,7 +15,7 @@ serviceAccount:
 
 networkPolicy:
   enabled: true
-  type: "cilium"
+  type: "kubernetes" # Options: "kubernetes", "cilium"
 
 podAnnotations: {}
 
