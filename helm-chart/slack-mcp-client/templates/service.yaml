@@ -9,7 +9,7 @@ spec:
   selector:
     {{- include "slack-mcp-client.selectorLabels" . | nindent 4 }}
   ports:
-    - port: 1111
+    - port: 1111 # Dummy port required to create the service
   sessionAffinity: None
   type: ClusterIP
 {{- end }}
