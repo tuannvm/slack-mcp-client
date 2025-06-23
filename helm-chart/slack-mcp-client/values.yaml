@@ -47,13 +47,7 @@ env:
   MCP_MODE: "sse"
   LOG_LEVEL: "info"
 
-# Secret containing sensitive environment variables
-secret:
-  create: false
-  name: "" # If not created by this chart, specify existing secret name here
-
 # Config file (mcp-servers.json)
 configMap:
   create: false
-  name: ""
   data: {}

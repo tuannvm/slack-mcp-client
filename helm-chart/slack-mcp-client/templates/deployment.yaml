@@ -38,47 +38,10 @@ spec:
             - --config
             - /app/config/mcp-servers.json
           {{- end }}
-          env:
-            {{- if .Values.secret.create }}
-            {{- if .Values.secret.name }}
-            - name: SLACK_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secret.name }}
-                  key: slack-bot-token
-            - name: SLACK_APP_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secret.name }}
-                  key: slack-app-token
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.secret.name }}
-                  key: openai-api-key
-            {{- else }}
-            - name: SLACK_BOT_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "slack-mcp-client.fullname" . }}
-                  key: slack-bot-token
-            - name: SLACK_APP_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "slack-mcp-client.fullname" . }}
-                  key: slack-app-token
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "slack-mcp-client.fullname" . }}
-                  key: openai-api-key
-            {{- end }}
-            {{- else }}
-            {{- range $key, $value := .Values.env }}
-            - name: {{ $key }}
-              value: {{ $value | quote }}
-            {{- end }}
-            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ include "slack-mcp-client.fullname" . }}
+                optional: false
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- if or .Values.configMap.create .Values.configMap.name }}
