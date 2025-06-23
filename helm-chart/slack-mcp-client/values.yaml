@@ -51,3 +51,15 @@ env:
 configMap:
   create: false
   data: {}
+  #data:
+  #  mcp-servers.json: |
+  #    {
+  #      "mcpServers": {
+  #        "kubernetes": {
+  #          "type": "stdio",
+  #          "command": "npx",
+  #          "args": ["mcp-server-kubernetes"],
+  #          "initialize_timeout_seconds": 30
+  #        }
+  #      }
+  #    }
