@@ -36,6 +36,7 @@ type Client struct {
 	historyLimit    int
 	discoveredTools map[string]common.ToolInfo
 	llmsTools       []llms.Tool
+	toolCallsLimit  int
 }
 
 // NewClient creates a new Slack client instance.
@@ -108,6 +109,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		historyLimit:    50, // Store up to 50 messages per channel
 		discoveredTools: discoveredTools,
 		llmsTools:       llmsTools,
+		toolCallsLimit:  25,
 	}, nil
 }
 
@@ -271,7 +273,7 @@ func (c *Client) answer(channelID, threadTS string, response string) {
 func (c *Client) processLLMResponseAndReply(channelID, threadTS string) {
 	providerName := c.cfg.LLMProvider
 
-	for {
+	for i := 0; i < c.toolCallsLimit; i++ {
 		// Get context from history
 		contextHistory := c.getContextFromHistory(channelID)
 		// Call LLM using the integrated logic
