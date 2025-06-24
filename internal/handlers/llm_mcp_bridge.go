@@ -485,7 +485,7 @@ func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]inter
 	return result, len(result) > 0
 }
 
-func (b *LLMMCPBridge) CallLLMAgent(providerName, systemPrompt, prompt, contextHistory string, callbackHandler callbacks.Handler) (string, error) {
+func (b *LLMMCPBridge) CallLLMAgent(providerName, userDisplayName, systemPrompt, prompt, contextHistory string, callbackHandler callbacks.Handler) (string, error) {
 	// Create a context with an appropriate timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -509,7 +509,7 @@ func (b *LLMMCPBridge) CallLLMAgent(providerName, systemPrompt, prompt, contextH
 	// --- Use the specified provider via the registry ---
 	b.logger.InfoKV("Attempting to use LLM provider for chat completion", "provider", providerName)
 
-	completion, err := b.llmRegistry.GenerateAgentCompletion(ctx, providerName, systemPrompt, prompt, history, toolArr, callbackHandler)
+	completion, err := b.llmRegistry.GenerateAgentCompletion(ctx, providerName, userDisplayName, systemPrompt, prompt, history, toolArr, callbackHandler)
 	if err != nil {
 		// Error already logged by registry method potentially, but log here too for context
 		b.logger.ErrorKV("GenerateAgentCompletion failed", "provider", providerName, "error", err)

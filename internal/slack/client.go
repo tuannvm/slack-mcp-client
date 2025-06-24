@@ -159,8 +159,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			c.logger.InfoKV("Received app mention in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
 			messageText := c.userFrontend.RemoveBotMention(ev.Text)
 
+			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
+			if err != nil {
+				c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
+				return
+			}
+
 			// Use handleUserPrompt for app mentions too, for consistency
-			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp)
+			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp, userInfo.Profile.DisplayName)
 
 		case *slackevents.MessageEvent:
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
@@ -168,10 +174,16 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			isNotEdited := ev.SubType != "message_changed"
 			isBot := ev.BotID != "" || ev.SubType == "bot_message"
 
+			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
+			if err != nil {
+				c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
+				return
+			}
+
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
 
-				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp) // Use goroutine to avoid blocking event loop
+				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}
 
 		default:
@@ -241,7 +253,7 @@ func (c *Client) getContextFromHistory(channelID string) string {
 }
 
 // handleUserPrompt sends the user's text to the configured LLM provider.
-func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
+func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayName string) {
 	// Determine the provider to use from config
 	providerName := c.cfg.LLMProvider // Get the primary provider name from config
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", providerName)
@@ -276,6 +288,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
 
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
 			providerName,
+			userDisplayName,
 			c.cfg.AgentConfig.PromptPrefix,
 			userPrompt,
 			contextHistory,

@@ -102,7 +102,7 @@ type LLMProvider interface {
 	GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (*llms.ContentChoice, error)
 
 	// GenerateAgentCompletion generates a chat completion using a message history using a langchain agent
-	GenerateAgentCompletion(ctx context.Context, systemPrompt string, prompt string, messages []RequestMessage, llmTools []tools.Tool, callbackHandler callbacks.Handler) (string, error)
+	GenerateAgentCompletion(ctx context.Context, userDisplayName, systemPrompt string, prompt string, messages []RequestMessage, llmTools []tools.Tool, callbackHandler callbacks.Handler) (string, error)
 
 	// GetInfo returns information about the provider
 	GetInfo() ProviderInfo

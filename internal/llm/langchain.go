@@ -170,6 +170,7 @@ func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages
 // Note: LangChainGo's basic llms.Model interface doesn't directly support chat messages.
 // We simulate it by formatting messages into a single prompt.
 func (p *LangChainProvider) GenerateAgentCompletion(ctx context.Context,
+	userDisplayName string,
 	systemPrompt string,
 	prompt string,
 	history []RequestMessage,
@@ -191,12 +192,11 @@ func (p *LangChainProvider) GenerateAgentCompletion(ctx context.Context,
 	ag := agents.NewConversationalAgent(p.llm, llmTools, agents.WithCallbacksHandler(callbackHandler),
 		// Based on the default prompt prefix, with the user provided prefix.
 		agents.WithPromptPrefix(fmt.Sprintf(`%s
-For any data you receive from a tool, it is absolutely critical that you do not modify the results. The tool results should be used as-is, without any changes or assumptions. If you need to reference the data, do so directly.
-
-You may invoke multiple tools as needed to solve a problem. Use any and all tools at your disposal.
+You may invoke multiple tools as needed to solve a problem. Use any and all tools at your disposal. Tools can only be invoked one at a time.
 
 Chain together tools if you need to. Always make sure you follow the tool schema perfectly.
-  
+
+The user you are about to interact with is named "%s".
 
 TOOLS:
 ------
@@ -205,26 +205,32 @@ Assistant has access to the following tools:
 
 {{.tool_descriptions}}
 
-`, systemPrompt)),
+`, systemPrompt, userDisplayName)),
 		// Based on the default conversational agent prompt format, just added the Justification part
 		agents.WithPromptFormatInstructions(`To use a tool, please use the following format:
 
+Observation: [The result of the previous tool call. Only include this field if you just received a tool result.]
 Thought: Do I need to use a tool? Yes
-Justification: Why you think you should invoke the tool that you are invoking
-Action: the action to take, should be one of [{{.tool_names}}]
-Action Input: the input to the action. This should always be a single line JSON object. This should be raw json, no extra quotes or backticks
-Observation: the result of the action
+Justification: [Why you think you should invoke the tool that you are invoking]
+Action: [the action to take, should be one of [{{.tool_names}}]]
+Action Input: [the input to the action. This should always be a single line JSON object. This should be raw json, no extra quotes or backticks. This field is mutually exclusive with the "AI:" field. There should be no text after this field.]
+
+Only call one tool at a time, send your response, and wait for the result to be provided in the next message.
+IMPORTANT: Return ONLY the tool format with no explanations or formatting when using a tool.
 
 When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
 
 Thought: Do I need to use a tool? No
-AI: [your response here]
+AI: [your response here] This field is mutually exclusive with the "Action Input:" field. You must not return both fields in a response.
 `),
 		// When testing with Gemini, it would often not actually invoke the tool, so we need this to make sure it actually does it
 		// Also providing the conversation history
 		agents.WithPromptSuffix(fmt.Sprintf(`
 It is absolutely critical that you don't assume the answers of the tools. You must return the appropriate tool invocation to us.
 When you want to use a tool, we will provide the output. Don't give the final answer yourself, just return the tool invocation.
+
+That is to say, under no circumstances should you be returning a line that starts with "Action Input:" and another line that starts with "AI:", in a response. They are mutually exclusive. 
+This is of the utmost importance. If this rule is not followed, your answer will be considered invalid.
 
 Once you have completed invoking all the tools you need to, and you have all the information you need, you can return a final answer.
 

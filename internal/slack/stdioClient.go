@@ -9,6 +9,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"io"
 	"os"
+	"os/user"
 )
 
 type StdioClient struct {
@@ -100,4 +101,26 @@ func (client StdioClient) SendMessage(channelID, threadTS, text string) {
 			client.logger.ErrorKV("While writing message to output", "error", err)
 		}
 	}
+}
+
+func (client StdioClient) GetUserInfo(userID string) (*slack.User, error) {
+	currentUser, err := user.Current()
+	if err != nil {
+		return nil, fmt.Errorf("while getting current user: %w", err)
+	}
+
+	return &slack.User{
+		ID:       "xxx",
+		TeamID:   "",
+		Name:     currentUser.Username,
+		Deleted:  false,
+		Color:    "",
+		RealName: "",
+		TZ:       "",
+		TZLabel:  "",
+		TZOffset: 0,
+		Profile: slack.UserProfile{
+			DisplayName: currentUser.Name,
+		},
+	}, nil
 }
