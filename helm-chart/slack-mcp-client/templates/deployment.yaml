@@ -35,7 +35,7 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if or .Values.configMap.create }}
           args:
-            - --config
+            - -config
             - /app/config/mcp-servers.json
           {{- end }}
           envFrom:
