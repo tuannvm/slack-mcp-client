@@ -120,36 +120,35 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
 // It no longer uses natural language detection.
-func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse, _ string) (string, error) {
+func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, name string, args map[string]interface{}) (string, error) {
 	// Check for a tool call in JSON format
-	if toolCall := b.detectSpecificJSONToolCall(llmResponse); toolCall != nil {
-		// Execute the tool call
-		result, err := b.executeToolCall(ctx, toolCall)
-		if err != nil {
-			// Check if it's already a domain error
-			var errorMessage string
-			if customErrors.IsDomainError(err) {
-				// Extract structured information from the domain error
-				code, _ := customErrors.GetErrorCode(err)
-				b.logger.ErrorKV("Failed to execute tool call",
-					"error", err.Error(),
-					"error_code", code,
-					"tool", toolCall.Tool)
-				errorMessage = fmt.Sprintf("Error executing tool call: %v (code: %s)", err, code)
-			} else {
-				b.logger.ErrorKV("Failed to execute tool call",
-					"error", err.Error(),
-					"tool", toolCall.Tool)
-				errorMessage = fmt.Sprintf("Error executing tool call: %v", err)
-			}
-
-			return errorMessage, nil
-		}
-		return result, nil
+	// Execute the tool call
+	toolCall := &ToolCall{
+		Tool: name,
+		Args: args,
 	}
+	result, err := b.executeToolCall(ctx, toolCall)
+	if err != nil {
+		// Check if it's already a domain error
+		var errorMessage string
+		if customErrors.IsDomainError(err) {
+			// Extract structured information from the domain error
+			code, _ := customErrors.GetErrorCode(err)
+			b.logger.ErrorKV("Failed to execute tool call",
+				"error", err.Error(),
+				"error_code", code,
+				"tool", toolCall.Tool)
+			errorMessage = fmt.Sprintf("Error executing tool call: %v (code: %s)", err, code)
+		} else {
+			b.logger.ErrorKV("Failed to execute tool call",
+				"error", err.Error(),
+				"tool", toolCall.Tool)
+			errorMessage = fmt.Sprintf("Error executing tool call: %v", err)
+		}
 
-	// Just return the LLM response as-is if no tool call was detected
-	return llmResponse, nil
+		return errorMessage, nil
+	}
+	return result, nil
 }
 
 // ToolCall represents the expected JSON structure for a tool call from the LLM
@@ -334,7 +333,7 @@ func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) 
 		return "", domainErr
 	}
 
-	b.logger.InfoKV("Successfully executed MCP tool", "tool", toolCall.Tool)
+	b.logger.InfoKV("Successfully executed MCP tool", "tool", toolCall.Tool, "result", len(result))
 
 	// The result is already a string with the updated interface
 	if result == "" {

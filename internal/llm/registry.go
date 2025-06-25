@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/tmc/langchaingo/llms"
+
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config" // Import config
 )
@@ -185,24 +187,24 @@ func (r *ProviderRegistry) ListProviders() []ProviderInfo {
 
 // GenerateCompletion generates a completion using the specified provider (or primary if empty).
 // It checks for provider availability before making the call.
-func (r *ProviderRegistry) GenerateCompletion(ctx context.Context, providerName string, prompt string, options ProviderOptions) (string, error) {
+func (r *ProviderRegistry) GenerateCompletion(ctx context.Context, providerName string, messages []llms.MessageContent, options ProviderOptions) (*llms.ContentChoice, error) {
 	provider, err := r.GetProviderWithAvailabilityCheck(providerName) // Use the availability check method
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	info := provider.GetInfo()
 	r.logger.DebugKV("Using provider for completion", "name", info.Name)
 	// Note: GenerateCompletion is deprecated in the interface, but we keep the registry method for now.
-	return provider.GenerateCompletion(ctx, prompt, options)
+	return provider.GenerateCompletion(ctx, messages, options)
 }
 
 // GenerateChatCompletion generates a chat completion using the specified provider (or primary if empty).
 // It checks for provider availability before making the call.
-func (r *ProviderRegistry) GenerateChatCompletion(ctx context.Context, providerName string, messages []RequestMessage, options ProviderOptions) (string, error) {
+func (r *ProviderRegistry) GenerateChatCompletion(ctx context.Context, providerName string, messages []llms.MessageContent, options ProviderOptions) (*llms.ContentChoice, error) {
 	provider, err := r.GetProviderWithAvailabilityCheck(providerName) // Use the availability check method
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	info := provider.GetInfo()
