@@ -232,7 +232,7 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
 // It no longer uses natural language detection.
-func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse *llms.ContentChoice, _ string) (string, error) {
+func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse *llms.ContentChoice, _ string, extraArgs map[string]interface{}) (string, error) {
 	var toolCall *ToolCall
 	var err error
 	funcCall := llmResponse.FuncCall
@@ -252,7 +252,7 @@ func (b *LLMMCPBridge) ProcessLLMResponse(ctx context.Context, llmResponse *llms
 
 	if toolCall != nil {
 		// Execute the tool call
-		result, err := b.executeToolCall(ctx, toolCall)
+		result, err := b.executeToolCall(ctx, toolCall, extraArgs)
 		if err != nil {
 			// Check if it's already a domain error
 			var errorMessage string
@@ -446,7 +446,17 @@ func (b *LLMMCPBridge) getClientForTool(toolName string) mcp.MCPClientInterface 
 }
 
 // executeToolCall executes a detected tool call (using the new ToolCall struct)
-func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall) (string, error) {
+func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall, extraArgs map[string]interface{}) (string, error) {
+	for k, v := range extraArgs {
+		// Add any extra arguments to the tool call args
+		if toolCall.Args == nil {
+			toolCall.Args = make(map[string]interface{})
+		}
+		toolCall.Args[k] = v
+	}
+	b.logger.DebugKV("Executing tool call",
+		"tool", toolCall.Tool,
+		"args", fmt.Sprintf("%v", toolCall.Args))
 	client := b.getClientForTool(toolCall.Tool)
 	if client == nil {
 		b.logger.ErrorKV("No MCP client available", "tool", toolCall.Tool)

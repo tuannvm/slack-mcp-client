@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	// "github.com/json-iterator/go/extra"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
@@ -215,7 +216,7 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 		innerEvent := event.InnerEvent
 		switch ev := innerEvent.Data.(type) {
 		case *slackevents.AppMentionEvent:
-			c.logger.InfoKV("Received app mention in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
+			c.logger.InfoKV("Received app mention in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
 			messageText := c.userFrontend.RemoveBotMention(ev.Text)
 
 			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
@@ -224,8 +225,12 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 				return
 			}
 
+			parentTS := ev.ThreadTimeStamp
+			if parentTS == "" {
+				parentTS = ev.TimeStamp // Use the original message timestamp if no thread
+			}
 			// Use handleUserPrompt for app mentions too, for consistency
-			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp, userInfo.Profile.DisplayName)
+			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, parentTS, userInfo.Profile.DisplayName)
 
 		case *slackevents.MessageEvent:
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
@@ -240,9 +245,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			}
 
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
-				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
-
-				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
+				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
+				// Add to message history
+				c.addToHistory(ev.Channel, "user", ev.Text)
+				parentTS := ev.ThreadTimeStamp
+				if parentTS == "" {
+					parentTS = ev.TimeStamp // Use the original message timestamp if no thread
+				}
+				go c.handleUserPrompt(ev.Text, ev.Channel, parentTS, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}
 
 		default:
@@ -385,6 +395,11 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
 	// Log the raw LLM response for debugging
 	c.logger.DebugKV("Raw LLM response", "response", logging.TruncateForLog(fmt.Sprintf("%v", llmResponse), 500))
+	extraArgs := map[string]interface{}{
+		"channel_id": channelID,
+		"thread_ts":  threadTS,
+	}
+	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
 	// Create a context with timeout for tool processing
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
@@ -403,7 +418,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		c.logger.Warn("LLMMCPBridge is nil, skipping tool processing")
 	} else {
 		// Process the response through the bridge
-		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt)
+		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt, extraArgs)
 		if err != nil {
 			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
 			isToolResult = false
