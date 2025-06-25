@@ -1,4 +1,4 @@
-{{- if .Values.networkPolicy.enabled }}
+{{- if and .Values.networkPolicy.enabled (.Values.networkPolicy.type | eq "cilium") }}
 apiVersion: v1
 kind: Service
 metadata:
