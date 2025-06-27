@@ -242,8 +242,25 @@ func processSingleMCPServer(
 		return
 	}
 
+	blockListMap := map[string]bool{}
+	allowListMap := map[string]bool{}
+	for _, toolName := range serverConf.BlockList {
+		blockListMap[toolName] = true
+	}
+	for _, toolName := range serverConf.AllowList {
+		allowListMap[toolName] = true
+	}
+
 	serverLogger.Info("Discovered %d tools", len(listResult.Tools))
 	for _, toolDef := range listResult.Tools {
+		if _, exists := blockListMap[toolDef.Name]; exists {
+			serverLogger.Debug("    Tool '%s' is in block list, skipping", toolDef.Name)
+			continue
+		}
+		if len(allowListMap) > 0 && !allowListMap[toolDef.Name] {
+			serverLogger.Debug("    Tool '%s' is not in allow list, skipping", toolDef.Name)
+			continue
+		}
 		toolName := toolDef.Name
 		if _, exists := discoveredTools[toolName]; !exists {
 			var inputSchemaMap map[string]interface{}
