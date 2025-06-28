@@ -21,6 +21,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use the internal mcp package
 
 	// internal/mcp is no longer needed here - This comment is now incorrect
+
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
 

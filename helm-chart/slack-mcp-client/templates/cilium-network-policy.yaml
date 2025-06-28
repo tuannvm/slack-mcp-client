@@ -1,0 +1,17 @@
+{{- if and .Values.networkPolicy.enabled (.Values.networkPolicy.type | eq "cilium") }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "slack-mcp-client.fullname" . }}
+  labels:
+    {{- include "slack-mcp-client.labels" . | nindent 4 }}
+spec:
+  egress:
+  - toEntities:
+    - kube-apiserver
+    - cluster
+    - world
+  endpointSelector:
+    matchLabels:
+      {{- include "slack-mcp-client.selectorLabels" . | nindent 6 }}
+{{- end }}

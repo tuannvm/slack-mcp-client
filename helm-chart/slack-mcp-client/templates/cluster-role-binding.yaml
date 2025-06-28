@@ -1,0 +1,16 @@
+{{- if and .Values.serviceAccount.create .Values.serviceAccount.clusterRoleName }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "slack-mcp-client.fullname" . }}
+  labels:
+    {{- include "slack-mcp-client.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.serviceAccount.clusterRoleName }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "slack-mcp-client.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

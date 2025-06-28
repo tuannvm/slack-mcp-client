@@ -6,7 +6,9 @@ metadata:
   labels:
     {{- include "slack-mcp-client.labels" . | nindent 4 }}
 data:
+  {{- if .Values.configMap.data }}
   {{- toYaml .Values.configMap.data | nindent 2 }}
+  {{- else }}
   mcp-servers.json: |
     {
       "mcpServers": {
@@ -17,4 +19,5 @@ data:
         }
       }
     }
-{{- end }} 
+  {{- end }}
+{{- end }}
