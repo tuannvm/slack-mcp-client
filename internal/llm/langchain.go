@@ -109,30 +109,39 @@ func NewLangChainProviderFactory(config map[string]interface{}, logger *logging.
 }
 
 // GenerateCompletion generates a completion using LangChainGo
-func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (string, error) {
+func (p *LangChainProvider) GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (*llms.ContentChoice, error) {
 	if p.llm == nil {
-		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+		return nil, errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
 	p.logger.DebugKV("Calling LangChainGo GenerateCompletion", "prompt_length", len(prompt))
 	callOptions := p.buildOptions(options)
 
-	completion, err := llms.GenerateFromSinglePrompt(ctx, p.llm, prompt, callOptions...)
-	if err != nil {
-		p.logger.ErrorKV("LangChainGo GenerateCompletion request failed", "error", err)
-		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
+	msg := llms.MessageContent{
+		Role:  llms.ChatMessageTypeHuman,
+		Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
 	}
 
-	p.logger.DebugKV("Received GenerateCompletion response", "length", len(completion))
-	return completion, nil
+	resp, err := p.llm.GenerateContent(ctx, []llms.MessageContent{msg}, callOptions...)
+	if err != nil {
+		p.logger.ErrorKV("LangChainGo GenerateContent request failed", "error", err)
+		return nil, errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
+	}
+
+	choices := resp.Choices
+	if len(choices) < 1 {
+		return nil, fmt.Errorf("empty response from model")
+	}
+	c1 := choices[0]
+	return c1, nil
 }
 
 // GenerateChatCompletion generates a chat completion using LangChainGo
 // Note: LangChainGo's basic llms.Model interface doesn't directly support chat messages.
 // We simulate it by formatting messages into a single prompt.
-func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (string, error) {
+func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (*llms.ContentChoice, error) {
 	if p.llm == nil {
-		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+		return nil, errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
 	}
 
 	p.logger.DebugKV("Calling LangChainGo GenerateChatCompletion", "num_messages", len(messages))
@@ -204,6 +213,11 @@ func (p *LangChainProvider) buildOptions(options ProviderOptions) []llms.CallOpt
 	if options.MaxTokens > 0 {
 		callOptions = append(callOptions, llms.WithMaxTokens(options.MaxTokens))
 		p.logger.DebugKV("Adding MaxTokens option", "value", options.MaxTokens)
+	}
+
+	if len(options.Tools) > 0 {
+		callOptions = append(callOptions, llms.WithTools(options.Tools))
+		p.logger.DebugKV("Adding functions for tools", "tools", len(options.Tools))
 	}
 
 	// Note: options.TargetProvider is handled during factory creation, not here.
