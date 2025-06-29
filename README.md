@@ -474,11 +474,13 @@ Comprehensive documentation is available in the `docs/` directory:
 
 ### User Guides
 - **[Slack Formatting Guide](docs/format.md)** - Complete guide to message formatting including Markdown-to-Slack conversion, Block Kit layouts, and automatic format detection
+- **[RAG Implementation Guide](docs/rag.md)** - Comprehensive guide for implementing Retrieval-Augmented Generation with local document knowledge bases
 - **[Testing Guide](docs/test.md)** - Comprehensive testing documentation covering unit tests, integration tests, manual testing procedures, and debugging
 
 ### Quick Links
 - **Setup**: Start with the [Slack Configuration Guide](docs/configuration.md) for initial setup
 - **Formatting**: See the [Slack Formatting Guide](docs/format.md) for message formatting capabilities
+- **RAG**: Check the [RAG Implementation Guide](docs/rag.md) for document knowledge base integration
 - **Development**: Check the [Implementation Notes](docs/implementation.md) for technical details
 - **Testing**: Use the [Testing Guide](docs/test.md) for testing procedures and debugging
 
