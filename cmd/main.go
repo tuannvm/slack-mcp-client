@@ -19,10 +19,9 @@ import (
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use the internal mcp package
+	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
 
-	// internal/mcp is no longer needed here - This comment is now incorrect
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
 
