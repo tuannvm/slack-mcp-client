@@ -66,16 +66,39 @@ flowchart LR
   - Works with both channels and direct messages
   - Rich message formatting with Markdown and Block Kit
   - Automatic conversion of quoted strings to code blocks for better readability
-- ✅ **LLM Support**:
-  - Native OpenAI integration
-  - LangChain gateway for multiple LLM providers
+- ✅ **Multi-Provider LLM Support**:
+  - OpenAI (GPT-4, GPT-4o, etc.)
+  - Anthropic (Claude 3.5 Sonnet, etc.) 
+  - Ollama (Local LLMs like Llama, Mistral, etc.)
+  - Factory pattern for easy provider switching
+  - LangChain gateway for unified API
 - ✅ **Tool Registration**: Dynamically register and call MCP tools
-- ✅ **Docker container support**
+- ✅ **Configuration Management**:
+  - JSON-based MCP server configuration
+  - Environment variable support
+  - Multiple transport modes (HTTP/SSE, stdio)
+- ✅ **Production Ready**:
+  - Docker container support
+  - Kubernetes Helm charts
+  - Comprehensive logging and error handling
+  - 88%+ test coverage
 
 ## Installation
 
+### From Binary Release
 
-#### From Source
+Download the latest binary from the [GitHub releases page](https://github.com/tuannvm/slack-mcp-client/releases/latest) or install using Go:
+
+```bash
+# Install latest version using Go
+go install github.com/tuannvm/slack-mcp-client@latest
+
+# Or build from source
+git clone https://github.com/tuannvm/slack-mcp-client.git
+cd slack-mcp-client
+make build
+# Binary will be in ./bin/slack-mcp-client
+```
 
 ### Running Locally with Binary
 
@@ -305,7 +328,7 @@ You can easily extend this setup to include additional MCP servers in the same n
    - `message.im`
 5. Install the app to your workspace
 
-For detailed instructions on Slack app configuration, token setup, required permissions, and troubleshooting common issues, see the [Slack Configuration Guide](slack.md).
+For detailed instructions on Slack app configuration, token setup, required permissions, and troubleshooting common issues, see the [Slack Configuration Guide](docs/configuration.md).
 
 ## LLM Integration
 
@@ -364,7 +387,11 @@ export LLM_PROVIDER=ollama
 
 ## Configuration
 
-The client can be configured using the following environment variables:
+The client uses two main configuration approaches:
+
+### Environment Variables
+
+Configure LLM providers and Slack integration using environment variables:
 
 | Variable              | Description                                  | Default    |
 | --------------------- | -------------------------------------------- | ---------- |
@@ -378,6 +405,36 @@ The client can be configured using the following environment variables:
 | LLM_PROVIDER          | LLM provider to use (openai, anthropic, ollama) | openai     |
 | LANGCHAIN_OLLAMA_URL  | URL for Ollama when using LangChain          | http://localhost:11434 |
 | LANGCHAIN_OLLAMA_MODEL| Model name for Ollama when using LangChain   | llama3     |
+
+### MCP Server Configuration
+
+MCP servers are configured via a JSON configuration file (default: `mcp-servers.json`):
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"],
+      "env": {}
+    },
+    "github": {
+      "command": "github-mcp-server",
+      "args": ["stdio"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"
+      }
+    },
+    "web-api": {
+      "mode": "http",
+      "url": "http://localhost:8080/mcp",
+      "initialize_timeout_seconds": 30
+    }
+  }
+}
+```
+
+For detailed configuration options, see the [Implementation Notes](docs/implementation.md).
 
 ## Slack-Formatted Output
 
@@ -394,7 +451,7 @@ The client includes a comprehensive Slack-formatted output system that enhances 
   - Automatically validates against Slack API limits
   - Falls back to plain text if Block Kit validation fails
 
-For more details, see the [Slack Formatting Guide](guides/slack-formatting.md) and [Markdown-Slack Mapping Guide](guides/markdown-slack-mapping.md).
+For more details, see the [Slack Formatting Guide](docs/format.md).
 
 ## Transport Modes
 
@@ -403,6 +460,27 @@ The client supports three transport modes:
 - **SSE (default)**: Uses Server-Sent Events for real-time communication with the MCP server
 - **HTTP**: Uses HTTP POST requests with JSON-RPC for communication
 - **stdio**: Uses standard input/output for local development and testing
+
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+### Configuration & Setup
+- **[Slack Configuration Guide](docs/configuration.md)** - Complete guide for setting up your Slack app, including required permissions, tokens, and troubleshooting common issues
+
+### Development & Implementation
+- **[Implementation Notes](docs/implementation.md)** - Detailed technical documentation covering the current architecture, core components, and implementation details
+- **[Requirements Specification](docs/requirements.md)** - Comprehensive requirements documentation including implemented features, quality requirements, and future enhancements
+
+### User Guides
+- **[Slack Formatting Guide](docs/format.md)** - Complete guide to message formatting including Markdown-to-Slack conversion, Block Kit layouts, and automatic format detection
+- **[Testing Guide](docs/test.md)** - Comprehensive testing documentation covering unit tests, integration tests, manual testing procedures, and debugging
+
+### Quick Links
+- **Setup**: Start with the [Slack Configuration Guide](docs/configuration.md) for initial setup
+- **Formatting**: See the [Slack Formatting Guide](docs/format.md) for message formatting capabilities
+- **Development**: Check the [Implementation Notes](docs/implementation.md) for technical details
+- **Testing**: Use the [Testing Guide](docs/test.md) for testing procedures and debugging
 
 ## Contributing
 
