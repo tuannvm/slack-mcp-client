@@ -105,6 +105,13 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	}
 	clientLogger.Info("LLM provider registry initialized successfully")
 
+	// Determine custom prompt settings
+	customPrompt := cfg.CustomPrompt
+	replaceToolPrompt := false
+	if cfg.ReplaceToolPrompt != nil {
+		replaceToolPrompt = *cfg.ReplaceToolPrompt
+	}
+
 	// Pass the raw map to the bridge with the configured log level
 	llmMCPBridge := handlers.NewLLMMCPBridgeFromClientsWithLogLevel(
 		rawClientMap,
@@ -113,6 +120,8 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		logLevel,
 		*cfg.UseNativeTools,
 		registry,
+		customPrompt,
+		replaceToolPrompt,
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
 
