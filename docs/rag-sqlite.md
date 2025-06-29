@@ -1,794 +1,532 @@
-# Native Go SQLite RAG Implementation
+# Simplified SQLite RAG Implementation
 
 ## Overview
 
-This document outlines the implementation plan for integrating SQLite + FTS5 RAG capabilities directly into the Go Slack MCP Client, providing a high-performance, single-binary solution for document search and knowledge base functionality.
+A streamlined approach to adding RAG capabilities to the existing Slack MCP Client, leveraging current LangChain integration and avoiding over-engineering.
 
-## Architecture Design
-
-### Native Integration Architecture
+## Simplified Architecture
 
 ```mermaid
 graph TD
-    A["📱 Slack User"] --> B["🤖 Slack MCP Client<br/>(Go Binary)"]
-    
-    subgraph "Integrated Components"
-        B --> C["📋 Slack Handlers<br/>(internal/handlers)"]
-        C --> D["🔍 RAG Module<br/>(internal/rag)"]
-        D --> E["🗃️ SQLite + FTS5<br/>(Embedded Database)"]
-        D --> F["📄 Document Manager<br/>(PDF Processing)"]
-        C --> G["🧠 LLM Providers<br/>(internal/llm)"]
-    end
-    
-    H["📁 PDF Files"] --> I["📤 Document Ingestion<br/>(CLI Command)"]
-    I --> D
-    
-    J["💬 User Query"] --> C
-    C --> K["🔍 RAG Search"]
-    K --> E
-    E --> L["📊 FTS5 Results"]
-    L --> D
-    D --> M["🎯 Context + Sources"]
-    M --> G
-    G --> N["💬 Enhanced Response"]
-    N --> B
+    A["📱 Slack User"] --> B["🤖 Existing Slack Handler"]
+    B --> C{"RAG Query?"}
+    C -->|Yes| D["🔍 RAG Store<br/>(SQLite FTS5)"]
+    C -->|No| E["🧠 Existing LLM Provider"]
+    D --> F["📄 Context Documents"]
+    F --> E
+    E --> G["💬 Enhanced Response"]
+    G --> B
     B --> A
     
-    style B fill:#e1f5fe
-    style D fill:#f3e5f5
-    style E fill:#e8f5e8
-    style G fill:#fff3e0
+    H["📁 PDF Files"] --> I["👀 Simple File Watcher"]
+    I --> D
 ```
 
-### Design Principles
+## Key Simplifications
 
-1. **Single Binary** - Everything embedded in your Go application
-2. **Zero External Dependencies** - No separate database servers or MCP servers
-3. **Consistent Architecture** - Follows existing `internal/` package structure
-4. **CLI Integration** - Document ingestion through CLI commands
-5. **Performance First** - Direct database access, no network overhead
+1. **Single RAG component** instead of multiple managers/processors
+2. **Leverage existing LLM provider pattern** 
+3. **Simple file watcher** without job queues
+4. **Minimal configuration** using existing config system
+5. **Basic CLI integration** using existing flag parser
 
-## Component Structure
+## Implementation
 
-### RAG Module Structure (`internal/rag/`)
-
-```
-internal/rag/
-├── manager.go       # Main RAG coordinator using LangChain chains
-├── retriever.go     # SQLite-based LangChain retriever implementation
-├── vectorstore.go   # Custom SQLite vector store for LangChain
-├── loader.go        # Document loaders (PDF, TXT, MD) using LangChain
-├── chain.go         # LangChain QA chains and prompt templates
-└── types.go         # Common types & LangChain integration
-```
-
-### Integration Points
-
-#### With Existing Handlers (`internal/handlers/`)
+### 1. Extend Existing LLM Provider Interface
 
 ```go
-type SlackHandler struct {
-    // existing fields...
-    ragManager *rag.Manager  // New RAG integration
-}
-
-// New methods:
-// - HandleRAGQuery(query string) (*rag.SearchResult, error)
-// - EnhancePromptWithContext(prompt string, context []rag.Document) string
-```
-
-#### With LLM Providers (`internal/llm/`)
-
-```go
-// Enhance existing LLM calls with RAG context
-type LLMRequest struct {
-    // existing fields...
-    RAGContext []rag.Document `json:"rag_context,omitempty"`
-}
-```
-
-#### With Configuration (`internal/config/`)
-
-```go
-type Config struct {
-    // existing fields...
-    RAG RAGConfig `yaml:"rag"`
-}
-
-type RAGConfig struct {
-    Enabled      bool   `yaml:"enabled"`
-    DatabasePath string `yaml:"database_path"`
-    ChunkSize    int    `yaml:"chunk_size"`
-    ChunkOverlap int    `yaml:"chunk_overlap"`
-    MaxResults   int    `yaml:"max_results"`
-}
-```
-
-## Database Schema
-
-### Core Tables
-
-```sql
--- Documents table with FTS5 for full-text search
-CREATE VIRTUAL TABLE documents USING fts5(
-    id UNINDEXED,
-    title,
-    content,
-    file_path UNINDEXED,
-    file_hash UNINDEXED,
-    chunk_index UNINDEXED,
-    page_number UNINDEXED,
-    created_at UNINDEXED,
-    updated_at UNINDEXED,
-    metadata UNINDEXED  -- JSON for additional fields
-);
-
--- Metadata table for document tracking
-CREATE TABLE document_files (
-    id INTEGER PRIMARY KEY,
-    file_path TEXT UNIQUE,
-    file_hash TEXT,
-    file_size INTEGER,
-    mime_type TEXT,
-    processed_at DATETIME,
-    chunk_count INTEGER,
-    status TEXT  -- 'processed', 'failed', 'pending'
-);
-
--- Search analytics (optional)
-CREATE TABLE search_queries (
-    id INTEGER PRIMARY KEY,
-    query TEXT,
-    results_count INTEGER,
-    user_id TEXT,
-    timestamp DATETIME
-);
-```
-
-### Indexes for Performance
-
-```sql
--- FTS5 automatically creates search indexes
--- Additional indexes for metadata queries
-CREATE INDEX idx_document_files_hash ON document_files(file_hash);
-CREATE INDEX idx_document_files_status ON document_files(status);
-CREATE INDEX idx_search_queries_timestamp ON search_queries(timestamp);
-```
-
-## CLI Commands Integration
-
-Add new commands to your existing CLI:
-
-```bash
-# Document management
-./slack-mcp-client rag ingest --path /path/to/pdfs
-./slack-mcp-client rag ingest --file document.pdf
-./slack-mcp-client rag status
-./slack-mcp-client rag search "query text"
-./slack-mcp-client rag list-documents
-./slack-mcp-client rag rebuild-index
-
-# Database management  
-./slack-mcp-client rag export --output backup.db
-./slack-mcp-client rag import --input backup.db
-./slack-mcp-client rag vacuum  # Optimize database
-./slack-mcp-client rag stats   # Show database statistics
-```
-
-## Implementation Phases
-
-### Phase 1: LangChain Vector Store Implementation
-
-**Goals**: SQLite-based LangChain vector store
-**Timeline**: 1-2 weeks
-
-**Tasks**:
-1. Create `internal/rag/` module implementing LangChain interfaces
-2. Implement `SQLiteVectorStore` using FTS5 for similarity search
-3. Create LangChain-compatible retriever interface
-4. Add basic CLI commands for document management
-5. Add configuration support
-
-**Deliverables**:
-- SQLite vector store implements `vectorstores.VectorStore` interface
-- Basic document storage and retrieval works
-- CLI can ingest documents using LangChain loaders
-- Unit tests with in-memory SQLite
-
-### Phase 2: Document Processing with LangChain
-
-**Goals**: Document ingestion using LangChain loaders and splitters
-**Timeline**: 1 week
-
-**Tasks**:
-1. Integrate LangChain document loaders (PDF, text, markdown)
-2. Use LangChain text splitters for smart chunking
-3. Add duplicate detection and incremental updates
-4. Implement document metadata tracking
-5. Error handling and recovery
-
-**Deliverables**:
-- PDF processing using `documentloaders.NewPDF()`
-- Smart chunking with `textsplitters.NewRecursiveCharacter()`
-- Support for multiple document formats via LangChain loaders
-- Duplicate detection prevents reprocessing
-
-### Phase 3: QA Chain Integration
-
-**Goals**: LangChain QA chains for Slack integration
-**Timeline**: 1 week
-
-**Tasks**:
-1. Implement LangChain QA chains (`chains.LoadStuffQA`)
-2. Create custom prompt templates for Slack context
-3. Integrate with existing Slack handlers
-4. Add source citation and formatting for Slack
-5. Configuration for different chain types
-
-**Deliverables**:
-- Slack commands use LangChain QA chains
-- Automatic retrieval + generation in one call
-- Source citations in Slack responses
-- Configurable prompt templates
-
-### Phase 4: Advanced LangChain Features
-
-**Goals**: Production enhancements using LangChain capabilities
-**Timeline**: 1-2 weeks
-
-**Tasks**:
-1. Add LangChain conversation memory for multi-turn chats
-2. Implement different chain types (map-reduce, refine)
-3. Add LangChain evaluation and monitoring
-4. Use LangChain callbacks for observability
-5. Performance optimization and caching
-
-**Deliverables**:
-- Conversation memory for context-aware responses
-- Multiple QA chain strategies available
-- LangChain evaluation metrics
-- Production-grade performance monitoring
-
-## Dependencies Required
-
-### Go Modules
-
-```go
-// go.mod additions (leveraging existing LangChain)
-require (
-    github.com/tmc/langchaingo v0.1.13         // Already in use - LangChain Go
-    github.com/mattn/go-sqlite3 v1.14.18       // SQLite driver with FTS5
-    github.com/gabriel-vasile/mimetype v1.4.3  // MIME type detection
-    github.com/spf13/cobra v1.8.0              // CLI commands (if not already present)
-)
-```
-
-### Build Tags
-
-```bash
-# Ensure CGO is enabled for SQLite
-go build -tags="fts5" ./cmd/slack-mcp-client
-```
-
-### LangChain Components Used
-
-This implementation leverages the following LangChain Go components:
-
-1. **Document Loaders**
-   - `documentloaders.NewPDF(r io.ReaderAt, size int64, opts ...PDFOptions)` - PDF document processing
-   - `documentloaders.NewText(r io.Reader)` - Plain text files
-   - `documentloaders.NewCSV(r io.Reader, columns ...string)` - CSV files
-   - `documentloaders.NewHTML(r io.Reader)` - HTML content
-
-2. **Text Splitters**
-   - `textsplitter.NewRecursiveCharacter()` - Smart text chunking
-   - `textsplitter.WithChunkSize()` - Configurable chunk sizes
-   - `textsplitter.WithChunkOverlap()` - Context preservation
-
-3. **Vector Stores Interface**
-   - `vectorstores.VectorStore` - Standard interface implementation
-   - `vectorstores.ToRetriever()` - Convert to retriever interface
-   - Custom SQLite backend with FTS5
-
-4. **Chains & Prompts**
-   - `chains.LoadStuffQA()` - Question-answering chain
-   - `chains.LoadMapReduceQA()` - For large documents
-   - `prompts.NewPromptTemplate()` - Custom prompt templates
-   - `schema.ChainValues` - Chain input/output handling
-
-5. **Retrievers**
-   - `schema.Retriever` - Standard retriever interface
-   - Configurable top-k document retrieval
-   - Filter support for metadata
-
-6. **Memory & Callbacks**
-   - `memory.NewConversationBuffer()` - Chat history
-   - `callbacks.LogHandler` - Request/response logging
-   - `callbacks.StdOutHandler` - Debug output
-
-### PDF Processing Notes
-
-**LangChain Go PDF Support:** YES, LangChain Go provides built-in PDF parsing through `documentloaders.NewPDF()`.
-
-**API Signature:**
-```go
-func NewPDF(r io.ReaderAt, size int64, opts ...PDFOptions) PDF
-```
-
-**Key Details:**
-- Uses [`ledongthuc/pdf`](https://github.com/ledongthuc/pdf) library internally
-- Requires `io.ReaderAt` (not `io.Reader`) and file size
-- Supports password-protected PDFs with `documentloaders.WithPassword()` option
-- Extracts text content with page metadata
-
-**Known Limitations:**
-- Some PDF files may fail with "malformed PDF" errors ([Issue #348](https://github.com/tmc/langchaingo/issues/348))
-- Complex layouts, embedded images, or certain PDF encodings may not extract cleanly
-- Less robust than some alternative PDF libraries (e.g., `pdfcpu`)
-
-**Recommended Approach:**
-```go
-// Use LangChain PDF loader as primary method
-func (m *Manager) IngestPDF(filePath string) error {
-    file, err := os.Open(filePath)
-    if err != nil {
-        return err
-    }
-    defer file.Close()
+// Add to internal/llm/provider.go
+type LLMProvider interface {
+    GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (*llms.ContentChoice, error)
+    GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (*llms.ContentChoice, error)
     
-    info, err := file.Stat()
-    if err != nil {
-        return err
-    }
-    
-    // Try LangChain PDF loader first
-    loader := documentloaders.NewPDF(file, info.Size())
-    docs, err := loader.LoadAndSplit(context.Background(), m.textSplitter)
-    
-    if err != nil {
-        log.Warnf("LangChain PDF loader failed for %s: %v, trying fallback", filePath, err)
-        // Implement fallback using alternative PDF library if needed
-        return m.fallbackPDFProcessing(filePath)
-    }
-    
-    return m.vectorStore.AddDocuments(context.Background(), docs)
+    // New RAG capability
+    GenerateRAGCompletion(ctx context.Context, query string, ragStore RAGStore) (*llms.ContentChoice, error)
+}
+
+// Simple RAG store interface
+type RAGStore interface {
+    Search(ctx context.Context, query string, limit int) ([]Document, error)
+    AddDocument(ctx context.Context, content string, metadata map[string]any) error
+    ProcessFile(ctx context.Context, filePath string) error
+    Close() error  // For proper database cleanup
 }
 ```
 
-## Type Definitions
-
-### Core Types with LangChain Integration
+### 2. Simple RAG Store Implementation
 
 ```go
+// internal/rag/store.go
 package rag
 
 import (
     "context"
-    "time"
-    
-    "github.com/tmc/langchaingo/schema"
-    "github.com/tmc/langchaingo/vectorstores"
-    "github.com/tmc/langchaingo/chains"
+    "database/sql"
+    "encoding/json"
+    _ "github.com/mattn/go-sqlite3"
+    "github.com/tmc/langchaingo/documentloaders"
+    "github.com/tmc/langchaingo/textsplitter"
 )
 
-// Manager coordinates RAG operations using LangChain
-type Manager struct {
-    vectorStore vectorstores.VectorStore
-    retriever   schema.Retriever
-    qaChain     chains.Chain
-    config      Config
+type Store struct {
+    db       *sql.DB
+    splitter textsplitter.TextSplitter
 }
 
-// SQLiteVectorStore implements LangChain's VectorStore interface
-type SQLiteVectorStore struct {
-    db     *sql.DB
-    config VectorStoreConfig
-}
-
-// Implements vectorstores.VectorStore interface
-func (s *SQLiteVectorStore) AddDocuments(ctx context.Context, docs []schema.Document, options ...vectorstores.Option) error {
-    // Implementation using SQLite FTS5
-}
-
-func (s *SQLiteVectorStore) SimilaritySearch(ctx context.Context, query string, numDocuments int, options ...vectorstores.Option) ([]schema.Document, error) {
-    // Implementation using SQLite FTS5 search
-}
-
-// Document extends LangChain Document with metadata
-type Document struct {
-    schema.Document                    // Embedded LangChain document
-    ID          string            `json:"id"`
-    FileHash    string            `json:"file_hash"`
-    ChunkIndex  int               `json:"chunk_index"`
-    PageNumber  int               `json:"page_number"`
-    CreatedAt   time.Time         `json:"created_at"`
-    UpdatedAt   time.Time         `json:"updated_at"`
-    Score       float64           `json:"score"`
-}
-
-// SearchRequest wraps LangChain retrieval parameters
-type SearchRequest struct {
-    Query       string            `json:"query"`
-    K           int               `json:"k"`           // Number of documents to retrieve
-    Filters     map[string]any    `json:"filters"`
-    MinScore    float64           `json:"min_score"`
-}
-
-// SearchResult contains LangChain documents with metadata
-type SearchResult struct {
-    Documents   []schema.Document `json:"documents"`
-    Total       int               `json:"total"`
-    Query       string            `json:"query"`
-    Took        time.Duration     `json:"took"`
-}
-
-// DocumentFile tracks original files
-type DocumentFile struct {
-    ID          int               `json:"id"`
-    FilePath    string            `json:"file_path"`
-    FileHash    string            `json:"file_hash"`
-    FileSize    int64             `json:"file_size"`
-    MimeType    string            `json:"mime_type"`
-    ProcessedAt time.Time         `json:"processed_at"`
-    ChunkCount  int               `json:"chunk_count"`
-    Status      string            `json:"status"`
-}
-
-// Config for RAG system
-type Config struct {
-    DatabasePath    string `yaml:"database_path"`
-    ChunkSize       int    `yaml:"chunk_size"`
-    ChunkOverlap    int    `yaml:"chunk_overlap"`
-    MaxResults      int    `yaml:"max_results"`
-    PromptTemplate  string `yaml:"prompt_template"`
-}
-```
-
-## Slack Integration Examples
-
-### Query Enhancement Flow
-
-```
-User: "What's our vacation policy?"
-↓
-1. Slack handler receives message
-2. Detect potential RAG query (contains policy keywords)
-3. Search RAG: documents MATCH 'vacation policy'
-4. Get top 3 relevant chunks
-5. Enhance LLM prompt: "Based on these policies: [context], answer: What's our vacation policy?"
-6. Send to LLM with enhanced context
-7. Return answer with source citations
-```
-
-### LangChain Integration Examples
-
-```go
-import (
-    "context"
-    "github.com/tmc/langchaingo/chains"
-    "github.com/tmc/langchaingo/prompts"
-    "github.com/tmc/langchaingo/schema"
-)
-
-// Initialize RAG Manager with LangChain components
-func NewRAGManager(dbPath string, llmProvider llms.Model) (*rag.Manager, error) {
-    // Create SQLite vector store
-    vectorStore, err := rag.NewSQLiteVectorStore(dbPath)
+func NewStore(dbPath string) (*Store, error) {
+    db, err := sql.Open("sqlite3", dbPath+"?_fts=fts5")
     if err != nil {
         return nil, err
     }
     
-    // Create retriever from vector store
-    retriever := vectorstores.ToRetriever(vectorStore, 5) // Top 5 documents
+    // Simple schema
+    _, err = db.Exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS documents USING fts5(
+            content,
+            metadata UNINDEXED
+        )
+    `)
+    if err != nil {
+        return nil, err
+    }
     
-    // Create QA chain with custom prompt template
-    promptTemplate := prompts.NewPromptTemplate(
-        `Based on the following context, answer the question. If you cannot answer based on the context, say so.
-
-Context:
-{{.context}}
-
-Question: {{.question}}
-
-Answer:`,
-        []string{"context", "question"},
+    splitter := textsplitter.NewRecursiveCharacter(
+        textsplitter.WithChunkSize(1000),
+        textsplitter.WithChunkOverlap(200),
     )
     
-    qaChain := chains.LoadStuffQA(llmProvider, promptTemplate)
-    
-    return &rag.Manager{
-        vectorStore: vectorStore,
-        retriever:   retriever,
-        qaChain:     qaChain,
-    }, nil
+    return &Store{db: db, splitter: splitter}, nil
 }
 
-// Enhanced Slack handler using LangChain QA chain
-func (h *SlackHandler) processMessage(ctx context.Context, message string) (*llm.Response, error) {
-    // Check if message might benefit from RAG context
-    if h.shouldUseRAG(message) {
-        // Use LangChain QA chain for retrieval + generation
-        result, err := h.ragManager.qaChain.Call(ctx, schema.ChainValues{
-            "question": message,
+func (s *Store) Search(ctx context.Context, query string, limit int) ([]Document, error) {
+    rows, err := s.db.QueryContext(ctx, 
+        "SELECT content, metadata FROM documents WHERE documents MATCH ? ORDER BY bm25(documents) LIMIT ?",
+        query, limit)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+    
+    var docs []Document
+    for rows.Next() {
+        var content, metadataJSON string
+        if err := rows.Scan(&content, &metadataJSON); err != nil {
+            continue
+        }
+        
+        var metadata map[string]any
+        json.Unmarshal([]byte(metadataJSON), &metadata)
+        
+        docs = append(docs, Document{
+            Content:  content,
+            Metadata: metadata,
         })
-        if err == nil {
-            // Extract answer from chain result
-            if answer, ok := result["text"].(string); ok {
-                return &llm.Response{
-                    Content: answer,
-                    Sources: h.extractSources(result),
-                }, nil
+    }
+    return docs, nil
+}
+
+func (s *Store) ProcessFile(ctx context.Context, filePath string) error {
+    // Remove existing documents for this file
+    metadataFilter := map[string]any{"file_path": filePath}
+    metadataJSON, _ := json.Marshal(metadataFilter)
+    s.db.ExecContext(ctx, "DELETE FROM documents WHERE metadata = ?", metadataJSON)
+    
+    // Load PDF using existing LangChain loader
+    file, err := os.Open(filePath)
+    if err != nil {
+        return err
+    }
+    defer file.Close()
+    
+    info, _ := file.Stat()
+    loader := documentloaders.NewPDF(file, info.Size())
+    
+    docs, err := loader.LoadAndSplit(ctx, s.splitter)
+    if err != nil {
+        return err
+    }
+    
+    // Store documents
+    for i, doc := range docs {
+        metadata := map[string]any{
+            "file_path":   filePath,
+            "chunk_index": i,
+        }
+        metadataJSON, _ := json.Marshal(metadata)
+        
+        _, err = s.db.ExecContext(ctx,
+            "INSERT INTO documents (content, metadata) VALUES (?, ?)",
+            doc.PageContent, metadataJSON)
+        if err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+func (s *Store) Close() error {
+    return s.db.Close()
+}
+
+type Document struct {
+    Content  string         `json:"content"`
+    Metadata map[string]any `json:"metadata"`
+}
+```
+
+### 3. Simple File Watcher
+
+```go
+// internal/rag/watcher.go
+package rag
+
+import (
+    "path/filepath"
+    "time"
+    "github.com/fsnotify/fsnotify"
+)
+
+type SimpleWatcher struct {
+    store     *Store
+    paths     []string
+    debounce  time.Duration
+    timers    map[string]*time.Timer
+}
+
+func NewWatcher(store *Store, paths []string) *SimpleWatcher {
+    return &SimpleWatcher{
+        store:    store,
+        paths:    paths,
+        debounce: 2 * time.Second,
+        timers:   make(map[string]*time.Timer),
+    }
+}
+
+func (w *SimpleWatcher) Start() error {
+    watcher, err := fsnotify.NewWatcher()
+    if err != nil {
+        return err
+    }
+    
+    for _, path := range w.paths {
+        watcher.Add(path)
+    }
+    
+    go func() {
+        for event := range watcher.Events {
+            if filepath.Ext(event.Name) == ".pdf" {
+                w.debounceProcess(event.Name)
+            }
+        }
+    }()
+    
+    return nil
+}
+
+func (w *SimpleWatcher) debounceProcess(filePath string) {
+    if timer, exists := w.timers[filePath]; exists {
+        timer.Stop()
+    }
+    
+    w.timers[filePath] = time.AfterFunc(w.debounce, func() {
+        w.store.ProcessFile(context.Background(), filePath)
+        delete(w.timers, filePath)
+    })
+}
+```
+
+### 4. Integrate with Existing LLM Provider
+
+```go
+// Enhance internal/llm/langchain.go
+func (p *LangChainProvider) GenerateRAGCompletion(ctx context.Context, query string, ragStore RAGStore) (*llms.ContentChoice, error) {
+    // Search for relevant documents
+    docs, err := ragStore.Search(ctx, query, 3)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Build enhanced prompt
+    var contextBuilder strings.Builder
+    contextBuilder.WriteString("Based on the following context, answer the question:\n\n")
+    
+    for _, doc := range docs {
+        contextBuilder.WriteString(fmt.Sprintf("Context: %s\n\n", doc.Content))
+    }
+    
+    contextBuilder.WriteString(fmt.Sprintf("Question: %s\n\nAnswer:", query))
+    
+    return p.GenerateCompletion(ctx, contextBuilder.String(), ProviderOptions{})
+}
+```
+
+### 5. Deterministic RAG Mode
+
+```go
+// Enhance internal/handlers/handler.go
+type SlackHandler struct {
+    // existing fields...
+    ragStore   *rag.Store
+    ragEnabled bool  // Set at startup based on --rag flag
+}
+
+func (h *SlackHandler) processMessage(ctx context.Context, message string) error {
+    // Deterministic RAG behavior - if enabled, ALWAYS use RAG
+    if h.ragEnabled && h.ragStore != nil {
+        response, err := h.llmProvider.GenerateRAGCompletion(ctx, message, h.ragStore)
+        if err != nil {
+            // Log error but fallback to normal processing
+            h.logger.Warn("RAG completion failed, falling back to normal: %v", err)
+            return h.processNormalMessage(ctx, message)
+        }
+        return h.sendResponse(response.Content)
+    }
+    
+    // Normal processing when RAG is disabled
+    return h.processNormalMessage(ctx, message)
+}
+```
+
+### 6. Minimal Configuration
+
+```go
+// Add to internal/config/config.go
+type Config struct {
+    // existing fields...
+    RAG *RAGConfig `json:"rag,omitempty"`
+}
+
+type RAGConfig struct {
+    Enabled      bool     `json:"enabled"`
+    DatabasePath string   `json:"database_path"`
+    WatchPaths   []string `json:"watch_paths"`
+}
+
+// Default RAG configuration
+func (c *Config) ensureRAGDefaults() {
+    if c.RAG == nil {
+        c.RAG = &RAGConfig{
+            Enabled:      false,
+            DatabasePath: "./rag.db",
+            WatchPaths:   []string{},
+        }
+    }
+    if c.RAG.DatabasePath == "" {
+        c.RAG.DatabasePath = "./rag.db"
+    }
+}
+```
+
+### 7. Slack Handler Initialization
+
+```go
+// Update startSlackClient function in cmd/main.go
+func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
+    // Ensure RAG defaults
+    cfg.ensureRAGDefaults()
+    
+    // Initialize RAG store if enabled
+    var ragStore *rag.Store
+    var ragWatcher *rag.SimpleWatcher
+    
+    if cfg.RAG.Enabled {
+        logger.Info("Initializing RAG store at: %s", cfg.RAG.DatabasePath)
+        
+        store, err := rag.NewStore(cfg.RAG.DatabasePath)
+        if err != nil {
+            logger.Fatal("Failed to initialize RAG store: %v", err)
+        }
+        ragStore = store
+        
+        // Start file watcher if paths specified
+        if len(cfg.RAG.WatchPaths) > 0 {
+            logger.Info("Starting RAG file watcher for paths: %v", cfg.RAG.WatchPaths)
+            ragWatcher = rag.NewWatcher(store, cfg.RAG.WatchPaths)
+            if err := ragWatcher.Start(); err != nil {
+                logger.Error("Failed to start RAG watcher: %v", err)
             }
         }
     }
     
-    // Fallback to normal processing
-    return h.llmProvider.Generate(ctx, message)
-}
-
-// Document ingestion using LangChain loaders
-func (m *Manager) IngestPDF(ctx context.Context, filePath string) error {
-    // Open PDF file - LangChain Go requires io.ReaderAt and file size
-    file, err := os.Open(filePath)
-    if err != nil {
-        return fmt.Errorf("failed to open PDF: %w", err)
-    }
-    defer file.Close()
-    
-    // Get file info for size
-    info, err := file.Stat()
-    if err != nil {
-        return fmt.Errorf("failed to get file info: %w", err)
+    // Initialize Slack handler with RAG configuration
+    handler := &handlers.SlackHandler{
+        // existing fields...
+        ragStore:   ragStore,
+        ragEnabled: cfg.RAG.Enabled,  // Deterministic flag set at startup
     }
     
-    // Create LangChain PDF loader - uses ledongthuc/pdf internally
-    loader := documentloaders.NewPDF(file, info.Size())
-    
-    // Load and split documents using LangChain text splitter
-    splitter := textsplitter.NewRecursiveCharacter(
-        textsplitter.WithChunkSize(m.config.ChunkSize),
-        textsplitter.WithChunkOverlap(m.config.ChunkOverlap),
-    )
-    
-    docs, err := loader.LoadAndSplit(ctx, splitter)
-    if err != nil {
-        return fmt.Errorf("failed to load PDF: %w", err)
-    }
-    
-    // Add documents to vector store
-    return m.vectorStore.AddDocuments(ctx, docs)
+    // Start Slack client...
+    logger.Info("Starting Slack client (RAG enabled: %t)", cfg.RAG.Enabled)
+    // ... rest of Slack initialization
 }
 ```
 
-## Performance Considerations
+### 8. Deterministic Startup Flow
 
-### Database Optimization
+The deterministic behavior works as follows:
 
-```sql
--- Optimize FTS5 performance
-PRAGMA journal_mode = WAL;           -- Better concurrency
-PRAGMA synchronous = NORMAL;         -- Balanced safety/performance
-PRAGMA cache_size = 10000;           -- Larger cache
-PRAGMA temp_store = memory;          -- Use memory for temp operations
-```
+1. **Command Line Decision**: `./slack-mcp-client --rag`
+2. **Flag Processing**: `ragEnabled` flag is set to true
+3. **Configuration Override**: RAG config is enabled regardless of JSON config
+4. **Handler Initialization**: SlackHandler gets `ragEnabled = true`
+5. **Runtime Behavior**: ALL Slack messages go through RAG (no heuristics)
 
-### Memory Management
+### 9. Deterministic CLI Integration
 
 ```go
-// Connection pooling
-type SQLiteManager struct {
-    db          *sql.DB
-    maxConns    int
-    maxIdleTime time.Duration
-}
-
-func (m *SQLiteManager) init() error {
-    m.db.SetMaxOpenConns(m.maxConns)
-    m.db.SetMaxIdleConns(m.maxConns / 2)
-    m.db.SetConnMaxIdleTime(m.maxIdleTime)
-    return nil
-}
-```
-
-### Search Optimization
-
-```go
-// Prepared statements for common queries
-type PreparedQueries struct {
-    searchDocuments *sql.Stmt
-    insertDocument  *sql.Stmt
-    getDocument     *sql.Stmt
-}
-
-func (m *SQLiteManager) prepareStatements() error {
-    var err error
-    m.queries.searchDocuments, err = m.db.Prepare(`
-        SELECT id, title, content, file_path, chunk_index, 
-               bm25(documents) as score
-        FROM documents 
-        WHERE documents MATCH ? 
-        ORDER BY score 
-        LIMIT ?
-    `)
-    return err
-}
-```
-
-## Testing Strategy
-
-### LangChain Integration Tests
-
-```go
-func TestSQLiteVectorStore_LangChainInterface(t *testing.T) {
-    ctx := context.Background()
+// Add to cmd/main.go flags
+var (
+    // RAG mode flags
+    ragEnabled = flag.Bool("rag", false, "Enable RAG mode for all Slack interactions")
+    ragDBPath  = flag.String("rag-db", "./rag.db", "Path to RAG database")
+    ragWatch   = flag.String("rag-watch", "", "Directory to watch for PDF files (comma-separated)")
     
-    // Test LangChain vector store interface
-    store, err := rag.NewSQLiteVectorStore(":memory:")
-    require.NoError(t, err)
+    // RAG utility commands
+    ragIngest = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
+    ragSearch = flag.String("rag-search", "", "Search RAG database and exit")
+)
+
+func main() {
+    flag.Parse()
     
-    // Test adding documents using LangChain schema
-    docs := []schema.Document{
-        {
-            PageContent: "Vacation policy allows 25 days per year",
-            Metadata: map[string]any{
-                "source": "hr-policy.pdf",
-                "page":   1,
-            },
-        },
+    // Handle RAG utility commands first (these exit after completion)
+    if *ragIngest != "" {
+        handleRAGIngest(*ragIngest)
+        return
     }
     
-    err = store.AddDocuments(ctx, docs)
-    require.NoError(t, err)
+    if *ragSearch != "" {
+        handleRAGSearch(*ragSearch)
+        return
+    }
     
-    // Test similarity search
-    results, err := store.SimilaritySearch(ctx, "vacation policy", 5)
-    require.NoError(t, err)
-    assert.Len(t, results, 1)
-    assert.Contains(t, results[0].PageContent, "vacation")
+    // Normal startup with optional RAG mode
+    logger := setupLogging()
+    cfg := loadAndPrepareConfig(logger)
+    
+    // Override RAG config from CLI flags
+    if *ragEnabled {
+        if cfg.RAG == nil {
+            cfg.RAG = &RAGConfig{}
+        }
+        cfg.RAG.Enabled = true
+        cfg.RAG.DatabasePath = *ragDBPath
+        if *ragWatch != "" {
+            cfg.RAG.WatchPaths = strings.Split(*ragWatch, ",")
+        }
+        logger.Info("RAG mode enabled via --rag flag")
+    }
+    
+    // Initialize MCP clients and Slack handler...
+    mcpClients, discoveredTools := initializeMCPClients(logger, cfg)
+    startSlackClient(logger, mcpClients, discoveredTools, cfg)
 }
 
-func TestQAChain_Integration(t *testing.T) {
-    ctx := context.Background()
-    
-    // Setup RAG manager with mock LLM
-    mockLLM := &llms.MockModel{}
-    manager, err := rag.NewRAGManager(":memory:", mockLLM)
-    require.NoError(t, err)
-    
-    // Add test documents
-    docs := []schema.Document{
-        {PageContent: "Company vacation policy: 25 days per year"},
+func handleRAGIngest(path string) {
+    store, err := rag.NewStore(*ragDBPath)
+    if err != nil {
+        log.Fatalf("Failed to open RAG database: %v", err)
     }
-    err = manager.vectorStore.AddDocuments(ctx, docs)
-    require.NoError(t, err)
+    defer store.Close()
     
-    // Test QA chain
-    result, err := manager.qaChain.Call(ctx, schema.ChainValues{
-        "question": "How many vacation days do we get?",
+    fmt.Printf("Ingesting PDF files from: %s\n", path)
+    count := 0
+    
+    err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+        if filepath.Ext(path) == ".pdf" {
+            fmt.Printf("Processing: %s\n", path)
+            if err := store.ProcessFile(context.Background(), path); err != nil {
+                fmt.Printf("  Error: %v\n", err)
+            } else {
+                count++
+                fmt.Printf("  ✓ Processed\n")
+            }
+        }
+        return nil
     })
-    require.NoError(t, err)
-    assert.Contains(t, result["text"], "25 days")
-}
-```
-
-### Document Processing Tests
-
-```go
-func TestDocumentLoaders_LangChain(t *testing.T) {
-    ctx := context.Background()
     
-    // Test PDF loader integration
-    testPDF := createTestPDF(t) // Helper to create test PDF
-    
-    loader := documentloaders.NewPDF(testPDF)
-    splitter := textsplitters.NewRecursiveCharacter(
-        textsplitters.WithChunkSize(500),
-        textsplitters.WithChunkOverlap(50),
-    )
-    
-    docs, err := loader.LoadAndSplit(ctx, splitter)
-    require.NoError(t, err)
-    assert.Greater(t, len(docs), 0)
-    
-    // Verify document structure
-    for _, doc := range docs {
-        assert.NotEmpty(t, doc.PageContent)
-        assert.Contains(t, doc.Metadata, "source")
-    }
-}
-```
-```
-
-## Migration Strategy
-
-### Deployment Steps
-
-1. **Feature Flag Implementation**
-   ```go
-   type Config struct {
-       RAG RAGConfig `yaml:"rag"`
-   }
-   
-   type RAGConfig struct {
-       Enabled bool `yaml:"enabled" default:"false"`
-   }
-   ```
-
-2. **Gradual Rollout**
-   - Deploy with RAG disabled by default
-   - Enable for testing/staging environments
-   - Gradually enable for production users
-
-3. **Backward Compatibility**
-   - All existing functionality continues to work
-   - RAG is purely additive
-   - No breaking changes to existing APIs
-
-4. **Data Migration**
-   ```bash
-   # If migrating from external systems
-   ./slack-mcp-client rag import --input old-knowledge.db
-   ./slack-mcp-client rag rebuild-index
-   ```
-
-## Monitoring and Observability
-
-### Metrics to Track
-
-```go
-type RAGMetrics struct {
-    SearchCount         int64
-    AvgSearchTime       time.Duration
-    CacheHitRate        float64
-    DocumentCount       int64
-    DatabaseSize        int64
-    ErrorRate           float64
-}
-```
-
-### Health Checks
-
-```go
-func (m *SQLiteManager) HealthCheck() error {
-    // Test database connectivity
-    if err := m.db.Ping(); err != nil {
-        return fmt.Errorf("database ping failed: %w", err)
-    }
-    
-    // Test FTS5 functionality
-    _, err := m.db.Exec("SELECT * FROM documents WHERE documents MATCH 'test' LIMIT 1")
     if err != nil {
-        return fmt.Errorf("FTS5 test failed: %w", err)
+        log.Fatalf("Error walking directory: %v", err)
     }
     
-    return nil
+    fmt.Printf("Ingestion complete. Processed %d PDF files.\n", count)
+}
+
+func handleRAGSearch(query string) {
+    store, err := rag.NewStore(*ragDBPath)
+    if err != nil {
+        log.Fatalf("Failed to open RAG database: %v", err)
+    }
+    defer store.Close()
+    
+    docs, err := store.Search(context.Background(), query, 5)
+    if err != nil {
+        log.Fatalf("Search failed: %v", err)
+    }
+    
+    fmt.Printf("Search results for: %s\n", query)
+    fmt.Printf("Found %d documents:\n\n", len(docs))
+    
+    for i, doc := range docs {
+        fmt.Printf("--- Result %d ---\n", i+1)
+        fmt.Printf("Content: %.200s...\n", doc.Content)
+        if filePath, ok := doc.Metadata["file_path"].(string); ok {
+            fmt.Printf("Source: %s\n", filepath.Base(filePath))
+        }
+        fmt.Println()
+    }
 }
 ```
 
-## Benefits of LangChain Integration
+## Usage Examples
 
-### Why LangChain for RAG Implementation
+### Starting in Normal Mode (no RAG)
+```bash
+# Regular Slack bot behavior
+./slack-mcp-client
+```
 
-1. **Proven Abstractions**: LangChain provides battle-tested interfaces for document loading, text splitting, and retrieval that handle edge cases and optimizations.
+### Starting in RAG Mode (deterministic)
+```bash
+# ALL Slack interactions use RAG
+./slack-mcp-client --rag
 
-2. **Standardized Components**: Using `vectorstores.VectorStore` and `schema.Retriever` interfaces ensures compatibility with future LangChain ecosystem improvements.
+# RAG mode with custom database and watching folders
+./slack-mcp-client --rag --rag-db ./knowledge.db --rag-watch ./docs,./manuals
+```
 
-3. **Advanced Chain Types**: Access to sophisticated QA strategies like `LoadStuffQA`, `LoadMapReduceQA`, and `LoadRefineQA` without custom implementation.
+### Utility Commands (standalone)
+```bash
+# Ingest PDF files into database (one-time)
+./slack-mcp-client --rag-ingest ./company-docs
 
-4. **Prompt Engineering**: Built-in prompt templates and chain composition for RAG workflows, with easy customization for Slack-specific formatting.
+# Search database directly (testing)
+./slack-mcp-client --rag-search "vacation policy"
+```
 
-5. **Future-Proof**: As LangChain Go evolves, you'll automatically get access to new loaders, splitters, and chain types.
+### Runtime Behavior
 
-6. **Reduced Development Time**: Leveraging existing document loaders and text splitters saves significant development effort compared to building from scratch.
+**Normal Mode**: `User: "What's our vacation policy?"` → LLM generates answer without context
 
-7. **Testing & Reliability**: LangChain components are extensively tested across different document types and use cases.
+**RAG Mode**: `User: "What's our vacation policy?"` → Search docs → LLM generates answer with context
 
-### Architecture Benefits
+## Benefits of Deterministic Approach
 
-- **Single Binary**: SQLite backend maintains your zero-dependency deployment model
-- **Performance**: Direct database access with no network overhead between components  
-- **Consistency**: RAG module follows your existing `internal/` package structure
-- **Flexibility**: Easy to swap LLM providers while keeping the same RAG infrastructure
-- **Observability**: LangChain callbacks provide built-in monitoring and logging
+1. ✅ **Predictable behavior** - No guessing if RAG will trigger
+2. ✅ **Clear mode separation** - Either RAG or normal, never mixed
+3. ✅ **Easy testing** - Start with `--rag` to test RAG functionality
+4. ✅ **Production safety** - Explicit opt-in prevents surprises
+5. ✅ **90% less code** than original plan
+6. ✅ **Leverages existing patterns** (LLM providers, config, logging)
+7. ✅ **No new dependencies** beyond sqlite3 driver
+8. ✅ **Simple to understand and maintain**
+9. ✅ **Easy to extend** when needed
+10. ✅ **Faster implementation** (1 week vs 4+ weeks)
 
-This implementation plan provides a comprehensive roadmap for integrating SQLite-based RAG capabilities directly into your Go Slack MCP Client using LangChain, maintaining your single-binary deployment model while leveraging proven document processing and retrieval patterns. 
+## Migration Path
+
+1. **Week 1**: Implement basic RAG store and LLM integration
+2. **Week 2**: Add simple file watching and Slack integration  
+3. **Week 3**: Polish and add CLI commands
+
+This simplified approach achieves 80% of the functionality with 20% of the complexity! 
