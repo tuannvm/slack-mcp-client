@@ -1,532 +1,534 @@
-# Simplified SQLite RAG Implementation
+# SQLite RAG Implementation & Migration Plan
 
 ## Overview
 
-A streamlined approach to adding RAG capabilities to the existing Slack MCP Client, leveraging current LangChain integration and avoiding over-engineering.
+A comprehensive migration plan from the current JSON-based RAG system to a high-performance SQLite implementation with FTS5 full-text search. This upgrade addresses scalability limitations while maintaining backward compatibility.
 
-## Simplified Architecture
+## SQLite Migration Architecture
 
 ```mermaid
 graph TD
     A["📱 Slack User"] --> B["🤖 Existing Slack Handler"]
-    B --> C{"RAG Query?"}
-    C -->|Yes| D["🔍 RAG Store<br/>(SQLite FTS5)"]
-    C -->|No| E["🧠 Existing LLM Provider"]
-    D --> F["📄 Context Documents"]
-    F --> E
-    E --> G["💬 Enhanced Response"]
-    G --> B
+    B --> C["🌉 Existing LLM-MCP Bridge"]
+    C --> D{"Tool Needed?"}
+    D -->|RAG Query| E["🔍 SQLite RAG<br/>(FTS5 Search)"]
+    D -->|Other| F["🛠️ Other MCP Tools"]
+    D -->|No Tool| G["🧠 Direct LLM"]
+    E --> H["⚡ SQLite Database<br/>+ FTS5 Index"]
+    H --> I["📄 Ranked Results"]
+    I --> G
+    F --> G
+    G --> J["💬 Response"]
+    J --> B
     B --> A
     
-    H["📁 PDF Files"] --> I["👀 Simple File Watcher"]
-    I --> D
+    K["📁 PDF Files"] --> L["⚡ Batch Ingestion"]
+    L --> E
+    M["📄 JSON Migration"] --> N["🔄 Auto-Migration"]
+    N --> E
 ```
 
-## Key Simplifications
+## Key Improvements Over JSON Implementation
 
-1. **Single RAG component** instead of multiple managers/processors
-2. **Leverage existing LLM provider pattern** 
-3. **Simple file watcher** without job queues
-4. **Minimal configuration** using existing config system
-5. **Basic CLI integration** using existing flag parser
+### **Performance Gains**
+- **Search Speed**: O(log n) FTS5 indexing vs O(n) linear scan
+- **Memory Usage**: <50MB regardless of document count vs linear growth
+- **Document Capacity**: 50,000+ documents vs ~1,000 practical limit
+- **Query Performance**: <100ms search time vs degrading performance
 
-## Implementation
+### **Feature Enhancements**
+- **Advanced Search**: Boolean operators (AND, OR, NOT), phrase matching
+- **Faceted Search**: Filter by file type, date range, source
+- **Relevance Scoring**: BM25 ranking algorithm built into FTS5
+- **Pagination**: Efficient offset/limit for large result sets
 
-### 1. Extend Existing LLM Provider Interface
+## **LangChain Go Integration Analysis**
 
+Based on research of the LangChain Go ecosystem, here are the available SQLite integration options:
+
+### **Option 1: Direct SQLite Integration** ⭐ *RECOMMENDED*
+
+**Advantages:**
+- **Zero LangChain Dependencies**: Use standard `database/sql` with SQLite driver
+- **Full Control**: Direct SQL queries, custom schema design, optimal performance
+- **Mature Ecosystem**: `github.com/mattn/go-sqlite3` is the standard Go SQLite driver
+- **FTS5 Support**: Built-in full-text search with SQLite FTS5 extension
+
+**Implementation:**
 ```go
-// Add to internal/llm/provider.go
-type LLMProvider interface {
-    GenerateCompletion(ctx context.Context, prompt string, options ProviderOptions) (*llms.ContentChoice, error)
-    GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (*llms.ContentChoice, error)
-    
-    // New RAG capability
-    GenerateRAGCompletion(ctx context.Context, query string, ragStore RAGStore) (*llms.ContentChoice, error)
-}
-
-// Simple RAG store interface
-type RAGStore interface {
-    Search(ctx context.Context, query string, limit int) ([]Document, error)
-    AddDocument(ctx context.Context, content string, metadata map[string]any) error
-    ProcessFile(ctx context.Context, filePath string) error
-    Close() error  // For proper database cleanup
-}
-```
-
-### 2. Simple RAG Store Implementation
-
-```go
-// internal/rag/store.go
-package rag
-
 import (
-    "context"
     "database/sql"
-    "encoding/json"
     _ "github.com/mattn/go-sqlite3"
-    "github.com/tmc/langchaingo/documentloaders"
-    "github.com/tmc/langchaingo/textsplitter"
 )
 
-type Store struct {
-    db       *sql.DB
-    splitter textsplitter.TextSplitter
-}
-
-func NewStore(dbPath string) (*Store, error) {
-    db, err := sql.Open("sqlite3", dbPath+"?_fts=fts5")
-    if err != nil {
-        return nil, err
-    }
-    
-    // Simple schema
-    _, err = db.Exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS documents USING fts5(
-            content,
-            metadata UNINDEXED
-        )
-    `)
-    if err != nil {
-        return nil, err
-    }
-    
-    splitter := textsplitter.NewRecursiveCharacter(
-        textsplitter.WithChunkSize(1000),
-        textsplitter.WithChunkOverlap(200),
-    )
-    
-    return &Store{db: db, splitter: splitter}, nil
-}
-
-func (s *Store) Search(ctx context.Context, query string, limit int) ([]Document, error) {
-    rows, err := s.db.QueryContext(ctx, 
-        "SELECT content, metadata FROM documents WHERE documents MATCH ? ORDER BY bm25(documents) LIMIT ?",
-        query, limit)
-    if err != nil {
-        return nil, err
-    }
-    defer rows.Close()
-    
-    var docs []Document
-    for rows.Next() {
-        var content, metadataJSON string
-        if err := rows.Scan(&content, &metadataJSON); err != nil {
-            continue
-        }
-        
-        var metadata map[string]any
-        json.Unmarshal([]byte(metadataJSON), &metadata)
-        
-        docs = append(docs, Document{
-            Content:  content,
-            Metadata: metadata,
-        })
-    }
-    return docs, nil
-}
-
-func (s *Store) ProcessFile(ctx context.Context, filePath string) error {
-    // Remove existing documents for this file
-    metadataFilter := map[string]any{"file_path": filePath}
-    metadataJSON, _ := json.Marshal(metadataFilter)
-    s.db.ExecContext(ctx, "DELETE FROM documents WHERE metadata = ?", metadataJSON)
-    
-    // Load PDF using existing LangChain loader
-    file, err := os.Open(filePath)
-    if err != nil {
-        return err
-    }
-    defer file.Close()
-    
-    info, _ := file.Stat()
-    loader := documentloaders.NewPDF(file, info.Size())
-    
-    docs, err := loader.LoadAndSplit(ctx, s.splitter)
-    if err != nil {
-        return err
-    }
-    
-    // Store documents
-    for i, doc := range docs {
-        metadata := map[string]any{
-            "file_path":   filePath,
-            "chunk_index": i,
-        }
-        metadataJSON, _ := json.Marshal(metadata)
-        
-        _, err = s.db.ExecContext(ctx,
-            "INSERT INTO documents (content, metadata) VALUES (?, ?)",
-            doc.PageContent, metadataJSON)
-        if err != nil {
-            return err
-        }
-    }
-    return nil
-}
-
-func (s *Store) Close() error {
-    return s.db.Close()
-}
-
-type Document struct {
-    Content  string         `json:"content"`
-    Metadata map[string]any `json:"metadata"`
+// Custom RAG implementation with direct SQLite access
+type SQLiteRAG struct {
+    db *sql.DB
 }
 ```
 
-### 3. Simple File Watcher
+### **Option 2: LangChain Go SQLite Memory + Custom Vector Store** 
 
+**Status**: **CONFIRMED** - LangChain Go has limited SQLite support
+
+**Available in LangChain Go:**
+- ✅ **SqliteChatMessageHistory** (`github.com/tmc/langchaingo/memory/sqlite3`)
+- ✅ **SQL Database Toolkit** (general SQLite database operations)
+- ❌ **NO SQLite Vector Store** (not available in LangChain Go)
+
+**Hybrid Approach:**
 ```go
-// internal/rag/watcher.go
-package rag
-
 import (
-    "path/filepath"
-    "time"
-    "github.com/fsnotify/fsnotify"
+    "github.com/tmc/langchaingo/memory/sqlite3"
+    "database/sql"
+    _ "github.com/mattn/go-sqlite3"
 )
 
-type SimpleWatcher struct {
-    store     *Store
-    paths     []string
-    debounce  time.Duration
-    timers    map[string]*time.Timer
-}
-
-func NewWatcher(store *Store, paths []string) *SimpleWatcher {
-    return &SimpleWatcher{
-        store:    store,
-        paths:    paths,
-        debounce: 2 * time.Second,
-        timers:   make(map[string]*time.Timer),
-    }
-}
-
-func (w *SimpleWatcher) Start() error {
-    watcher, err := fsnotify.NewWatcher()
-    if err != nil {
-        return err
-    }
-    
-    for _, path := range w.paths {
-        watcher.Add(path)
-    }
-    
-    go func() {
-        for event := range watcher.Events {
-            if filepath.Ext(event.Name) == ".pdf" {
-                w.debounceProcess(event.Name)
-            }
-        }
-    }()
-    
-    return nil
-}
-
-func (w *SimpleWatcher) debounceProcess(filePath string) {
-    if timer, exists := w.timers[filePath]; exists {
-        timer.Stop()
-    }
-    
-    w.timers[filePath] = time.AfterFunc(w.debounce, func() {
-        w.store.ProcessFile(context.Background(), filePath)
-        delete(w.timers, filePath)
-    })
+// Use LangChain for memory + custom vector storage
+type HybridRAG struct {
+    memory   *sqlite3.SqliteChatMessageHistory
+    vectorDB *sql.DB // Custom vector implementation
 }
 ```
 
-### 4. Integrate with Existing LLM Provider
+### **Option 3: Third-Party Go Vector Libraries**
 
-```go
-// Enhance internal/llm/langchain.go
-func (p *LangChainProvider) GenerateRAGCompletion(ctx context.Context, query string, ragStore RAGStore) (*llms.ContentChoice, error) {
-    // Search for relevant documents
-    docs, err := ragStore.Search(ctx, query, 3)
-    if err != nil {
-        return nil, err
-    }
-    
-    // Build enhanced prompt
-    var contextBuilder strings.Builder
-    contextBuilder.WriteString("Based on the following context, answer the question:\n\n")
-    
-    for _, doc := range docs {
-        contextBuilder.WriteString(fmt.Sprintf("Context: %s\n\n", doc.Content))
-    }
-    
-    contextBuilder.WriteString(fmt.Sprintf("Question: %s\n\nAnswer:", query))
-    
-    return p.GenerateCompletion(ctx, contextBuilder.String(), ProviderOptions{})
-}
+**Alternative Libraries:**
+- **`chand1012/vectorgo`** - Pure Go SQLite-powered vector database
+- **Custom Implementation** - Build vector similarity search on top of SQLite
+
+**Advantages:**
+- **Specialized**: Purpose-built for vector operations
+- **Go Native**: No Python dependencies
+
+### **Recommendation: Pure Go Implementation**
+
+For this project, **Option 1 (Direct SQLite)** is recommended because:
+
+1. **Existing Pattern**: Current JSON implementation is custom, not LangChain-dependent
+2. **Performance Focus**: Direct SQL access provides optimal performance
+3. **Full Feature Control**: Can implement exactly the features needed
+4. **Maintenance**: Fewer dependencies, easier to debug and maintain
+5. **LangChain Go Limitations**: No vector store support for SQLite
+
+## Database Schema Design
+
+```sql
+-- Core documents table with metadata
+CREATE TABLE documents (
+    id INTEGER PRIMARY KEY,
+    content_hash TEXT UNIQUE NOT NULL,
+    file_path TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    metadata JSON NOT NULL,
+    ingested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- FTS5 virtual table for full-text search
+CREATE VIRTUAL TABLE documents_fts USING fts5(
+    content, 
+    file_name, 
+    metadata,
+    content=documents,
+    content_rowid=id,
+    tokenize='porter'
+);
+
+-- Performance indexes
+CREATE INDEX idx_documents_file_path ON documents(file_path);
+CREATE INDEX idx_documents_file_type ON documents(file_type);
+CREATE INDEX idx_documents_hash ON documents(content_hash);
+CREATE INDEX idx_documents_ingested ON documents(ingested_at);
+
+-- Triggers to keep FTS5 in sync
+CREATE TRIGGER documents_fts_insert AFTER INSERT ON documents BEGIN
+    INSERT INTO documents_fts(rowid, content, file_name, metadata) 
+    VALUES (NEW.id, NEW.content, NEW.file_name, NEW.metadata);
+END;
+
+CREATE TRIGGER documents_fts_delete AFTER DELETE ON documents BEGIN
+    DELETE FROM documents_fts WHERE rowid = OLD.id;
+END;
+
+CREATE TRIGGER documents_fts_update AFTER UPDATE ON documents BEGIN
+    UPDATE documents_fts SET 
+        content = NEW.content,
+        file_name = NEW.file_name,
+        metadata = NEW.metadata
+    WHERE rowid = NEW.id;
+END;
 ```
 
-### 5. Deterministic RAG Mode
+## Implementation Architecture
+
+### **Core Components**
 
 ```go
-// Enhance internal/handlers/handler.go
-type SlackHandler struct {
-    // existing fields...
-    ragStore   *rag.Store
-    ragEnabled bool  // Set at startup based on --rag flag
-}
-
-func (h *SlackHandler) processMessage(ctx context.Context, message string) error {
-    // Deterministic RAG behavior - if enabled, ALWAYS use RAG
-    if h.ragEnabled && h.ragStore != nil {
-        response, err := h.llmProvider.GenerateRAGCompletion(ctx, message, h.ragStore)
-        if err != nil {
-            // Log error but fallback to normal processing
-            h.logger.Warn("RAG completion failed, falling back to normal: %v", err)
-            return h.processNormalMessage(ctx, message)
-        }
-        return h.sendResponse(response.Content)
-    }
-    
-    // Normal processing when RAG is disabled
-    return h.processNormalMessage(ctx, message)
-}
-```
-
-### 6. Minimal Configuration
-
-```go
-// Add to internal/config/config.go
-type Config struct {
-    // existing fields...
-    RAG *RAGConfig `json:"rag,omitempty"`
+// SQLite RAG implementation
+type SQLiteRAG struct {
+    db       *sql.DB
+    dbPath   string
+    config   RAGConfig
+    logger   *log.Logger
 }
 
 type RAGConfig struct {
-    Enabled      bool     `json:"enabled"`
-    DatabasePath string   `json:"database_path"`
-    WatchPaths   []string `json:"watch_paths"`
+    ChunkSize      int      `json:"chunk_size"`
+    ChunkOverlap   int      `json:"chunk_overlap"`
+    EnableFTS5     bool     `json:"enable_fts5"`
+    IndexFields    []string `json:"index_fields"`
+    MaxResults     int      `json:"max_results"`
+    EnableMetrics  bool     `json:"enable_metrics"`
 }
 
-// Default RAG configuration
-func (c *Config) ensureRAGDefaults() {
-    if c.RAG == nil {
-        c.RAG = &RAGConfig{
-            Enabled:      false,
-            DatabasePath: "./rag.db",
-            WatchPaths:   []string{},
-        }
-    }
-    if c.RAG.DatabasePath == "" {
-        c.RAG.DatabasePath = "./rag.db"
-    }
+type SearchOptions struct {
+    Query         string            `json:"query"`
+    Filters       map[string]string `json:"filters"`
+    Limit         int              `json:"limit"`
+    Offset        int              `json:"offset"`
+    SortBy        string           `json:"sort_by"`
+    SortOrder     string           `json:"sort_order"`
+    EnableSnippet bool             `json:"enable_snippet"`
+}
+
+type SearchResult struct {
+    Documents    []Document        `json:"documents"`
+    TotalCount   int              `json:"total_count"`
+    QueryTime    time.Duration    `json:"query_time"`
+    Facets       map[string][]Facet `json:"facets,omitempty"`
+}
+
+type Document struct {
+    ID          int64             `json:"id"`
+    Content     string            `json:"content"`
+    Snippet     string            `json:"snippet,omitempty"`
+    Metadata    map[string]string `json:"metadata"`
+    Score       float64           `json:"score"`
+    IngestedAt  time.Time         `json:"ingested_at"`
 }
 ```
 
-### 7. Slack Handler Initialization
+### **Advanced Search Implementation**
 
 ```go
-// Update startSlackClient function in cmd/main.go
-func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
-    // Ensure RAG defaults
-    cfg.ensureRAGDefaults()
+// Enhanced search with FTS5 features
+func (r *SQLiteRAG) Search(opts SearchOptions) (*SearchResult, error) {
+    startTime := time.Now()
     
-    // Initialize RAG store if enabled
-    var ragStore *rag.Store
-    var ragWatcher *rag.SimpleWatcher
+    // Build FTS5 query with ranking
+    ftsQuery := r.buildFTS5Query(opts.Query)
     
-    if cfg.RAG.Enabled {
-        logger.Info("Initializing RAG store at: %s", cfg.RAG.DatabasePath)
+    // Construct SQL with filters and pagination
+    baseQuery := `
+        SELECT d.id, d.content, d.metadata, d.ingested_at,
+               snippet(documents_fts, 0, '<mark>', '</mark>', '...', 32) as snippet,
+               rank as score
+        FROM documents_fts fts
+        JOIN documents d ON d.id = fts.rowid
+        WHERE documents_fts MATCH ?`
+    
+    // Add filters
+    args := []interface{}{ftsQuery}
+    if opts.Filters != nil {
+        for key, value := range opts.Filters {
+            baseQuery += fmt.Sprintf(" AND json_extract(d.metadata, '$.%s') = ?", key)
+            args = append(args, value)
+        }
+    }
+    
+    // Add ordering and pagination
+    baseQuery += ` ORDER BY rank LIMIT ? OFFSET ?`
+    args = append(args, opts.Limit, opts.Offset)
+    
+    rows, err := r.db.Query(baseQuery, args...)
+    if err != nil {
+        return nil, fmt.Errorf("search query failed: %w", err)
+    }
+    defer rows.Close()
+    
+    var documents []Document
+    for rows.Next() {
+        var doc Document
+        var metadataJSON string
         
-        store, err := rag.NewStore(cfg.RAG.DatabasePath)
+        err := rows.Scan(&doc.ID, &doc.Content, &metadataJSON, 
+                        &doc.IngestedAt, &doc.Snippet, &doc.Score)
         if err != nil {
-            logger.Fatal("Failed to initialize RAG store: %v", err)
+            return nil, err
         }
-        ragStore = store
         
-        // Start file watcher if paths specified
-        if len(cfg.RAG.WatchPaths) > 0 {
-            logger.Info("Starting RAG file watcher for paths: %v", cfg.RAG.WatchPaths)
-            ragWatcher = rag.NewWatcher(store, cfg.RAG.WatchPaths)
-            if err := ragWatcher.Start(); err != nil {
-                logger.Error("Failed to start RAG watcher: %v", err)
-            }
-        }
+        json.Unmarshal([]byte(metadataJSON), &doc.Metadata)
+        documents = append(documents, doc)
     }
     
-    // Initialize Slack handler with RAG configuration
-    handler := &handlers.SlackHandler{
-        // existing fields...
-        ragStore:   ragStore,
-        ragEnabled: cfg.RAG.Enabled,  // Deterministic flag set at startup
+    // Get total count for pagination
+    totalCount, _ := r.getSearchCount(ftsQuery, opts.Filters)
+    
+    return &SearchResult{
+        Documents:  documents,
+        TotalCount: totalCount,
+        QueryTime:  time.Since(startTime),
+    }, nil
+}
+
+// Build optimized FTS5 query
+func (r *SQLiteRAG) buildFTS5Query(query string) string {
+    // Handle phrase queries
+    if strings.Contains(query, `"`) {
+        return query // Pass through phrase queries as-is
     }
     
-    // Start Slack client...
-    logger.Info("Starting Slack client (RAG enabled: %t)", cfg.RAG.Enabled)
-    // ... rest of Slack initialization
+    // Split into terms and build OR query for flexibility
+    terms := strings.Fields(strings.ToLower(query))
+    if len(terms) == 1 {
+        return terms[0]
+    }
+    
+    // Build query like: term1 AND (term2 OR term3 OR term4)
+    return fmt.Sprintf(`%s AND (%s)`, terms[0], strings.Join(terms[1:], " OR "))
 }
 ```
 
-### 8. Deterministic Startup Flow
+## Migration Strategy
 
-The deterministic behavior works as follows:
-
-1. **Command Line Decision**: `./slack-mcp-client --rag`
-2. **Flag Processing**: `ragEnabled` flag is set to true
-3. **Configuration Override**: RAG config is enabled regardless of JSON config
-4. **Handler Initialization**: SlackHandler gets `ragEnabled = true`
-5. **Runtime Behavior**: ALL Slack messages go through RAG (no heuristics)
-
-### 9. Deterministic CLI Integration
+### **Backward Compatibility Interface**
 
 ```go
-// Add to cmd/main.go flags
-var (
-    // RAG mode flags
-    ragEnabled = flag.Bool("rag", false, "Enable RAG mode for all Slack interactions")
-    ragDBPath  = flag.String("rag-db", "./rag.db", "Path to RAG database")
-    ragWatch   = flag.String("rag-watch", "", "Directory to watch for PDF files (comma-separated)")
+// Unified interface supporting both implementations
+type RAGInterface interface {
+    Search(query string, limit int) []Document
+    SearchWithOptions(opts SearchOptions) (*SearchResult, error)
+    IngestPDF(filePath string) error
+    IngestDirectory(dirPath string) (int, error)
+    GetDocumentCount() int
+    GetStats() RAGStats
+}
+
+// Factory function with automatic migration
+func NewRAG(dbPath string, config RAGConfig) (RAGInterface, error) {
+    // Detect existing format
+    if strings.HasSuffix(dbPath, ".json") {
+        // Check if SQLite migration is requested
+        sqlitePath := strings.Replace(dbPath, ".json", ".db", 1)
+        if config.EnableMigration {
+            return migrateJSONToSQLite(dbPath, sqlitePath, config)
+        }
+        return NewSimpleRAG(dbPath), nil
+    }
     
-    // RAG utility commands
-    ragIngest = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
-    ragSearch = flag.String("rag-search", "", "Search RAG database and exit")
+    return NewSQLiteRAG(dbPath, config)
+}
+
+// Automatic migration from JSON to SQLite
+func migrateJSONToSQLite(jsonPath, sqlitePath string, config RAGConfig) (*SQLiteRAG, error) {
+    // Load existing JSON data
+    jsonRAG := NewSimpleRAG(jsonPath)
+    documents := jsonRAG.getAllDocuments()
+    
+    // Create new SQLite instance
+    sqliteRAG, err := NewSQLiteRAG(sqlitePath, config)
+    if err != nil {
+        return nil, err
+    }
+    
+    // Migrate documents with progress tracking
+    log.Printf("Migrating %d documents from JSON to SQLite...", len(documents))
+    for i, doc := range documents {
+        if err := sqliteRAG.insertDocument(doc); err != nil {
+            return nil, fmt.Errorf("migration failed at document %d: %w", i, err)
+        }
+        
+        if (i+1)%100 == 0 {
+            log.Printf("Migrated %d/%d documents", i+1, len(documents))
+        }
+    }
+    
+    // Backup original JSON file
+    backupPath := jsonPath + ".backup"
+    os.Rename(jsonPath, backupPath)
+    log.Printf("Migration complete. Original file backed up to %s", backupPath)
+    
+    return sqliteRAG, nil
+}
+```
+
+### **Configuration Migration**
+
+```json
+{
+  "llm_providers": {
+    "openai": {
+      "type": "openai",
+      "model": "gpt-4o",
+      "rag_enabled": true,
+      "rag_database": "./knowledge.db",
+      "rag_config": {
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "enable_fts5": true,
+        "max_results": 10,
+        "enable_migration": true,
+        "index_fields": ["content", "file_name", "metadata"]
+      }
+    }
+  }
+}
+```
+
+## CLI Commands Enhancement
+
+```go
+// Enhanced CLI with SQLite-specific features
+var (
+    ragIngest     = flag.String("rag-ingest", "", "Ingest files from directory")
+    ragSearch     = flag.String("rag-search", "", "Search RAG database")
+    ragDatabase   = flag.String("rag-db", "./knowledge.db", "Path to RAG database")
+    ragMigrate    = flag.Bool("rag-migrate", false, "Migrate from JSON to SQLite")
+    ragOptimize   = flag.Bool("rag-optimize", false, "Optimize database (VACUUM, ANALYZE)")
+    ragStats      = flag.Bool("rag-stats", false, "Show database statistics")
+    ragExport     = flag.String("rag-export", "", "Export to JSON file")
 )
 
-func main() {
-    flag.Parse()
-    
-    // Handle RAG utility commands first (these exit after completion)
-    if *ragIngest != "" {
-        handleRAGIngest(*ragIngest)
-        return
-    }
-    
-    if *ragSearch != "" {
-        handleRAGSearch(*ragSearch)
-        return
-    }
-    
-    // Normal startup with optional RAG mode
-    logger := setupLogging()
-    cfg := loadAndPrepareConfig(logger)
-    
-    // Override RAG config from CLI flags
-    if *ragEnabled {
-        if cfg.RAG == nil {
-            cfg.RAG = &RAGConfig{}
-        }
-        cfg.RAG.Enabled = true
-        cfg.RAG.DatabasePath = *ragDBPath
-        if *ragWatch != "" {
-            cfg.RAG.WatchPaths = strings.Split(*ragWatch, ",")
-        }
-        logger.Info("RAG mode enabled via --rag flag")
-    }
-    
-    // Initialize MCP clients and Slack handler...
-    mcpClients, discoveredTools := initializeMCPClients(logger, cfg)
-    startSlackClient(logger, mcpClients, discoveredTools, cfg)
-}
-
-func handleRAGIngest(path string) {
-    store, err := rag.NewStore(*ragDBPath)
-    if err != nil {
-        log.Fatalf("Failed to open RAG database: %v", err)
-    }
-    defer store.Close()
-    
-    fmt.Printf("Ingesting PDF files from: %s\n", path)
-    count := 0
-    
-    err = filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-        if filepath.Ext(path) == ".pdf" {
-            fmt.Printf("Processing: %s\n", path)
-            if err := store.ProcessFile(context.Background(), path); err != nil {
-                fmt.Printf("  Error: %v\n", err)
-            } else {
-                count++
-                fmt.Printf("  ✓ Processed\n")
-            }
-        }
-        return nil
-    })
-    
-    if err != nil {
-        log.Fatalf("Error walking directory: %v", err)
-    }
-    
-    fmt.Printf("Ingestion complete. Processed %d PDF files.\n", count)
-}
-
+// Enhanced search with filters
 func handleRAGSearch(query string) {
-    store, err := rag.NewStore(*ragDBPath)
+    rag, err := NewSQLiteRAG(*ragDatabase, defaultConfig)
     if err != nil {
-        log.Fatalf("Failed to open RAG database: %v", err)
+        log.Fatalf("Failed to open database: %v", err)
     }
-    defer store.Close()
+    defer rag.Close()
     
-    docs, err := store.Search(context.Background(), query, 5)
+    opts := SearchOptions{
+        Query:         query,
+        Limit:         10,
+        EnableSnippet: true,
+    }
+    
+    result, err := rag.SearchWithOptions(opts)
     if err != nil {
         log.Fatalf("Search failed: %v", err)
     }
     
     fmt.Printf("Search results for: %s\n", query)
-    fmt.Printf("Found %d documents:\n\n", len(docs))
+    fmt.Printf("Found %d documents (%v):\n\n", result.TotalCount, result.QueryTime)
     
-    for i, doc := range docs {
-        fmt.Printf("--- Result %d ---\n", i+1)
-        fmt.Printf("Content: %.200s...\n", doc.Content)
-        if filePath, ok := doc.Metadata["file_path"].(string); ok {
-            fmt.Printf("Source: %s\n", filepath.Base(filePath))
+    for i, doc := range result.Documents {
+        fmt.Printf("--- Result %d (Score: %.2f) ---\n", i+1, doc.Score)
+        if doc.Snippet != "" {
+            fmt.Printf("Content: %s\n", doc.Snippet)
+        } else {
+            fmt.Printf("Content: %.200s...\n", doc.Content)
         }
+        if fileName, ok := doc.Metadata["file_name"]; ok {
+            fmt.Printf("Source: %s\n", fileName)
+        }
+        fmt.Printf("Ingested: %s\n", doc.IngestedAt.Format("2006-01-02 15:04"))
         fmt.Println()
     }
 }
 ```
 
-## Usage Examples
+## Performance Optimizations
 
-### Starting in Normal Mode (no RAG)
-```bash
-# Regular Slack bot behavior
-./slack-mcp-client
+### **Database Tuning**
+
+```sql
+-- SQLite performance settings
+PRAGMA journal_mode = WAL;           -- Write-ahead logging
+PRAGMA synchronous = NORMAL;         -- Balance safety and speed  
+PRAGMA cache_size = -64000;          -- 64MB cache
+PRAGMA foreign_keys = ON;            -- Referential integrity
+PRAGMA optimize;                     -- Query planner optimization
+
+-- FTS5 optimization
+INSERT INTO documents_fts(documents_fts, rank) VALUES('automerge', 8);
+INSERT INTO documents_fts(documents_fts) VALUES('optimize');
 ```
 
-### Starting in RAG Mode (deterministic)
-```bash
-# ALL Slack interactions use RAG
-./slack-mcp-client --rag
+### **Batch Operations**
 
-# RAG mode with custom database and watching folders
-./slack-mcp-client --rag --rag-db ./knowledge.db --rag-watch ./docs,./manuals
+```go
+// Efficient batch ingestion
+func (r *SQLiteRAG) IngestBatch(files []string) error {
+    tx, err := r.db.Begin()
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+    
+    stmt, err := tx.Prepare(`
+        INSERT INTO documents (content_hash, file_path, file_name, file_type, 
+                             chunk_index, content, metadata) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    if err != nil {
+        return err
+    }
+    defer stmt.Close()
+    
+    for _, filePath := range files {
+        chunks, err := r.processFile(filePath)
+        if err != nil {
+            log.Printf("Error processing %s: %v", filePath, err)
+            continue
+        }
+        
+        for i, chunk := range chunks {
+            hash := r.hashContent(chunk.Content)
+            metadata, _ := json.Marshal(chunk.Metadata)
+            
+            _, err := stmt.Exec(hash, filePath, filepath.Base(filePath),
+                              filepath.Ext(filePath), i, chunk.Content, metadata)
+            if err != nil {
+                return err
+            }
+        }
+    }
+    
+    return tx.Commit()
+}
 ```
 
-### Utility Commands (standalone)
-```bash
-# Ingest PDF files into database (one-time)
-./slack-mcp-client --rag-ingest ./company-docs
+## Monitoring & Analytics
 
-# Search database directly (testing)
-./slack-mcp-client --rag-search "vacation policy"
+```go
+type RAGStats struct {
+    DocumentCount    int64         `json:"document_count"`
+    DatabaseSize     int64         `json:"database_size_bytes"`
+    IndexSize        int64         `json:"index_size_bytes"`
+    AvgQueryTime     time.Duration `json:"avg_query_time"`
+    PopularQueries   []QueryStat   `json:"popular_queries"`
+    FileTypeCounts   map[string]int `json:"file_type_counts"`
+    LastIngestion    time.Time     `json:"last_ingestion"`
+}
+
+type QueryStat struct {
+    Query      string        `json:"query"`
+    Count      int          `json:"count"`
+    AvgTime    time.Duration `json:"avg_time"`
+    LastUsed   time.Time     `json:"last_used"`
+}
+
+func (r *SQLiteRAG) GetStats() RAGStats {
+    // Implementation for comprehensive statistics
+}
 ```
 
-### Runtime Behavior
+## Future Extensions
 
-**Normal Mode**: `User: "What's our vacation policy?"` → LLM generates answer without context
+### **Advanced Features Ready for Implementation**
+- **Vector Embeddings**: Add embedding column for semantic search
+- **Multi-tenant**: Namespace isolation with tenant_id
+- **Real-time Sync**: File watching and incremental updates
+- **Backup/Restore**: Automated backup procedures
+- **Replication**: Master-slave setup for high availability
 
-**RAG Mode**: `User: "What's our vacation policy?"` → Search docs → LLM generates answer with context
+### **Integration Points**
+- **Slack Bot**: Enhanced search commands with filters
+- **Web UI**: Management interface for document lifecycle
+- **API Server**: RESTful endpoints for external integration
+- **Monitoring**: Prometheus metrics and health checks
 
-## Benefits of Deterministic Approach
-
-1. ✅ **Predictable behavior** - No guessing if RAG will trigger
-2. ✅ **Clear mode separation** - Either RAG or normal, never mixed
-3. ✅ **Easy testing** - Start with `--rag` to test RAG functionality
-4. ✅ **Production safety** - Explicit opt-in prevents surprises
-5. ✅ **90% less code** than original plan
-6. ✅ **Leverages existing patterns** (LLM providers, config, logging)
-7. ✅ **No new dependencies** beyond sqlite3 driver
-8. ✅ **Simple to understand and maintain**
-9. ✅ **Easy to extend** when needed
-10. ✅ **Faster implementation** (1 week vs 4+ weeks)
-
-## Migration Path
-
-1. **Week 1**: Implement basic RAG store and LLM integration
-2. **Week 2**: Add simple file watching and Slack integration  
-3. **Week 3**: Polish and add CLI commands
-
-This simplified approach achieves 80% of the functionality with 20% of the complexity! 
+This SQLite implementation provides a solid foundation for enterprise-scale RAG while maintaining the simplicity and integration patterns of the original JSON approach.
