@@ -104,7 +104,12 @@ func (r *SimpleRAG) IngestPDF(filePath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open PDF file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			// Log the error but don't override the main function error
+			fmt.Printf("Warning: failed to close file %s: %v\n", filePath, closeErr)
+		}
+	}()
 
 	info, err := file.Stat()
 	if err != nil {
