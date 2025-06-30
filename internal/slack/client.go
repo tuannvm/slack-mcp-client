@@ -313,7 +313,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
 			providerName,
 			userDisplayName,
-			c.cfg.AgentConfig.PromptPrefix,
+			c.cfg.CustomPrompt,
 			userPrompt,
 			contextHistory,
 			&agentCallbackHandler{
