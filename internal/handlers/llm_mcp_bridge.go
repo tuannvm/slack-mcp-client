@@ -74,7 +74,7 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 
 	for name, toolInfo := range b.availableTools {
 		promptBuilder.WriteString(fmt.Sprintf("\nTool Name: %s\n", name))
-		promptBuilder.WriteString(fmt.Sprintf("  Description: %s\n", toolInfo.Description))
+		promptBuilder.WriteString(fmt.Sprintf("  Description: %s\n", toolInfo.ToolDescription))
 		// Attempt to marshal the input schema map into a JSON string for display
 		schemaBytes, err := json.MarshalIndent(toolInfo.InputSchema, "  ", "  ")
 		if err != nil {
