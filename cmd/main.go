@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -18,9 +19,9 @@ import (
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp" // Use the internal mcp package
+	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/rag"
 
-	// internal/mcp is no longer needed here - This comment is now incorrect
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
 
@@ -31,10 +32,26 @@ var (
 	configFile = flag.String("config", "mcp-servers.json", "Path to the MCP server configuration JSON file")
 	debug      = flag.Bool("debug", false, "Enable debug logging")
 	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
+
+	// RAG-related flags
+	ragIngest   = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
+	ragSearch   = flag.String("rag-search", "", "Search RAG database and exit")
+	ragDatabase = flag.String("rag-db", "./knowledge.json", "Path to RAG database file")
 )
 
 func main() {
 	flag.Parse()
+
+	// Handle RAG utility commands first (these exit after completion)
+	if *ragIngest != "" {
+		handleRAGIngest(*ragIngest)
+		return
+	}
+
+	if *ragSearch != "" {
+		handleRAGSearch(*ragSearch)
+		return
+	}
 
 	// Set LLM_PROVIDER=openai by default if not already set
 	if os.Getenv("LLM_PROVIDER") == "" {
@@ -454,6 +471,47 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 // Use mcp.Client from the internal mcp package
 func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
+
+	// Check if RAG is enabled in LLM provider config
+	ragEnabled := false
+	ragDatabase := "./knowledge.json"
+
+	if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
+		if enabled, exists := providerConfig["rag_enabled"]; exists {
+			if enabledBool, ok := enabled.(bool); ok {
+				ragEnabled = enabledBool
+			}
+		}
+		if dbPath, exists := providerConfig["rag_database"]; exists {
+			if dbPathStr, ok := dbPath.(string); ok {
+				ragDatabase = dbPathStr
+			}
+		}
+	}
+
+	// Initialize RAG tool if enabled
+	if ragEnabled {
+		logger.Info("Initializing RAG tool with database: %s", ragDatabase)
+
+		ragClient := rag.NewClient(ragDatabase)
+		ragToolInfo := ragClient.GetRAG().AsToolInfo()
+
+		// Add RAG tool to discovered tools (integrates with existing bridge)
+		discoveredTools["rag_search"] = ragToolInfo
+
+		// Store RAG client in the config for the slack client to pick up
+		// This is a bit of a hack, but avoids changing the slack client interface
+		if cfg.LLMProviders[cfg.LLMProvider] == nil {
+			cfg.LLMProviders[cfg.LLMProvider] = make(map[string]interface{})
+		}
+		cfg.LLMProviders[cfg.LLMProvider]["_rag_client"] = ragClient
+
+		logger.Info("RAG tool registered and available for LLM to use")
+		logger.Info("Knowledge base contains %d documents", ragClient.GetRAG().GetDocumentCount())
+	} else {
+		logger.Info("RAG is disabled. To enable, set 'rag_enabled': true in your LLM provider config")
+	}
+
 	var err error
 
 	var userFrontend slackbot.UserFrontend
@@ -507,5 +565,50 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 				logger.ErrorKV("Failed to close MCP client", "name", name, "error", err)
 			}
 		}
+	}
+}
+
+// handleRAGIngest processes PDF files from a directory and ingests them into the RAG database
+func handleRAGIngest(path string) {
+	fmt.Printf("Ingesting PDF files from: %s\n", path)
+	simpleRAG := rag.NewSimpleRAG(*ragDatabase)
+
+	count, err := simpleRAG.IngestDirectory(path)
+	if err != nil {
+		fmt.Printf("Error during ingestion: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Ingestion complete. Processed %d PDF files.\n", count)
+	fmt.Printf("Total documents in knowledge base: %d\n", simpleRAG.GetDocumentCount())
+}
+
+// handleRAGSearch searches the RAG database and displays results
+func handleRAGSearch(query string) {
+	simpleRAG := rag.NewSimpleRAG(*ragDatabase)
+	docs := simpleRAG.Search(query, 5)
+
+	fmt.Printf("Search results for: %s\n", query)
+	fmt.Printf("Found %d documents:\n\n", len(docs))
+
+	for i, doc := range docs {
+		fmt.Printf("--- Result %d ---\n", i+1)
+		fmt.Printf("Content: %.200s", doc.Content)
+		if len(doc.Content) > 200 {
+			fmt.Printf("...")
+		}
+		fmt.Printf("\n")
+		if fileName, ok := doc.Metadata["file_name"]; ok {
+			fmt.Printf("Source: %s\n", fileName)
+		}
+		if filePath, ok := doc.Metadata["file_path"]; ok {
+			fmt.Printf("Path: %s\n", filepath.Base(filePath))
+		}
+		fmt.Println()
+	}
+
+	if len(docs) == 0 {
+		fmt.Printf("No documents found for query: %s\n", query)
+		fmt.Printf("Knowledge base contains %d total documents.\n", simpleRAG.GetDocumentCount())
 	}
 }

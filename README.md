@@ -72,6 +72,13 @@ flowchart LR
   - Ollama (Local LLMs like Llama, Mistral, etc.)
   - Factory pattern for easy provider switching
   - LangChain gateway for unified API
+- ✅ **Custom Prompt Engineering**: 
+  - System Prompts - Define custom AI assistant behavior and personality
+- ✅ **RAG (Retrieval-Augmented Generation)**: 
+  - LangChain Go Compatible - Drop-in replacement for standard vector stores
+  - Document Processing - PDF ingestion with intelligent chunking
+  - CLI Tools - Command-line utilities for document management
+  - Extensible Design - Easy to add SQLite, Redis, or vector embeddings
 - ✅ **Tool Registration**: Dynamically register and call MCP tools
 - ✅ **Configuration Management**:
   - JSON-based MCP server configuration
@@ -160,6 +167,128 @@ slack-mcp-client --openai-model gpt-4o-mini
 ```
 
 The application will connect to Slack and start listening for messages. You can check the logs for any errors or connection issues.
+
+### RAG Setup and Usage
+
+The client includes an improved RAG (Retrieval-Augmented Generation) system that's compatible with LangChain Go and provides professional-grade performance:
+
+#### Quick Start with RAG
+
+1. **Enable RAG in your configuration:**
+
+```json
+{
+  "llm_provider": "openai",
+  "llm_providers": {
+    "openai": {
+      "type": "openai", 
+      "model": "gpt-4o",
+      "rag_config": {
+        "enabled": true,
+        "provider": "json",
+        "database_path": "./knowledge.json",
+        "chunk_size": 1000,
+        "chunk_overlap": 200,
+        "max_results": 10
+      }
+    }
+  }
+}
+```
+
+2. **Ingest documents using CLI:**
+
+```bash
+# Ingest PDF files from a directory
+slack-mcp-client --rag-ingest ./company-docs --rag-db ./knowledge.json
+
+# Test search functionality
+slack-mcp-client --rag-search "vacation policy" --rag-db ./knowledge.json
+
+# Get database statistics
+slack-mcp-client --rag-stats --rag-db ./knowledge.json
+```
+
+3. **Use in Slack:**
+
+Once configured, the LLM can automatically search your knowledge base:
+
+**User**: "What's our vacation policy?"
+
+**AI**: "Let me search our knowledge base for vacation policy information..."
+*(Automatically searches RAG database)*
+
+**AI**: "Based on our company policy documents, you get 15 days of vacation..."
+
+#### RAG Features
+
+- **🎯 Smart Search**: Advanced relevance scoring with word frequency, filename boosting, and phrase matching
+- **🔗 LangChain Compatible**: Drop-in replacement for standard vector stores
+- **📈 Extensible**: Easy to add vector embeddings and other backends
+
+### Custom Prompts and Assistants
+
+The client supports advanced prompt engineering capabilities for creating specialized AI assistants:
+
+#### System Prompts
+
+Create custom AI personalities and behaviors:
+
+```bash
+# Create a custom system prompt file
+cat > sales-assistant.txt << EOL
+You are SalesGPT, a helpful sales assistant specializing in B2B software sales.
+
+Your expertise includes:
+- Lead qualification and discovery
+- Solution positioning and value propositions  
+- Objection handling and negotiation
+- CRM best practices and sales processes
+
+Always:
+- Ask qualifying questions to understand prospect needs
+- Provide specific, actionable sales advice
+- Reference industry best practices
+- Maintain a professional yet friendly tone
+
+When discussing pricing, always emphasize value over cost.
+EOL
+
+# Use the custom prompt
+slack-mcp-client --system-prompt ./sales-assistant.txt
+```
+
+#### Configuration-Based Prompts
+
+Define prompts in your configuration:
+
+```json
+{
+  "llm_provider": "openai",
+  "llm_providers": {
+    "openai": {
+      "type": "openai",
+      "model": "gpt-4o",
+      "system_prompt": "You are a helpful DevOps assistant specializing in Kubernetes and cloud infrastructure.",
+      "conversation_starters": [
+        "Help me debug a Kubernetes pod issue",
+        "Explain best practices for CI/CD pipelines", 
+        "Review my Dockerfile for optimization"
+      ]
+    }
+  }
+}
+```
+
+#### Assistant Roles
+
+Create specialized assistants for different use cases:
+
+- **DevOps Assistant**: Kubernetes, Docker, CI/CD expertise
+- **Sales Assistant**: Lead qualification, objection handling
+- **HR Assistant**: Policy questions, onboarding guidance
+- **Support Assistant**: Customer issue resolution
+- **Code Review Assistant**: Security, performance, best practices
 
 ### Kubernetes Deployment with Helm
 
@@ -474,11 +603,15 @@ Comprehensive documentation is available in the `docs/` directory:
 
 ### User Guides
 - **[Slack Formatting Guide](docs/format.md)** - Complete guide to message formatting including Markdown-to-Slack conversion, Block Kit layouts, and automatic format detection
+- **[RAG Implementation Guide](docs/rag-json.md)** - Detailed guide for the improved RAG system with LangChain Go compatibility and performance optimizations
+- **[RAG SQLite Implementation](docs/rag-sqlite.md)** - Implementation plan for native Go SQLite integration with ChatGPT-like upload experience
 - **[Testing Guide](docs/test.md)** - Comprehensive testing documentation covering unit tests, integration tests, manual testing procedures, and debugging
 
 ### Quick Links
 - **Setup**: Start with the [Slack Configuration Guide](docs/configuration.md) for initial setup
+- **RAG**: Check the [RAG Implementation Guide](docs/rag-json.md) for document knowledge base integration
 - **Formatting**: See the [Slack Formatting Guide](docs/format.md) for message formatting capabilities
+- **RAG SQLite**: See the [RAG SQLite Implementation](docs/rag-sqlite.md) for native Go implementation with modern upload UX
 - **Development**: Check the [Implementation Notes](docs/implementation.md) for technical details
 - **Testing**: Use the [Testing Guide](docs/test.md) for testing procedures and debugging
 

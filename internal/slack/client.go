@@ -77,6 +77,21 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		clientLogger.DebugKV("Adding MCP client to raw map for bridge", "name", name)
 	}
 
+	// Check if RAG client is available in config and add it
+	if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
+		if ragClientInterface, exists := providerConfig["_rag_client"]; exists {
+			// Type assert to get the RAG client
+			if ragClient, ok := ragClientInterface.(interface {
+				CallTool(context.Context, string, map[string]interface{}) (string, error)
+			}); ok {
+				rawClientMap["rag_search"] = ragClient
+				clientLogger.Info("Added RAG client to bridge client map")
+			} else {
+				clientLogger.Warn("RAG client found in config but type assertion failed")
+			}
+		}
+	}
+
 	logLevel := getLogLevel(stdLogger)
 
 	// --- Initialize the LLM provider registry using the config ---
@@ -90,6 +105,13 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	}
 	clientLogger.Info("LLM provider registry initialized successfully")
 
+	// Determine custom prompt settings
+	customPrompt := cfg.CustomPrompt
+	replaceToolPrompt := false
+	if cfg.ReplaceToolPrompt != nil {
+		replaceToolPrompt = *cfg.ReplaceToolPrompt
+	}
+
 	// Pass the raw map to the bridge with the configured log level
 	llmMCPBridge := handlers.NewLLMMCPBridgeFromClientsWithLogLevel(
 		rawClientMap,
@@ -98,6 +120,8 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		logLevel,
 		*cfg.UseNativeTools,
 		registry,
+		customPrompt,
+		replaceToolPrompt,
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
 
