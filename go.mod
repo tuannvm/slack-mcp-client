@@ -6,7 +6,6 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.31.0
 	github.com/slack-go/slack v0.16.0
-	github.com/spf13/pflag v1.0.6
 	github.com/tmc/langchaingo v0.1.13
 )
 
