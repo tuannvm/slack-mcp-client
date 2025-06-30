@@ -21,8 +21,8 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
-	"github.com/tuannvm/slack-mcp-client/internal/rag"
 	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
+	"github.com/tuannvm/slack-mcp-client/internal/rag"
 
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
@@ -31,9 +31,9 @@ import (
 
 var (
 	// Define command-line flags
-	configFile = flag.String("config", "mcp-servers.json", "Path to the MCP server configuration JSON file")
-	debug      = flag.Bool("debug", false, "Enable debug logging")
-	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
+	configFile  = flag.String("config", "mcp-servers.json", "Path to the MCP server configuration JSON file")
+	debug       = flag.Bool("debug", false, "Enable debug logging")
+	mcpDebug    = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
 	metricsPort = flag.String("metrics-port", "8080", "Port for metrics endpoint (default: 8080)")
 
 	// RAG-related flags
