@@ -27,6 +27,9 @@ type ServerConfig struct {
 	Env                      map[string]string `json:"env,omitempty"`                        // Environment variables
 	Disabled                 bool              `json:"disabled,omitempty"`                   // Whether this server is disabled
 	InitializeTimeoutSeconds *int              `json:"initialize_timeout_seconds,omitempty"` // Timeout for server initialization
+
+	AllowList []string `json:"allow_list,omitempty"` // List of allowed tools
+	BlockList []string `json:"block_list,omitempty"` // List of blocked tools
 }
 
 // MCPServersConfig is the top-level structure for the MCP servers configuration
@@ -36,12 +39,20 @@ type MCPServersConfig struct {
 
 // Config defines the overall application configuration
 type Config struct {
-	UseStdIOClient *bool                             `json:"use_stdio_client,omitempty"` // Use stdio client instead of Slack API
-	SlackBotToken  string                            `json:"slack_bot_token"`
-	SlackAppToken  string                            `json:"slack_app_token"`
-	Servers        map[string]ServerConfig           `json:"servers"`
-	LLMProvider    string                            `json:"llm_provider"`  // Name of the provider to USE (e.g., "openai", "ollama")
-	LLMProviders   map[string]map[string]interface{} `json:"llm_providers"` // Configuration for ALL potential providers
+	UseStdIOClient *bool `json:"use_stdio_client,omitempty"` // Use stdio client instead of Slack API
+
+	SlackBotToken string `json:"slack_bot_token"`
+	SlackAppToken string `json:"slack_app_token"`
+
+	Servers map[string]ServerConfig `json:"servers"`
+
+	UseNativeTools *bool                             `json:"use_native_tools,omitempty"` // Use MCP bridge for LLMs
+	LLMProvider    string                            `json:"llm_provider"`               // Name of the provider to USE (e.g., "openai", "ollama")
+	LLMProviders   map[string]map[string]interface{} `json:"llm_providers"`              // Configuration for ALL potential providers
+
+	// Custom prompt configuration
+	CustomPrompt      string `json:"custom_prompt,omitempty"`       // Custom system prompt to prepend to tool instructions
+	ReplaceToolPrompt *bool  `json:"replace_tool_prompt,omitempty"` // If true, completely replace tool prompt with custom prompt
 }
 
 // LoadConfig loads configuration from file and environment variables
@@ -171,6 +182,12 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 			providerConfig["model"] = model
 		}
 		cfg.LLMProviders[ProviderAnthropic] = providerConfig
+	}
+
+	if cfg.UseNativeTools == nil {
+		// Default to false if not set
+		defaultUseLLMMCPBridge := false
+		cfg.UseNativeTools = &defaultUseLLMMCPBridge
 	}
 
 	return cfg, nil
