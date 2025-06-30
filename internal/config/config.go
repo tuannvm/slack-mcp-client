@@ -37,10 +37,6 @@ type MCPServersConfig struct {
 	MCPServers map[string]ServerConfig `json:"mcpServers"`
 }
 
-type AgentConfig struct {
-	PromptPrefix string `json:"prompt_prefix,omitempty"` // Prefix for agent prompts
-}
-
 // Config defines the overall application configuration
 type Config struct {
 	UseStdIOClient *bool `json:"use_stdio_client,omitempty"` // Use stdio client instead of Slack API
@@ -54,8 +50,11 @@ type Config struct {
 	LLMProvider    string                            `json:"llm_provider"`               // Name of the provider to USE (e.g., "openai", "ollama")
 	LLMProviders   map[string]map[string]interface{} `json:"llm_providers"`              // Configuration for ALL potential providers
 
-	UseAgent    *bool       `json:"use_agent,omitempty"`    // Use MCP agent for LLMs
-	AgentConfig AgentConfig `json:"agent_config,omitempty"` // Configuration for the agent
+	// Custom prompt configuration
+	CustomPrompt      string `json:"custom_prompt,omitempty"`       // Custom system prompt to prepend to tool instructions
+	ReplaceToolPrompt *bool  `json:"replace_tool_prompt,omitempty"` // If true, completely replace tool prompt with custom prompt
+
+	UseAgent *bool `json:"use_agent,omitempty"` // Use MCP agent for LLMs
 }
 
 // LoadConfig loads configuration from file and environment variables
