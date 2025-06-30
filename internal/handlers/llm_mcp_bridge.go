@@ -6,11 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/tmc/langchaingo/callbacks"
-	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/tools"
-	"github.com/tuannvm/slack-mcp-client/internal/llm"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"log"
 	"reflect"
 	"regexp"
@@ -18,8 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/tools"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
+	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -28,15 +26,15 @@ import (
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
 // It detects when an LLM response should trigger a tool call and executes it.
 type LLMMCPBridge struct {
-	mcpClients        map[string]MCPClientInterface // Map of MCP clients keyed by server name
+	mcpClients        map[string]mcp.MCPClientInterface // Map of MCP clients keyed by server name
 	logger            *logging.Logger
-	stdLogger         *log.Logger                // Standard logger for backward compatibility
-	availableTools    map[string]common.ToolInfo // Map of tool names to info about the tool
-	llmRegistry       *llm.ProviderRegistry      // LLM provider registry
-	useNativeTools    bool                       // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
-	customPrompt      string                     // Custom system prompt
-	replaceToolPrompt bool                       // Whether to replace tool prompt completely
-	UseAgent       bool                    // Flag to indicate if the agent should be used instead of chat
+	stdLogger         *log.Logger             // Standard logger for backward compatibility
+	availableTools    map[string]mcp.ToolInfo // Map of tool names to info about the tool
+	llmRegistry       *llm.ProviderRegistry   // LLM provider registry
+	useNativeTools    bool                    // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
+	customPrompt      string                  // Custom system prompt
+	replaceToolPrompt bool                    // Whether to replace tool prompt completely
+	UseAgent          bool                    // Flag to indicate if the agent should be used instead of chat
 }
 
 // generateToolPrompt generates the prompt string for available tools
@@ -125,13 +123,13 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, s
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
 	return &LLMMCPBridge{
-		mcpClients:     mcpClients,
-		logger:         structLogger,
-		stdLogger:      stdLogger,
-		availableTools: discoveredTools,
-		useNativeTools: useNativeTools,
-		llmRegistry:    llmRegistry,
-		UseAgent:       useAgent,
+		mcpClients:        mcpClients,
+		logger:            structLogger,
+		stdLogger:         stdLogger,
+		availableTools:    discoveredTools,
+		useNativeTools:    useNativeTools,
+		llmRegistry:       llmRegistry,
+		UseAgent:          useAgent,
 		customPrompt:      customPrompt,
 		replaceToolPrompt: replaceToolPrompt,
 	}

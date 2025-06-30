@@ -13,7 +13,6 @@ import (
 
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
@@ -120,6 +119,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		discoveredTools,
 		logLevel,
 		*cfg.UseNativeTools,
+		*cfg.UseAgent,
 		registry,
 		customPrompt,
 		replaceToolPrompt,
@@ -207,7 +207,7 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
 
-				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp) // Use goroutine to avoid blocking event loop
+				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}
 
 		default:
