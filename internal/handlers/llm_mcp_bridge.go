@@ -18,6 +18,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tuannvm/slack-mcp-client/internal/llm"
+
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
@@ -25,22 +28,40 @@ import (
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
 // It detects when an LLM response should trigger a tool call and executes it.
 type LLMMCPBridge struct {
-	mcpClients     map[string]mcp.MCPClientInterface // Map of MCP clients keyed by server name
-	logger         *logging.Logger
-	stdLogger      *log.Logger             // Standard logger for backward compatibility
-	availableTools map[string]mcp.ToolInfo // Map of tool names to info about the tool
-	llmRegistry    *llm.ProviderRegistry   // LLM provider registry
-	useNativeTools bool                    // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
+	mcpClients        map[string]MCPClientInterface // Map of MCP clients keyed by server name
+	logger            *logging.Logger
+	stdLogger         *log.Logger                // Standard logger for backward compatibility
+	availableTools    map[string]common.ToolInfo // Map of tool names to info about the tool
+	llmRegistry       *llm.ProviderRegistry      // LLM provider registry
+	useNativeTools    bool                       // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
+	customPrompt      string                     // Custom system prompt
+	replaceToolPrompt bool                       // Whether to replace tool prompt completely
 	UseAgent       bool                    // Flag to indicate if the agent should be used instead of chat
 }
 
 // generateToolPrompt generates the prompt string for available tools
 func (b *LLMMCPBridge) generateToolPrompt() string {
-	if len(b.availableTools) == 0 {
-		return "" // No tools available
+	var promptBuilder strings.Builder
+
+	// Add custom prompt first if provided
+	if b.customPrompt != "" {
+		promptBuilder.WriteString(b.customPrompt)
+		promptBuilder.WriteString("\n\n")
+
+		// If we're replacing the tool prompt completely, return just the custom prompt
+		if b.replaceToolPrompt {
+			return promptBuilder.String()
+		}
 	}
 
-	var promptBuilder strings.Builder
+	if len(b.availableTools) == 0 {
+		// If no tools but we have custom prompt, return custom prompt only
+		if b.customPrompt != "" {
+			return b.customPrompt
+		}
+		return "" // No tools available and no custom prompt
+	}
+
 	promptBuilder.WriteString("You have access to the following tools. Analyze the user's request to determine if a tool is needed.\n\n")
 
 	// Clear instructions on how to format the JSON response
@@ -55,7 +76,7 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 
 	for name, toolInfo := range b.availableTools {
 		promptBuilder.WriteString(fmt.Sprintf("\nTool Name: %s\n", name))
-		promptBuilder.WriteString(fmt.Sprintf("  Description: %s\n", toolInfo.ToolDescription))
+		promptBuilder.WriteString(fmt.Sprintf("  Description: %s\n", toolInfo.Description))
 		// Attempt to marshal the input schema map into a JSON string for display
 		schemaBytes, err := json.MarshalIndent(toolInfo.InputSchema, "  ", "  ")
 		if err != nil {
@@ -90,16 +111,16 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 // NewLLMMCPBridge creates a new LLMMCPBridge with the given MCP clients and tools
 // Uses INFO as the default log level
 func NewLLMMCPBridge(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
-	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
+	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
 	// Create a structured logger from the standard logger with INFO level by default
 	// If debug logging is needed, use NewLLMMCPBridgeWithLogLevel instead
-	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry)
+	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt)
 }
 
 // NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
 func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger,
 	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
-	llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
+	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -111,6 +132,8 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, s
 		useNativeTools: useNativeTools,
 		llmRegistry:    llmRegistry,
 		UseAgent:       useAgent,
+		customPrompt:      customPrompt,
+		replaceToolPrompt: replaceToolPrompt,
 	}
 }
 
@@ -118,16 +141,16 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, s
 // This is a convenience function that wraps the concrete clients in the interface
 // Uses INFO as the default log level
 func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
-	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
+	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
 	// If debug logging is needed, use NewLLMMCPBridgeFromClientsWithLogLevel instead
-	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry)
+	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt)
 }
 
 // NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
 // This is a convenience function that wraps the concrete clients in the interface
 func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger,
 	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
-	llmRegistry *llm.ProviderRegistry) *LLMMCPBridge {
+	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -177,7 +200,7 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 		}
 	}
 
-	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, useAgent, llmRegistry)
+	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt)
 }
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
