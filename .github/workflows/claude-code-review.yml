@@ -35,37 +35,29 @@ jobs:
         id: claude-review
         uses: anthropics/claude-code-action@beta
         with:
+          # Use GitHub token instead of direct API
+          auth_method: "github"
           
-          # Optional: Specify model (defaults to Claude Sonnet 4, uncomment for Claude Opus 4)
+          # Optional: Specify model (defaults to Claude Sonnet 4)
           # model: "claude-opus-4-20250514"
           
-          # Direct prompt for automated review (no @claude mention needed)
+          # Direct prompt for automated Go code review
           direct_prompt: |
-            Please review this pull request and provide feedback on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Performance considerations
-            - Security concerns
-            - Test coverage
+            Please review this Go pull request for the Slack MCP Client project and provide feedback on:
+            - Go best practices and idiomatic code
+            - Error handling patterns (use of domain-specific errors)
+            - Concurrency safety and proper context usage
+            - MCP client integration patterns
+            - Slack message formatting and API usage
+            - Test coverage and quality
+            - Security considerations (no secrets in code)
+            - Logging consistency (structured logging patterns)
             
-            Be constructive and helpful in your feedback.
+            Focus on the multi-transport MCP architecture and LLM provider integration patterns.
+            Be constructive and reference specific Go conventions.
           
-          # Optional: Customize review based on file types
-          # direct_prompt: |
-          #   Review this PR focusing on:
-          #   - For TypeScript files: Type safety and proper interface usage
-          #   - For API endpoints: Security, input validation, and error handling
-          #   - For React components: Performance, accessibility, and best practices
-          #   - For tests: Coverage, edge cases, and test quality
-          
-          # Optional: Different prompts for different authors
-          # direct_prompt: |
-          #   ${{ github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR' && 
-          #   'Welcome! Please review this PR from a first-time contributor. Be encouraging and provide detailed explanations for any suggestions.' ||
-          #   'Please provide a thorough code review focusing on our coding standards and best practices.' }}
-          
-          # Optional: Add specific tools for running tests or linting
-          # allowed_tools: "Bash(npm run test),Bash(npm run lint),Bash(npm run typecheck)"
+          # Add Go-specific tools for review
+          allowed_tools: "Bash(make build),Bash(make test),Bash(make lint),Bash(make check),Bash(go test -v ./...),Bash(golangci-lint run),Bash(go vet ./...)"
           
           # Optional: Skip review for certain conditions
           # if: |
