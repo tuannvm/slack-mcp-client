@@ -4,10 +4,12 @@ package llm
 import (
 	"context"
 	"fmt"
+	"github.com/mark3labs/mcp-go/mcp"
 	"sync"
 
-	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/tools"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
@@ -99,6 +101,9 @@ type LLMProvider interface {
 
 	// GenerateChatCompletion generates a chat completion using a message history
 	GenerateChatCompletion(ctx context.Context, messages []RequestMessage, options ProviderOptions) (*llms.ContentChoice, error)
+
+	// GenerateAgentCompletion generates a chat completion using a message history using a langchain agent
+	GenerateAgentCompletion(ctx context.Context, userDisplayName, systemPrompt string, prompt string, messages []RequestMessage, llmTools []tools.Tool, callbackHandler callbacks.Handler) (string, error)
 
 	// GetInfo returns information about the provider
 	GetInfo() ProviderInfo

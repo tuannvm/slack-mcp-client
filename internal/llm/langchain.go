@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/callbacks"
+	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/tools"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -14,6 +18,8 @@ import (
 
 const (
 	langchainProviderName = "langchain"
+
+	maxAgentIterations = 20
 )
 
 // LangChainProvider implements the LLMProvider interface using LangChainGo
@@ -158,6 +164,101 @@ func (p *LangChainProvider) GenerateChatCompletion(ctx context.Context, messages
 
 	// Call the underlying GenerateCompletion method with the formatted prompt
 	return p.GenerateCompletion(ctx, prompt, options)
+}
+
+// GenerateAgentCompletion generates a chat completion using LangChainGo agent
+// Note: LangChainGo's basic llms.Model interface doesn't directly support chat messages.
+// We simulate it by formatting messages into a single prompt.
+func (p *LangChainProvider) GenerateAgentCompletion(ctx context.Context,
+	userDisplayName string,
+	systemPrompt string,
+	prompt string,
+	history []RequestMessage,
+	llmTools []tools.Tool,
+	callbackHandler callbacks.Handler,
+) (string, error) {
+	if p.llm == nil {
+		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
+	}
+
+	p.logger.DebugKV("Calling LangChainGo GenerateAgentCompletion", "num_messages", len(history))
+
+	// Convert our message format to a single prompt string
+	var historyBuilder strings.Builder
+	for _, msg := range history {
+		historyBuilder.WriteString(fmt.Sprintf("%s: %s\n", strings.ToUpper(msg.Role), msg.Content))
+	}
+
+	ag := agents.NewConversationalAgent(p.llm, llmTools, agents.WithCallbacksHandler(callbackHandler),
+		// Based on the default prompt prefix, with the user provided prefix.
+		agents.WithPromptPrefix(fmt.Sprintf(`%s
+You may invoke multiple tools as needed to solve a problem. Use any and all tools at your disposal. Tools can only be invoked one at a time.
+
+Chain together tools if you need to. Always make sure you follow the tool schema perfectly.
+
+The user you are about to interact with is named "%s".
+
+TOOLS:
+------
+
+Assistant has access to the following tools:
+
+{{.tool_descriptions}}
+
+`, systemPrompt, userDisplayName)),
+		// Based on the default conversational agent prompt format, just added the Justification part
+		agents.WithPromptFormatInstructions(`To use a tool, please use the following format:
+
+Observation: [The result of the previous tool call. Only include this field if you just received a tool result.]
+Thought: Do I need to use a tool? Yes
+Justification: [Why you think you should invoke the tool that you are invoking]
+Action: [the action to take, should be one of [{{.tool_names}}]]
+Action Input: [the input to the action. This should always be a single line JSON object. This should be raw json, no extra quotes or backticks. This field is mutually exclusive with the "AI:" field. There should be no text after this field.]
+
+Only call one tool at a time, send your response, and wait for the result to be provided in the next message.
+IMPORTANT: Return ONLY the tool format with no explanations or formatting when using a tool.
+
+When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
+
+Thought: Do I need to use a tool? No
+AI: [your response here] This field is mutually exclusive with the "Action Input:" field. You must not return both fields in a response.
+`),
+		// When testing with Gemini, it would often not actually invoke the tool, so we need this to make sure it actually does it
+		// Also providing the conversation history
+		agents.WithPromptSuffix(fmt.Sprintf(`
+It is absolutely critical that you don't assume the answers of the tools. You must return the appropriate tool invocation to us.
+When you want to use a tool, we will provide the output. Don't give the final answer yourself, just return the tool invocation.
+
+That is to say, under no circumstances should you be returning a line that starts with "Action Input:" and another line that starts with "AI:", in a response. They are mutually exclusive. 
+This is of the utmost importance. If this rule is not followed, your answer will be considered invalid.
+
+Once you have completed invoking all the tools you need to, and you have all the information you need, you can return a final answer.
+
+Begin!
+
+Previous conversation history:
+%s
+
+New input: {{.input}}
+
+Thought:{{.agent_scratchpad}}
+`, historyBuilder.String())),
+	)
+
+	e := agents.NewExecutor(ag, agents.WithMaxIterations(maxAgentIterations))
+
+	call, err := e.Call(ctx, map[string]any{
+		"input": prompt,
+	}, chains.WithTemperature(0.1))
+	if err != nil {
+		p.logger.ErrorKV("LangChainGo Call request failed", "error", err)
+		return "", errors.WrapLLMError(err, "request_failed", "Failed to generate completion from LangChainGo")
+	}
+	output, ok := call[ag.OutputKey]
+	if !ok {
+		return "", fmt.Errorf("agent call did not return expected output key '%s'", ag.OutputKey)
+	}
+	return output.(string), nil
 }
 
 // GetInfo returns information about the provider.

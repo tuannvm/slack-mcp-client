@@ -14,8 +14,8 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tmc/langchaingo/documentloaders"
 	"github.com/tmc/langchaingo/textsplitter"
-	"github.com/tuannvm/slack-mcp-client/internal/common"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
+	mcpinternal "github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
 
 // SimpleRAG implements a basic RAG system using JSON file storage
@@ -302,10 +302,10 @@ func (r *SimpleRAG) AsMCPHandler() *llm.MCPHandler {
 }
 
 // AsToolInfo returns the tool information for MCP discovery
-func (r *SimpleRAG) AsToolInfo() common.ToolInfo {
-	return common.ToolInfo{
-		ServerName:  "rag_search",
-		Description: "Search knowledge base for relevant context",
+func (r *SimpleRAG) AsToolInfo() mcpinternal.ToolInfo {
+	return mcpinternal.ToolInfo{
+		ServerName:      "rag_search",
+		ToolDescription: "Search knowledge base for relevant context",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

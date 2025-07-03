@@ -23,6 +23,7 @@ type UserFrontend interface {
 	IsValidUser(userID string) bool
 	GetLogger() *logging.Logger
 	SendMessage(channelID, threadTS, text string)
+	GetUserInfo(userID string) (*slack.User, error)
 }
 
 func getLogLevel(stdLogger *logging.Logger) logging.LogLevel {
@@ -108,6 +109,14 @@ func (slackClient *SlackClient) IsValidUser(userID string) bool {
 
 func (slackClient *SlackClient) IsBotUser(userID string) bool {
 	return userID == slackClient.botUserID
+}
+
+func (slackClient *SlackClient) GetUserInfo(userID string) (*slack.User, error) {
+	user, err := slackClient.Client.GetUserInfo(userID)
+	if err != nil {
+		return nil, fmt.Errorf("while getting user info for %s: %w", userID, err)
+	}
+	return user, nil
 }
 
 // SendMessage sends a message back to Slack, replying in a thread if threadTS is provided.

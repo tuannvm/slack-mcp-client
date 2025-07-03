@@ -11,8 +11,8 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
@@ -33,7 +33,7 @@ type Client struct {
 	cfg             *config.Config        // Holds the application configuration
 	messageHistory  map[string][]Message
 	historyLimit    int
-	discoveredTools map[string]common.ToolInfo
+	discoveredTools map[string]mcp.ToolInfo
 }
 
 // Message represents a message in the conversation history
@@ -45,7 +45,7 @@ type Message struct {
 
 // NewClient creates a new Slack client instance.
 func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients map[string]*mcp.Client,
-	discoveredTools map[string]common.ToolInfo, cfg *config.Config) (*Client, error) {
+	discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) (*Client, error) {
 
 	// MCP clients are now optional - if none are provided, we'll just use LLM capabilities
 	if mcpClients == nil {
@@ -67,7 +67,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	clientLogger.Printf("Available tools (%d):", len(discoveredTools))
 	for toolName, toolInfo := range discoveredTools {
 		clientLogger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)",
-			toolName, toolInfo.Description, toolInfo.InputSchema, toolInfo.ServerName)
+			toolName, toolInfo.ToolDescription, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 
 	// Create a map of raw clients to pass to the bridge
@@ -119,6 +119,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		discoveredTools,
 		logLevel,
 		*cfg.UseNativeTools,
+		*cfg.UseAgent,
 		registry,
 		customPrompt,
 		replaceToolPrompt,
@@ -182,8 +183,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			c.logger.InfoKV("Received app mention in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
 			messageText := c.userFrontend.RemoveBotMention(ev.Text)
 
+			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
+			if err != nil {
+				c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
+				return
+			}
+
 			// Use handleUserPrompt for app mentions too, for consistency
-			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp)
+			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp, userInfo.Profile.DisplayName)
 
 		case *slackevents.MessageEvent:
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
@@ -191,10 +198,16 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			isNotEdited := ev.SubType != "message_changed"
 			isBot := ev.BotID != "" || ev.SubType == "bot_message"
 
+			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
+			if err != nil {
+				c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
+				return
+			}
+
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
 
-				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp) // Use goroutine to avoid blocking event loop
+				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}
 
 		default:
@@ -264,32 +277,60 @@ func (c *Client) getContextFromHistory(channelID string) string {
 }
 
 // handleUserPrompt sends the user's text to the configured LLM provider.
-func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string) {
+func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayName string) {
 	// Determine the provider to use from config
 	providerName := c.cfg.LLMProvider // Get the primary provider name from config
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", providerName)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
+
+	// Get context from history
+	contextHistory := c.getContextFromHistory(channelID)
 
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, thinkingMessage)
 
-	// Get context from history
-	contextHistory := c.getContextFromHistory(channelID)
+	if !c.llmMCPBridge.UseAgent {
+		// Call LLM using the integrated logic
+		llmResponse, err := c.llmMCPBridge.CallLLM(providerName, userPrompt, contextHistory)
+		if err != nil {
+			c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
+			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
+			return
+		}
 
-	// Call LLM using the integrated logic
-	llmResponse, err := c.llmMCPBridge.CallLLM(providerName, userPrompt, contextHistory)
-	if err != nil {
-		c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
-		c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
-		return
+		c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse.Content))
+
+		// Process the LLM response through the MCP pipeline
+		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
+	} else {
+		sendMsg := func(msg string) {
+			c.addToHistory(channelID, "assistant", msg) // Original LLM response (tool call JSON)
+			c.userFrontend.SendMessage(channelID, threadTS, msg)
+		}
+
+		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
+			providerName,
+			userDisplayName,
+			c.cfg.CustomPrompt,
+			userPrompt,
+			contextHistory,
+			&agentCallbackHandler{
+				callbacks.SimpleHandler{},
+				sendMsg,
+			})
+		if err != nil {
+			c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
+			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
+			return
+		}
+		c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse))
+		// Send the final response back to Slack
+		if llmResponse == "" {
+			c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
+		}
 	}
-
-	c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse.Content))
-
-	// Process the LLM response through the MCP pipeline
-	c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.

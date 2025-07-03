@@ -15,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tuannvm/slack-mcp-client/internal/common"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
@@ -140,10 +139,10 @@ func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 
 // initializeMCPClients initializes all MCP clients and discovers available tools
 // Use mcp.Client from the internal mcp package
-func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[string]*mcp.Client, map[string]common.ToolInfo) {
+func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[string]*mcp.Client, map[string]mcp.ToolInfo) {
 	// Initialize MCP Clients and Discover Tools Sequentially
 	mcpClients := make(map[string]*mcp.Client)
-	allDiscoveredTools := make(map[string]common.ToolInfo) // Map: toolName -> common.ToolInfo
+	allDiscoveredTools := make(map[string]mcp.ToolInfo) // Map: toolName -> common.ToolInfo
 	failedServers := []string{}
 	initializedClientCount := 0
 
@@ -184,7 +183,7 @@ func processSingleMCPServer(
 	serverName string,
 	serverConf config.ServerConfig,
 	mcpClients map[string]*mcp.Client, // Use mcp.Client
-	discoveredTools map[string]common.ToolInfo,
+	discoveredTools map[string]mcp.ToolInfo,
 	failedServers *[]string,
 	initializedClientCount *int,
 ) {
@@ -296,10 +295,12 @@ func processSingleMCPServer(
 			}
 
 			// Use common.ToolInfo
-			discoveredTools[toolName] = common.ToolInfo{
-				ServerName:  serverName,
-				Description: toolDef.Description,
-				InputSchema: inputSchemaMap,
+			discoveredTools[toolName] = mcp.ToolInfo{
+				ServerName:      serverName,
+				ToolName:        toolName,
+				ToolDescription: toolDef.Description,
+				InputSchema:     inputSchemaMap,
+				Client:          mcpClient,
 			}
 			if *mcpDebug {
 				serverLogger.Debug("Stored tool: '%s' (Desc: %s)", toolName, toolDef.Description)
@@ -469,7 +470,7 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 
 // startSlackClient starts the Slack client and handles shutdown
 // Use mcp.Client from the internal mcp package
-func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]common.ToolInfo, cfg *config.Config) {
+func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
 	// Check if RAG is enabled in LLM provider config

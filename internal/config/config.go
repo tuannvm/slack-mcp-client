@@ -53,6 +53,8 @@ type Config struct {
 	// Custom prompt configuration
 	CustomPrompt      string `json:"custom_prompt,omitempty"`       // Custom system prompt to prepend to tool instructions
 	ReplaceToolPrompt *bool  `json:"replace_tool_prompt,omitempty"` // If true, completely replace tool prompt with custom prompt
+
+	UseAgent *bool `json:"use_agent,omitempty"` // Use MCP agent for LLMs
 }
 
 // LoadConfig loads configuration from file and environment variables
@@ -188,6 +190,12 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 		// Default to false if not set
 		defaultUseLLMMCPBridge := false
 		cfg.UseNativeTools = &defaultUseLLMMCPBridge
+	}
+
+	if cfg.UseAgent == nil {
+		// Default to false if not set
+		defaultUseAgent := false
+		cfg.UseAgent = &defaultUseAgent
 	}
 
 	return cfg, nil

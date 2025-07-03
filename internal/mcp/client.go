@@ -18,6 +18,11 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
+// MCPClientInterface defines the interface for an MCP client
+type MCPClientInterface interface {
+	CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
+}
+
 // Client provides an interface for interacting with an MCP server.
 // It handles tool discovery and execution of tool calls.
 type Client struct {
