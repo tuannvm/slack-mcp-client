@@ -186,6 +186,23 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 		cfg.LLMProviders[ProviderAnthropic] = providerConfig
 	}
 
+	// Apply environment variables for Ollama if available
+	if providerConfig, ok := cfg.LLMProviders[ProviderOllama]; ok {
+		if baseURL := os.Getenv("OLLAMA_BASE_URL"); baseURL != "" {
+			providerConfig["base_url"] = baseURL
+			if logger != nil {
+				logger.InfoKV("Overriding Ollama base_url from environment variable", "base_url", baseURL)
+			}
+		}
+		if model := os.Getenv("OLLAMA_MODEL"); model != "" {
+			providerConfig["model"] = model
+			if logger != nil {
+				logger.InfoKV("Overriding Ollama model from environment variable", "model", model)
+			}
+		}
+		cfg.LLMProviders[ProviderOllama] = providerConfig
+	}
+
 	if cfg.UseNativeTools == nil {
 		// Default to false if not set
 		defaultUseLLMMCPBridge := false
