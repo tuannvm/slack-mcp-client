@@ -22,18 +22,23 @@ type OpenAIProvider struct {
 
 // OpenAIConfig holds configuration for the OpenAI provider
 type OpenAIConfig struct {
-	APIKey        string
-	AssistantID   string // Optional: reuse existing assistant
-	VectorStoreID string // Optional: reuse existing vector store
-	Model         string // Default: gpt-4-turbo
-	MaxResults    int    // Default: 20
+	APIKey          string
+	AssistantID     string // Optional: reuse existing assistant
+	VectorStoreID   string // Optional: reuse existing vector store
+	AssistantName   string // Name for the assistant (default: "RAG Assistant")
+	VectorStoreName string // Name for the vector store (default: "Knowledge Base")
+	Model           string // Default: gpt-4-turbo
+	MaxResults      int    // Default: 20
+	CustomPrompt    string // Custom instruction prompt for the assistant
 }
 
 // NewOpenAIProvider creates a new OpenAI vector provider instance
 func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 	cfg := OpenAIConfig{
-		Model:      "gpt-4-turbo",
-		MaxResults: 20,
+		Model:           "gpt-4-turbo",
+		MaxResults:      20,
+		AssistantName:   "RAG Assistant",
+		VectorStoreName: "Knowledge Base",
 	}
 
 	// Extract configuration
@@ -56,12 +61,33 @@ func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 		cfg.VectorStoreID = vectorStoreID
 	}
 
+	if assistantName, ok := config["assistant_name"].(string); ok {
+		cfg.AssistantName = assistantName
+	}
+
+	if vectorStoreName, ok := config["vector_store_name"].(string); ok {
+		cfg.VectorStoreName = vectorStoreName
+	}
+
 	if model, ok := config["model"].(string); ok {
 		cfg.Model = model
 	}
 
 	if maxResults, ok := config["max_results"].(int); ok {
 		cfg.MaxResults = maxResults
+	}
+
+	if customPrompt, ok := config["custom_prompt"].(string); ok {
+		cfg.CustomPrompt = customPrompt
+	} else if customPromptArray, ok := config["custom_prompt"].([]interface{}); ok {
+		// Handle array format - join with newlines
+		var promptLines []string
+		for _, line := range customPromptArray {
+			if str, ok := line.(string); ok {
+				promptLines = append(promptLines, str)
+			}
+		}
+		cfg.CustomPrompt = strings.Join(promptLines, "\n")
 	}
 
 	// Create OpenAI client
@@ -77,51 +103,84 @@ func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 
 // Initialize sets up the OpenAI assistant and vector store
 func (o *OpenAIProvider) Initialize(ctx context.Context) error {
-	// Create or retrieve assistant
+	// Find or create assistant
 	if o.config.AssistantID != "" {
-		// Verify existing assistant
+		// Use specific assistant ID
 		assistant, err := o.client.Beta.Assistants.Get(ctx, o.config.AssistantID)
 		if err != nil {
 			return fmt.Errorf("failed to retrieve assistant: %w", err)
 		}
 		o.assistantID = assistant.ID
+		fmt.Printf("[RAG] OpenAI: Using existing assistant '%s' with ID: %s\n", assistant.Name, o.assistantID)
 	} else {
-		// Create new assistant with file search capability
-		assistant, err := o.client.Beta.Assistants.New(ctx, openai.BetaAssistantNewParams{
-			Model:        o.config.Model,
-			Name:         openai.String("RAG Assistant"),
-			Instructions: openai.String("You are a helpful assistant that searches through uploaded documents to answer questions."),
-			Tools: []openai.AssistantToolUnionParam{
-				{
-					OfFileSearch: &openai.FileSearchToolParam{
-						Type: "file_search",
+		// Search for existing assistant by name first
+		existingAssistant, err := o.findAssistantByName(ctx, o.config.AssistantName)
+		if err != nil {
+			return fmt.Errorf("failed to search for assistant: %w", err)
+		}
+		
+		if existingAssistant != nil {
+			// Found existing assistant
+			o.assistantID = existingAssistant.ID
+			fmt.Printf("[RAG] OpenAI: Found existing assistant '%s' with ID: %s\n", o.config.AssistantName, o.assistantID)
+		} else {
+			// Create new assistant
+			instructions := "You are a helpful assistant that searches through uploaded documents to answer questions."
+			if o.config.CustomPrompt != "" {
+				instructions = o.config.CustomPrompt
+			}
+			
+			assistant, err := o.client.Beta.Assistants.New(ctx, openai.BetaAssistantNewParams{
+				Model:        o.config.Model,
+				Name:         openai.String(o.config.AssistantName),
+				Instructions: openai.String(instructions),
+				Tools: []openai.AssistantToolUnionParam{
+					{
+						OfFileSearch: &openai.FileSearchToolParam{
+							Type: "file_search",
+						},
 					},
 				},
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("failed to create assistant: %w", err)
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create assistant: %w", err)
+			}
+			o.assistantID = assistant.ID
+			fmt.Printf("[RAG] OpenAI: Created new assistant '%s' with ID: %s\n", o.config.AssistantName, o.assistantID)
 		}
-		o.assistantID = assistant.ID
 	}
 
-	// Create or retrieve vector store
+	// Find or create vector store
 	if o.config.VectorStoreID != "" {
-		// Verify existing vector store
+		// Use specific vector store ID
 		vectorStore, err := o.client.VectorStores.Get(ctx, o.config.VectorStoreID)
 		if err != nil {
 			return fmt.Errorf("failed to retrieve vector store: %w", err)
 		}
 		o.vectorStoreID = vectorStore.ID
+		fmt.Printf("[RAG] OpenAI: Using existing vector store '%s' with ID: %s\n", vectorStore.Name, o.vectorStoreID)
 	} else {
-		// Create new vector store
-		vectorStore, err := o.client.VectorStores.New(ctx, openai.VectorStoreNewParams{
-			Name: openai.String("Knowledge Base"),
-		})
+		// Search for existing vector store by name first
+		existingVectorStore, err := o.findVectorStoreByName(ctx, o.config.VectorStoreName)
 		if err != nil {
-			return fmt.Errorf("failed to create vector store: %w", err)
+			return fmt.Errorf("failed to search for vector store: %w", err)
 		}
-		o.vectorStoreID = vectorStore.ID
+		
+		if existingVectorStore != nil {
+			// Found existing vector store
+			o.vectorStoreID = existingVectorStore.ID
+			fmt.Printf("[RAG] OpenAI: Found existing vector store '%s' with ID: %s\n", o.config.VectorStoreName, o.vectorStoreID)
+		} else {
+			// Create new vector store
+			vectorStore, err := o.client.VectorStores.New(ctx, openai.VectorStoreNewParams{
+				Name: openai.String(o.config.VectorStoreName),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create vector store: %w", err)
+			}
+			o.vectorStoreID = vectorStore.ID
+			fmt.Printf("[RAG] OpenAI: Created new vector store '%s' with ID: %s\n", o.config.VectorStoreName, o.vectorStoreID)
+		}
 	}
 
 	// Update assistant with vector store
@@ -262,11 +321,16 @@ func (o *OpenAIProvider) ListFiles(ctx context.Context, limit int) ([]FileInfo, 
 
 // Search performs a vector search using OpenAI's assistant
 func (o *OpenAIProvider) Search(ctx context.Context, query string, options SearchOptions) ([]SearchResult, error) {
+	fmt.Printf("[RAG] OpenAI: Starting vector search (assistant: %s, vector_store: %s)\n",
+		o.assistantID, o.vectorStoreID)
+
 	// Create a new thread for the search
 	thread, err := o.client.Beta.Threads.New(ctx, openai.BetaThreadNewParams{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create thread: %w", err)
 	}
+
+	fmt.Printf("[RAG] OpenAI: Created thread %s for search\n", thread.ID)
 
 	// Add user's search query
 	_, err = o.client.Beta.Threads.Messages.New(ctx, thread.ID, openai.BetaThreadMessageNewParams{
@@ -280,10 +344,16 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 	}
 
 	// Run assistant with file_search tool to find relevant documents
+	searchInstructions := "Search through all uploaded documents to find information relevant to the user's query. Return specific excerpts, data points, and context from the documents. Include document names and page references when possible. Provide comprehensive information even if it spans multiple documents."
+	
+	// Use custom prompt if available for more targeted search
+	if o.config.CustomPrompt != "" {
+		searchInstructions = o.config.CustomPrompt + "\n\nFor this specific search, focus on finding the exact information requested in the user's query. Extract relevant data, metrics, and context from the documents."
+	}
+	
 	run, err := o.client.Beta.Threads.Runs.New(ctx, thread.ID, openai.BetaThreadRunNewParams{
 		AssistantID: o.assistantID,
-		// Instruct to return only citations/chunks
-		Instructions: openai.String("Search for relevant document chunks and return only the most relevant excerpts without any additional commentary or explanation."),
+		Instructions: openai.String(searchInstructions),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create run: %w", err)
@@ -344,24 +414,25 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 								Score:    1.0, // OpenAI doesn't provide explicit scores
 								Metadata: make(map[string]string),
 							}
-
 							results = append(results, result)
 						}
 					}
 				} else {
 					// Include text without citations as well
 					if strings.TrimSpace(textContent.Value) != "" {
-						results = append(results, SearchResult{
+						result := SearchResult{
 							Content:  textContent.Value,
 							Score:    0.8, // Lower score for non-cited content
 							Metadata: make(map[string]string),
-						})
+						}
+						results = append(results, result)
 					}
 				}
 			}
 		}
 	}
 
+	fmt.Printf("[RAG] OpenAI: Search completed. Found %d results from vector store\n", len(results))
 	return results, nil
 }
 
@@ -400,6 +471,46 @@ func (o *OpenAIProvider) GetAssistantID() string {
 // GetVectorStoreID returns the OpenAI vector store ID
 func (o *OpenAIProvider) GetVectorStoreID() string {
 	return o.vectorStoreID
+}
+
+// findAssistantByName searches for an existing assistant by name
+func (o *OpenAIProvider) findAssistantByName(ctx context.Context, name string) (*openai.Assistant, error) {
+	// List assistants and search for matching name
+	assistants, err := o.client.Beta.Assistants.List(ctx, openai.BetaAssistantListParams{
+		Limit: openai.Int(100), // Get up to 100 assistants to search through
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list assistants: %w", err)
+	}
+
+	// Search through assistants for matching name
+	for _, assistant := range assistants.Data {
+		if assistant.Name == name {
+			return &assistant, nil
+		}
+	}
+
+	return nil, nil // Not found
+}
+
+// findVectorStoreByName searches for an existing vector store by name
+func (o *OpenAIProvider) findVectorStoreByName(ctx context.Context, name string) (*openai.VectorStore, error) {
+	// List vector stores and search for matching name
+	vectorStores, err := o.client.VectorStores.List(ctx, openai.VectorStoreListParams{
+		Limit: openai.Int(100), // Get up to 100 vector stores to search through
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list vector stores: %w", err)
+	}
+
+	// Search through vector stores for matching name
+	for _, vs := range vectorStores.Data {
+		if vs.Name == name {
+			return &vs, nil
+		}
+	}
+
+	return nil, nil // Not found
 }
 
 // init registers the OpenAI provider

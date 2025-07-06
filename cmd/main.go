@@ -32,14 +32,16 @@ var (
 	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
 
 	// RAG-related flags
-	ragIngest   = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
-	ragSearch   = flag.String("rag-search", "", "Search RAG database and exit")
-	ragDatabase = flag.String("rag-db", "./knowledge.json", "Path to RAG database file")
-	ragProvider = flag.String("rag-provider", "", "RAG provider to use (simple, openai)")
-	ragInit     = flag.Bool("rag-init", false, "Initialize vector store and exit")
-	ragList     = flag.Bool("rag-list", false, "List files in vector store and exit")
-	ragDelete   = flag.String("rag-delete", "", "Delete files from vector store (comma-separated IDs) and exit")
-	ragStats    = flag.Bool("rag-stats", false, "Show RAG statistics and exit")
+	ragIngest         = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
+	ragSearch         = flag.String("rag-search", "", "Search RAG database and exit")
+	ragDatabase       = flag.String("rag-db", "./knowledge.json", "Path to RAG database file")
+	ragProvider       = flag.String("rag-provider", "", "RAG provider to use (simple, openai)")
+	ragInit           = flag.Bool("rag-init", false, "Initialize vector store and exit")
+	ragList           = flag.Bool("rag-list", false, "List files in vector store and exit")
+	ragDelete         = flag.String("rag-delete", "", "Delete files from vector store (comma-separated IDs) and exit")
+	ragStats          = flag.Bool("rag-stats", false, "Show RAG statistics and exit")
+	ragAssistantName  = flag.String("rag-assistant-name", "", "Name for the OpenAI assistant (for init)")
+	ragVectorStoreName = flag.String("rag-vector-store-name", "", "Name for the vector store (for init)")
 )
 
 func main() {
@@ -516,12 +518,11 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 
 	// Initialize RAG tool if enabled
 	if ragEnabled {
-		logger.Info("Initializing RAG tool with database: %s", ragDatabase)
+		logger.Info("Initializing RAG tool")
 
 		// Determine RAG provider and create configuration
 		ragProviderType := "simple" // Default
 		ragConfig := make(map[string]interface{})
-		ragConfig["database_path"] = ragDatabase
 
 		// Check for RAG provider configuration in LLM provider config
 		if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
@@ -535,8 +536,19 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 			ragConfig = rag.ExtractRAGConfig(providerConfig)
 			if ragConfig == nil {
 				ragConfig = make(map[string]interface{})
-				ragConfig["database_path"] = ragDatabase
 				ragConfig["provider"] = ragProviderType
+			}
+			
+			// Add custom prompt from main config if available
+			if string(cfg.CustomPrompt) != "" {
+				ragConfig["custom_prompt"] = string(cfg.CustomPrompt)
+			}
+		}
+
+		// Only set database_path for providers that need it
+		if ragProviderType == "simple" {
+			if ragConfig["database_path"] == nil {
+				ragConfig["database_path"] = ragDatabase
 			}
 		}
 
@@ -896,6 +908,15 @@ func getRAGConfig(provider string) map[string]interface{} {
 		if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
 			openaiConfig["api_key"] = apiKey
 		}
+		
+		// Add CLI flags for naming if provided
+		if *ragAssistantName != "" {
+			config["assistant_name"] = *ragAssistantName
+		}
+		if *ragVectorStoreName != "" {
+			config["vector_store_name"] = *ragVectorStoreName
+		}
+		
 		config["openai"] = openaiConfig
 	}
 

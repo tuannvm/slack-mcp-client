@@ -121,7 +121,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		*cfg.UseNativeTools,
 		*cfg.UseAgent,
 		registry,
-		customPrompt,
+		string(customPrompt),
 		replaceToolPrompt,
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
@@ -313,7 +313,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
 			providerName,
 			userDisplayName,
-			c.cfg.CustomPrompt,
+			string(c.cfg.CustomPrompt),
 			userPrompt,
 			contextHistory,
 			&agentCallbackHandler{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -17,6 +18,28 @@ const (
 	ProviderAnthropic = "anthropic"
 	ProviderLangChain = "langchain" // Keep for potential direct LangChain use if needed
 )
+
+// CustomPrompt handles both string and []string formats for custom_prompt
+type CustomPrompt string
+
+// UnmarshalJSON implements custom JSON unmarshaling for CustomPrompt
+func (cp *CustomPrompt) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as string first
+	var str string
+	if err := json.Unmarshal(data, &str); err == nil {
+		*cp = CustomPrompt(str)
+		return nil
+	}
+
+	// Try to unmarshal as array of strings
+	var strArray []string
+	if err := json.Unmarshal(data, &strArray); err == nil {
+		*cp = CustomPrompt(strings.Join(strArray, "\n"))
+		return nil
+	}
+
+	return fmt.Errorf("custom_prompt must be either a string or array of strings")
+}
 
 // ServerConfig defines the configuration for a single MCP server
 type ServerConfig struct {
@@ -51,8 +74,8 @@ type Config struct {
 	LLMProviders   map[string]map[string]interface{} `json:"llm_providers"`              // Configuration for ALL potential providers
 
 	// Custom prompt configuration
-	CustomPrompt      string `json:"custom_prompt,omitempty"`       // Custom system prompt to prepend to tool instructions
-	ReplaceToolPrompt *bool  `json:"replace_tool_prompt,omitempty"` // If true, completely replace tool prompt with custom prompt
+	CustomPrompt      CustomPrompt `json:"custom_prompt,omitempty"`       // Custom system prompt to prepend to tool instructions
+	ReplaceToolPrompt *bool        `json:"replace_tool_prompt,omitempty"` // If true, completely replace tool prompt with custom prompt
 
 	UseAgent *bool `json:"use_agent,omitempty"` // Use MCP agent for LLMs
 }

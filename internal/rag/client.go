@@ -37,10 +37,13 @@ func NewClient(ragDatabase string) *Client {
 
 // NewClientWithProvider creates a new RAG client with specified provider
 func NewClientWithProvider(providerType string, config map[string]interface{}) (*Client, error) {
-	// Extract database path from config if available
-	dbPath := "./knowledge.json"
-	if path, ok := config["database_path"].(string); ok {
-		dbPath = path
+	// Extract database path from config if available (only for providers that need it)
+	dbPath := ""
+	if providerType == "simple" {
+		dbPath = "./knowledge.json" // Default for simple provider
+		if path, ok := config["database_path"].(string); ok {
+			dbPath = path
+		}
 	}
 
 	factory := NewRAGFactory(providerType, dbPath)
@@ -108,6 +111,13 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 
 	// Check if provider is a VectorProviderAdapter to use vector search
 	if adapter, ok := c.provider.(*VectorProviderAdapter); ok {
+		// Log which vector provider is being used
+		providerType := "unknown"
+		if _, isOpenAI := adapter.GetProvider().(*OpenAIProvider); isOpenAI {
+			providerType = "OpenAI"
+		}
+		fmt.Printf("[RAG] Using vector search with %s provider\n", providerType)
+
 		// Use vector search
 		results, err := adapter.GetProvider().Search(ctx, query, SearchOptions{
 			Limit: limit,
@@ -115,10 +125,13 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		if err != nil {
 			return "", fmt.Errorf("vector search failed: %w", err)
 		}
+
+		fmt.Printf("[RAG] Vector search returned %d results from %s\n", len(results), providerType)
 		return c.formatVectorSearchResults(results, query), nil
 	}
 
 	// Fall back to traditional similarity search for other providers
+	fmt.Printf("[RAG] Using traditional similarity search (simple provider)\n")
 	resultChan := make(chan searchResult, 1)
 	go func() {
 		// Use the RAGProvider interface - fall back to SimilaritySearch

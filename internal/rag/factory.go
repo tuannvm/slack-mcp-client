@@ -19,7 +19,8 @@ func NewRAGFactory(defaultProvider, databasePath string) *RAGFactory {
 	if defaultProvider == "" {
 		defaultProvider = "simple"
 	}
-	if databasePath == "" {
+	// Only set default database path for simple provider
+	if databasePath == "" && defaultProvider == "simple" {
 		databasePath = "./knowledge.json"
 	}
 
@@ -153,6 +154,17 @@ func ExtractRAGConfig(llmProviderConfig map[string]interface{}) map[string]inter
 	if dbPath, ok := llmProviderConfig["rag_database"].(string); ok {
 		ragConfig["database_path"] = dbPath
 	}
+
+	// Extract rag_config section if present
+	if ragConfigSection, ok := llmProviderConfig["rag_config"].(map[string]interface{}); ok {
+		// Copy all rag_config values to main config
+		for key, value := range ragConfigSection {
+			ragConfig[key] = value
+		}
+	}
+
+	// Extract custom_prompt from the main config (not just the LLM provider config)
+	// This requires passing the full config, but for now we'll need to handle this differently
 
 	// Extract provider-specific configs
 	// For OpenAI
