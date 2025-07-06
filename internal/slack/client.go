@@ -385,10 +385,31 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		c.logger.Debug("Tool executed. Re-prompting LLM with tool result.")
 		c.logger.DebugKV("Tool result", "result", logging.TruncateForLog(finalResponse, 500))
 
-		// Construct a new prompt incorporating the original prompt and the tool result
-		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a concise and helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
+		// Check if this is a comprehensive OpenAI RAG result that should be returned directly
+		// OpenAI Assistant already processed the data, no need for second LLM processing
+		isComprehensiveRAGResult := (strings.Contains(finalResponse, "Context") || 
+									 strings.Contains(finalResponse, "### ") || 
+									 strings.Contains(finalResponse, "#### ")) && 
+									len(finalResponse) > 1500
+		
+		if isComprehensiveRAGResult {
+			c.logger.Debug("Detected comprehensive RAG result from OpenAI Assistant. Returning directly without LLM processing.")
+			
+			// Add to history and send directly
+			c.addToHistory(channelID, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
+			c.addToHistory(channelID, "tool", finalResponse)            // Tool execution result
+			c.addToHistory(channelID, "assistant", finalResponse)       // Final response
+			
+			// Send the comprehensive RAG result directly
+			c.userFrontend.SendMessage(channelID, threadTS, finalResponse)
+			return
+		}
 
-		// Add history
+		// For non-comprehensive results, use normal LLM processing
+		// Construct a new prompt incorporating the original prompt and the tool result
+		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
+
+		// Add history for non-comprehensive results
 		c.addToHistory(channelID, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
 		c.addToHistory(channelID, "tool", finalResponse)            // Tool execution result
 

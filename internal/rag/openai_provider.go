@@ -118,7 +118,7 @@ func (o *OpenAIProvider) Initialize(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to search for assistant: %w", err)
 		}
-		
+
 		if existingAssistant != nil {
 			// Found existing assistant
 			o.assistantID = existingAssistant.ID
@@ -129,7 +129,7 @@ func (o *OpenAIProvider) Initialize(ctx context.Context) error {
 			if o.config.CustomPrompt != "" {
 				instructions = o.config.CustomPrompt
 			}
-			
+
 			assistant, err := o.client.Beta.Assistants.New(ctx, openai.BetaAssistantNewParams{
 				Model:        o.config.Model,
 				Name:         openai.String(o.config.AssistantName),
@@ -165,7 +165,7 @@ func (o *OpenAIProvider) Initialize(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to search for vector store: %w", err)
 		}
-		
+
 		if existingVectorStore != nil {
 			// Found existing vector store
 			o.vectorStoreID = existingVectorStore.ID
@@ -345,14 +345,14 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 
 	// Run assistant with file_search tool to find relevant documents
 	searchInstructions := "Search through all uploaded documents to find information relevant to the user's query. Return specific excerpts, data points, and context from the documents. Include document names and page references when possible. Provide comprehensive information even if it spans multiple documents."
-	
+
 	// Use custom prompt if available for more targeted search
 	if o.config.CustomPrompt != "" {
 		searchInstructions = o.config.CustomPrompt + "\n\nFor this specific search, focus on finding the exact information requested in the user's query. Extract relevant data, metrics, and context from the documents."
 	}
-	
+
 	run, err := o.client.Beta.Threads.Runs.New(ctx, thread.ID, openai.BetaThreadRunNewParams{
-		AssistantID: o.assistantID,
+		AssistantID:  o.assistantID,
 		Instructions: openai.String(searchInstructions),
 	})
 	if err != nil {
@@ -386,48 +386,24 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 		return nil, fmt.Errorf("failed to list messages: %w", err)
 	}
 
-	// Parse and return document chunks
+	// Return whatever OpenAI gives us directly - no manipulation
 	results := make([]SearchResult, 0)
 
-	// Process messages (the API returns them as pagination data)
-	for i := 0; i < len(messages.Data) && len(results) < options.Limit; i++ {
-		msg := messages.Data[i]
-		// Skip user messages
+	for _, msg := range messages.Data {
+		// Skip user messages, we only want assistant responses
 		if msg.Role == "user" {
 			continue
 		}
 
-		// Handle content - the API returns content as an array
+		// Get the raw content from OpenAI and return it as-is
 		for _, content := range msg.Content {
-			// Access text content
 			if content.Type == "text" {
-				textContent := content.Text
-
-				// Extract content with annotations
-				if len(textContent.Annotations) > 0 {
-					// Process annotations to extract file references
-					for _, annotation := range textContent.Annotations {
-						if annotation.Type == "file_citation" {
-							result := SearchResult{
-								Content:  textContent.Value,
-								FileID:   annotation.FileCitation.FileID,
-								Score:    1.0, // OpenAI doesn't provide explicit scores
-								Metadata: make(map[string]string),
-							}
-							results = append(results, result)
-						}
-					}
-				} else {
-					// Include text without citations as well
-					if strings.TrimSpace(textContent.Value) != "" {
-						result := SearchResult{
-							Content:  textContent.Value,
-							Score:    0.8, // Lower score for non-cited content
-							Metadata: make(map[string]string),
-						}
-						results = append(results, result)
-					}
+				result := SearchResult{
+					Content:  content.Text.Value,
+					Score:    0.8,
+					Metadata: make(map[string]string),
 				}
+				results = append(results, result)
 			}
 		}
 	}
