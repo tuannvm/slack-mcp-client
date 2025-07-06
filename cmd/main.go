@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -36,12 +35,22 @@ var (
 	ragIngest   = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
 	ragSearch   = flag.String("rag-search", "", "Search RAG database and exit")
 	ragDatabase = flag.String("rag-db", "./knowledge.json", "Path to RAG database file")
+	ragProvider = flag.String("rag-provider", "", "RAG provider to use (simple, openai)")
+	ragInit     = flag.Bool("rag-init", false, "Initialize vector store and exit")
+	ragList     = flag.Bool("rag-list", false, "List files in vector store and exit")
+	ragDelete   = flag.String("rag-delete", "", "Delete files from vector store (comma-separated IDs) and exit")
+	ragStats    = flag.Bool("rag-stats", false, "Show RAG statistics and exit")
 )
 
 func main() {
 	flag.Parse()
 
 	// Handle RAG utility commands first (these exit after completion)
+	if *ragInit {
+		handleRAGInit()
+		return
+	}
+
 	if *ragIngest != "" {
 		handleRAGIngest(*ragIngest)
 		return
@@ -49,6 +58,21 @@ func main() {
 
 	if *ragSearch != "" {
 		handleRAGSearch(*ragSearch)
+		return
+	}
+
+	if *ragList {
+		handleRAGList()
+		return
+	}
+
+	if *ragDelete != "" {
+		handleRAGDelete(*ragDelete)
+		return
+	}
+
+	if *ragStats {
+		handleRAGStats()
 		return
 	}
 
@@ -494,21 +518,80 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 	if ragEnabled {
 		logger.Info("Initializing RAG tool with database: %s", ragDatabase)
 
-		ragClient := rag.NewClient(ragDatabase)
-		ragToolInfo := ragClient.GetRAG().AsToolInfo()
+		// Determine RAG provider and create configuration
+		ragProviderType := "simple" // Default
+		ragConfig := make(map[string]interface{})
+		ragConfig["database_path"] = ragDatabase
 
-		// Add RAG tool to discovered tools (integrates with existing bridge)
-		discoveredTools["rag_search"] = ragToolInfo
+		// Check for RAG provider configuration in LLM provider config
+		if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
+			if provider, exists := providerConfig["rag_provider"]; exists {
+				if providerStr, ok := provider.(string); ok {
+					ragProviderType = providerStr
+				}
+			}
 
-		// Store RAG client in the config for the slack client to pick up
-		// This is a bit of a hack, but avoids changing the slack client interface
-		if cfg.LLMProviders[cfg.LLMProvider] == nil {
-			cfg.LLMProviders[cfg.LLMProvider] = make(map[string]interface{})
+			// Extract RAG config from LLM provider config
+			ragConfig = rag.ExtractRAGConfig(providerConfig)
+			if ragConfig == nil {
+				ragConfig = make(map[string]interface{})
+				ragConfig["database_path"] = ragDatabase
+				ragConfig["provider"] = ragProviderType
+			}
 		}
-		cfg.LLMProviders[cfg.LLMProvider]["_rag_client"] = ragClient
 
-		logger.Info("RAG tool registered and available for LLM to use")
-		logger.Info("Knowledge base contains %d documents", ragClient.GetRAG().GetDocumentCount())
+		logger.Info("Using RAG provider: %s", ragProviderType)
+
+		ragClient, err := rag.NewClientWithProvider(ragProviderType, ragConfig)
+		if err != nil {
+			logger.Error("Failed to create RAG client: %v", err)
+			logger.Info("RAG will be disabled")
+		} else {
+			// Create tool info using the RAG client
+			ragToolInfo := mcp.ToolInfo{
+				ServerName:      "rag_search",
+				ToolName:        "rag_search",
+				ToolDescription: "Search knowledge base for relevant context",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "Search query for knowledge base",
+						},
+						"limit": map[string]interface{}{
+							"type":        "number",
+							"description": "Maximum number of results to return (default: 3, max: 20)",
+							"default":     3,
+							"minimum":     1,
+							"maximum":     20,
+						},
+					},
+					"required": []string{"query"},
+				},
+			}
+
+			// Add RAG tool to discovered tools (integrates with existing bridge)
+			discoveredTools["rag_search"] = ragToolInfo
+
+			// Store RAG client in the config for the slack client to pick up
+			// This is a bit of a hack, but avoids changing the slack client interface
+			if cfg.LLMProviders[cfg.LLMProvider] == nil {
+				cfg.LLMProviders[cfg.LLMProvider] = make(map[string]interface{})
+			}
+			cfg.LLMProviders[cfg.LLMProvider]["_rag_client"] = ragClient
+
+			logger.Info("RAG tool registered and available for LLM to use")
+
+			// Get document count with proper context handling
+			ctx := context.Background()
+			count, err := ragClient.GetProvider().GetDocumentCount(ctx)
+			if err != nil {
+				logger.Warn("Could not get document count: %v", err)
+			} else {
+				logger.Info("Knowledge base contains %d documents", count)
+			}
+		}
 	} else {
 		logger.Info("RAG is disabled. To enable, set 'rag_enabled': true in your LLM provider config")
 	}
@@ -571,45 +654,250 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 
 // handleRAGIngest processes PDF files from a directory and ingests them into the RAG database
 func handleRAGIngest(path string) {
-	fmt.Printf("Ingesting PDF files from: %s\n", path)
-	simpleRAG := rag.NewSimpleRAG(*ragDatabase)
+	provider := getRAGProvider()
+	fmt.Printf("Ingesting PDF files from: %s (provider: %s)\n", path, provider)
 
-	count, err := simpleRAG.IngestDirectory(path)
+	// Create RAG configuration
+	config := getRAGConfig(provider)
+	ragClient, err := rag.NewClientWithProvider(provider, config)
+	if err != nil {
+		fmt.Printf("Error creating RAG client: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := ragClient.GetProvider().Close(); err != nil {
+			fmt.Printf("Warning: failed to close RAG client: %v\n", err)
+		}
+	}()
+
+	ctx := context.Background()
+
+	// Use the RAG client to ingest
+	result, err := ragClient.CallTool(ctx, "rag_ingest", map[string]interface{}{
+		"file_path":    path,
+		"is_directory": true,
+	})
 	if err != nil {
 		fmt.Printf("Error during ingestion: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Ingestion complete. Processed %d PDF files.\n", count)
-	fmt.Printf("Total documents in knowledge base: %d\n", simpleRAG.GetDocumentCount())
+	fmt.Printf("Ingestion complete: %s\n", result)
+
+	// Get stats
+	statsResult, err := ragClient.CallTool(ctx, "rag_stats", map[string]interface{}{})
+	if err != nil {
+		fmt.Printf("Warning: Could not get stats: %v\n", err)
+	} else {
+		fmt.Printf("Stats: %s\n", statsResult)
+	}
 }
 
 // handleRAGSearch searches the RAG database and displays results
 func handleRAGSearch(query string) {
-	simpleRAG := rag.NewSimpleRAG(*ragDatabase)
-	docs := simpleRAG.Search(query, 5)
+	provider := getRAGProvider()
+	fmt.Printf("Searching RAG database for: %s (provider: %s)\n", query, provider)
 
-	fmt.Printf("Search results for: %s\n", query)
-	fmt.Printf("Found %d documents:\n\n", len(docs))
+	// Create RAG configuration
+	config := getRAGConfig(provider)
+	ragClient, err := rag.NewClientWithProvider(provider, config)
+	if err != nil {
+		fmt.Printf("Error creating RAG client: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := ragClient.GetProvider().Close(); err != nil {
+			fmt.Printf("Warning: failed to close RAG client: %v\n", err)
+		}
+	}()
 
-	for i, doc := range docs {
-		fmt.Printf("--- Result %d ---\n", i+1)
-		fmt.Printf("Content: %.200s", doc.Content)
-		if len(doc.Content) > 200 {
-			fmt.Printf("...")
-		}
-		fmt.Printf("\n")
-		if fileName, ok := doc.Metadata["file_name"]; ok {
-			fmt.Printf("Source: %s\n", fileName)
-		}
-		if filePath, ok := doc.Metadata["file_path"]; ok {
-			fmt.Printf("Path: %s\n", filepath.Base(filePath))
-		}
-		fmt.Println()
+	ctx := context.Background()
+
+	// Use the RAG client to search
+	result, err := ragClient.CallTool(ctx, "rag_search", map[string]interface{}{
+		"query": query,
+		"limit": 5,
+	})
+	if err != nil {
+		fmt.Printf("Error during search: %v\n", err)
+		os.Exit(1)
 	}
 
-	if len(docs) == 0 {
-		fmt.Printf("No documents found for query: %s\n", query)
-		fmt.Printf("Knowledge base contains %d total documents.\n", simpleRAG.GetDocumentCount())
+	fmt.Printf("\n%s\n", result)
+}
+
+// handleRAGInit initializes the vector store
+func handleRAGInit() {
+	provider := getRAGProvider()
+	if provider == "simple" {
+		fmt.Printf("Init not required for simple provider\n")
+		return
 	}
+
+	fmt.Printf("Initializing vector store (provider: %s)\n", provider)
+
+	// Create RAG configuration
+	config := getRAGConfig(provider)
+	ragClient, err := rag.NewClientWithProvider(provider, config)
+	if err != nil {
+		fmt.Printf("Error creating RAG client: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := ragClient.GetProvider().Close(); err != nil {
+			fmt.Printf("Warning: failed to close RAG client: %v\n", err)
+		}
+	}()
+
+	fmt.Printf("Vector store initialized successfully\n")
+
+	// Show stats
+	ctx := context.Background()
+	statsResult, err := ragClient.CallTool(ctx, "rag_stats", map[string]interface{}{})
+	if err != nil {
+		fmt.Printf("Warning: Could not get stats: %v\n", err)
+	} else {
+		fmt.Printf("Stats: %s\n", statsResult)
+	}
+}
+
+// handleRAGList lists files in the vector store
+func handleRAGList() {
+	provider := getRAGProvider()
+	fmt.Printf("Listing files in vector store (provider: %s)\n", provider)
+
+	if provider == "simple" {
+		fmt.Printf("File listing not supported for simple provider\n")
+		return
+	}
+
+	// Create RAG configuration
+	config := getRAGConfig(provider)
+	ragClient, err := rag.NewClientWithProvider(provider, config)
+	if err != nil {
+		fmt.Printf("Error creating RAG client: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := ragClient.GetProvider().Close(); err != nil {
+			fmt.Printf("Warning: failed to close RAG client: %v\n", err)
+		}
+	}()
+
+	// Get the underlying vector provider
+	if adapter, ok := ragClient.GetProvider().(*rag.VectorProviderAdapter); ok {
+		ctx := context.Background()
+		files, err := adapter.GetProvider().ListFiles(ctx, 100)
+		if err != nil {
+			fmt.Printf("Error listing files: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Found %d files:\n", len(files))
+		for _, file := range files {
+			fmt.Printf("  - ID: %s, Name: %s, Size: %d bytes, Status: %s\n",
+				file.ID, file.Name, file.Size, file.Status)
+		}
+	} else {
+		fmt.Printf("File listing not supported for this provider\n")
+	}
+}
+
+// handleRAGDelete deletes files from the vector store
+func handleRAGDelete(fileIDs string) {
+	provider := getRAGProvider()
+	fmt.Printf("Deleting files from vector store (provider: %s)\n", provider)
+
+	if provider == "simple" {
+		fmt.Printf("File deletion not supported for simple provider\n")
+		return
+	}
+
+	ids := strings.Split(fileIDs, ",")
+	for i, id := range ids {
+		ids[i] = strings.TrimSpace(id)
+	}
+
+	// Create RAG configuration
+	config := getRAGConfig(provider)
+	ragClient, err := rag.NewClientWithProvider(provider, config)
+	if err != nil {
+		fmt.Printf("Error creating RAG client: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := ragClient.GetProvider().Close(); err != nil {
+			fmt.Printf("Warning: failed to close RAG client: %v\n", err)
+		}
+	}()
+
+	// Get the underlying vector provider
+	if adapter, ok := ragClient.GetProvider().(*rag.VectorProviderAdapter); ok {
+		ctx := context.Background()
+		for _, id := range ids {
+			if err := adapter.GetProvider().DeleteFile(ctx, id); err != nil {
+				fmt.Printf("Error deleting file %s: %v\n", id, err)
+			} else {
+				fmt.Printf("Deleted file: %s\n", id)
+			}
+		}
+	} else {
+		fmt.Printf("File deletion not supported for this provider\n")
+	}
+}
+
+// handleRAGStats shows RAG statistics
+func handleRAGStats() {
+	provider := getRAGProvider()
+	fmt.Printf("RAG Statistics (provider: %s)\n", provider)
+
+	// Create RAG configuration
+	config := getRAGConfig(provider)
+	ragClient, err := rag.NewClientWithProvider(provider, config)
+	if err != nil {
+		fmt.Printf("Error creating RAG client: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := ragClient.GetProvider().Close(); err != nil {
+			fmt.Printf("Warning: failed to close RAG client: %v\n", err)
+		}
+	}()
+
+	ctx := context.Background()
+	result, err := ragClient.CallTool(ctx, "rag_stats", map[string]interface{}{})
+	if err != nil {
+		fmt.Printf("Error getting stats: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s\n", result)
+}
+
+// getRAGProvider determines the RAG provider to use
+func getRAGProvider() string {
+	if *ragProvider != "" {
+		return *ragProvider
+	}
+
+	// Try to infer from LLM provider
+	llmProvider := os.Getenv("LLM_PROVIDER")
+	return rag.GetProviderFromFlags("", llmProvider)
+}
+
+// getRAGConfig creates RAG configuration based on provider and flags
+func getRAGConfig(provider string) map[string]interface{} {
+	config := make(map[string]interface{})
+	config["database_path"] = *ragDatabase
+	config["provider"] = provider
+
+	if provider == "openai" {
+		openaiConfig := make(map[string]interface{})
+		if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+			openaiConfig["api_key"] = apiKey
+		}
+		config["openai"] = openaiConfig
+	}
+
+	return config
 }

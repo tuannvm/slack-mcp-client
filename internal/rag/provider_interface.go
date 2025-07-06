@@ -40,15 +40,15 @@ type FileInfo struct {
 
 // SearchOptions configures search parameters
 type SearchOptions struct {
-	Limit      int               // Maximum number of results
-	MinScore   float32          // Minimum relevance score
-	Metadata   map[string]string // Filter by metadata
+	Limit    int               // Maximum number of results
+	MinScore float32           // Minimum relevance score
+	Metadata map[string]string // Filter by metadata
 }
 
 // SearchResult represents a search result from the vector store
 type SearchResult struct {
 	Content    string            // The actual content
-	Score      float32          // Relevance score
+	Score      float32           // Relevance score
 	FileID     string            // ID of the source file
 	FileName   string            // Name of the source file
 	Metadata   map[string]string // Additional metadata
@@ -64,7 +64,6 @@ type VectorStoreStats struct {
 	StorageSizeBytes int64
 	LastUpdated      time.Time
 }
-
 
 // VectorProviderFactory creates vector provider instances
 type VectorProviderFactory func(config map[string]interface{}) (VectorProvider, error)

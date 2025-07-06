@@ -349,7 +349,7 @@ func (r *SimpleRAG) AsToolInfo() mcpinternal.ToolInfo {
 // AddDocuments implements the LangChain Go VectorStore interface
 func (r *SimpleRAG) AddDocuments(ctx context.Context, docs []schema.Document, options ...vectorstores.Option) ([]string, error) {
 	ids := make([]string, len(docs))
-	
+
 	for i, doc := range docs {
 		// Convert metadata
 		metadata := make(map[string]string)
@@ -360,7 +360,7 @@ func (r *SimpleRAG) AddDocuments(ctx context.Context, docs []schema.Document, op
 				metadata[k] = fmt.Sprintf("%v", v)
 			}
 		}
-		
+
 		// Add document
 		r.documents = append(r.documents, Document{
 			Content:  doc.PageContent,
@@ -368,14 +368,14 @@ func (r *SimpleRAG) AddDocuments(ctx context.Context, docs []schema.Document, op
 		})
 		ids[i] = fmt.Sprintf("doc_%d", len(r.documents))
 	}
-	
+
 	return ids, r.save()
 }
 
 // SimilaritySearch implements the LangChain Go VectorStore interface
 func (r *SimpleRAG) SimilaritySearch(ctx context.Context, query string, numDocuments int, options ...vectorstores.Option) ([]schema.Document, error) {
 	results := r.Search(query, numDocuments)
-	
+
 	// Convert to schema.Document
 	docs := make([]schema.Document, len(results))
 	for i, result := range results {
@@ -383,13 +383,13 @@ func (r *SimpleRAG) SimilaritySearch(ctx context.Context, query string, numDocum
 		for k, v := range result.Metadata {
 			metadata[k] = v
 		}
-		
+
 		docs[i] = schema.Document{
 			PageContent: result.Content,
 			Metadata:    metadata,
 		}
 	}
-	
+
 	return docs, nil
 }
 

@@ -102,11 +102,10 @@ const (
 
 // ProviderConfig holds provider-specific configuration
 type ProviderConfig struct {
-	Provider     string                 `json:"provider"`     // Provider name: "simple", "openai", etc.
+	Provider     string                 `json:"provider"` // Provider name: "simple", "openai", etc.
 	DatabasePath string                 `json:"database_path"`
 	Options      map[string]interface{} `json:"options"`
 }
-
 
 // NewLangChainCompatibleRAG creates a RAG provider that's compatible with LangChain Go
 func NewLangChainCompatibleRAG(config ProviderConfig) (RAGProvider, error) {

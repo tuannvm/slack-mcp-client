@@ -147,7 +147,10 @@ func (a *VectorProviderAdapter) extractCommonMetadata(docs []schema.Document) ma
 // cleanupTempFiles removes temporary files
 func (a *VectorProviderAdapter) cleanupTempFiles(files []string) {
 	for _, file := range files {
-		os.Remove(file)
+		if err := os.Remove(file); err != nil {
+			// Log error but continue with cleanup
+			fmt.Printf("Warning: failed to remove temp file %s: %v\n", file, err)
+		}
 	}
 }
 
@@ -155,7 +158,9 @@ func (a *VectorProviderAdapter) cleanupTempFiles(files []string) {
 func (a *VectorProviderAdapter) Close() error {
 	// Clean up temp directory
 	if a.tempDir != "" {
-		os.RemoveAll(a.tempDir)
+		if err := os.RemoveAll(a.tempDir); err != nil {
+			fmt.Printf("Warning: failed to remove temp directory %s: %v\n", a.tempDir, err)
+		}
 	}
 
 	// Close the underlying provider

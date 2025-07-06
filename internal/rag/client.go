@@ -16,9 +16,9 @@ type MCPClientInterface interface {
 // Client wraps RAG providers to implement the MCPClientInterface
 // This allows the LLM-MCP bridge to treat RAG as a regular MCP tool
 type Client struct {
-	provider RAGProvider       // Can be SimpleRAG, VectorProviderAdapter, etc.
-	factory  *RAGFactory       // Factory for creating providers
-	maxDocs  int              // Maximum documents to return in a single call
+	provider RAGProvider            // Can be SimpleRAG, VectorProviderAdapter, etc.
+	factory  *RAGFactory            // Factory for creating providers
+	maxDocs  int                    // Maximum documents to return in a single call
 	config   map[string]interface{} // Configuration for provider
 }
 
@@ -26,7 +26,7 @@ type Client struct {
 func NewClient(ragDatabase string) *Client {
 	factory := NewRAGFactory("simple", ragDatabase)
 	provider, _ := factory.CreateProvider("simple", nil)
-	
+
 	return &Client{
 		provider: provider,
 		factory:  factory,
@@ -42,13 +42,13 @@ func NewClientWithProvider(providerType string, config map[string]interface{}) (
 	if path, ok := config["database_path"].(string); ok {
 		dbPath = path
 	}
-	
+
 	factory := NewRAGFactory(providerType, dbPath)
 	provider, err := factory.CreateProvider(providerType, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}
-	
+
 	return &Client{
 		provider: provider,
 		factory:  factory,
@@ -168,7 +168,7 @@ func (c *Client) handleRAGIngest(ctx context.Context, args map[string]interface{
 	if adapter, ok := c.provider.(*VectorProviderAdapter); ok {
 		// Use vector provider for ingestion
 		provider := adapter.GetProvider()
-		
+
 		// Check if it's a directory or file
 		if isDirectory, _ := c.extractBoolParam(args, "is_directory", false, false); isDirectory {
 			// Get all files from directory
@@ -176,7 +176,7 @@ func (c *Client) handleRAGIngest(ctx context.Context, args map[string]interface{
 			if err != nil {
 				return "", fmt.Errorf("failed to list files in directory %s: %w", filePath, err)
 			}
-			
+
 			fileIDs, err := provider.IngestFiles(ctx, files, nil)
 			if err != nil {
 				return "", fmt.Errorf("failed to ingest files from directory %s: %w", filePath, err)
@@ -217,7 +217,7 @@ func (c *Client) handleRAGStats(ctx context.Context, args map[string]interface{}
 		if err != nil {
 			return "", fmt.Errorf("failed to get stats: %w", err)
 		}
-		
+
 		var result strings.Builder
 		result.WriteString("Vector Store Statistics:\n")
 		if stats.TotalFiles >= 0 {
@@ -232,7 +232,7 @@ func (c *Client) handleRAGStats(ctx context.Context, args map[string]interface{}
 		}
 		return result.String(), nil
 	}
-	
+
 	// Fall back to RAGProvider interface
 	stats, err := c.provider.GetStats(ctx)
 	if err != nil {
@@ -243,7 +243,7 @@ func (c *Client) handleRAGStats(ctx context.Context, args map[string]interface{}
 		}
 		return fmt.Sprintf("Knowledge base contains %d documents", count), nil
 	}
-	
+
 	// Format full stats
 	var result strings.Builder
 	result.WriteString("Knowledge Base Statistics:\n")
@@ -388,12 +388,12 @@ func (c *Client) GetRAG() *SimpleRAG {
 	if simpleRAG, ok := c.provider.(*SimpleRAG); ok {
 		return simpleRAG
 	}
-	
+
 	// Check if it's wrapped in LangChainRAGAdapter
 	if adapter, ok := c.provider.(*LangChainRAGAdapter); ok {
 		return adapter.simpleRAG
 	}
-	
+
 	return nil
 }
 
@@ -447,4 +447,3 @@ func (c *Client) SetMaxDocs(max int) {
 		c.maxDocs = max
 	}
 }
-

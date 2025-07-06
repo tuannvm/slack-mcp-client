@@ -146,7 +146,11 @@ func (o *OpenAIProvider) IngestFile(ctx context.Context, filePath string, metada
 	if err != nil {
 		return "", fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close file: %v\n", err)
+		}
+	}()
 
 	// Upload file with purpose "assistants"
 	uploadedFile, err := o.client.Files.New(ctx, openai.FileNewParams{
@@ -314,7 +318,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 
 	// Parse and return document chunks
 	results := make([]SearchResult, 0)
-	
+
 	// Process messages (the API returns them as pagination data)
 	for i := 0; i < len(messages.Data) && len(results) < options.Limit; i++ {
 		msg := messages.Data[i]
@@ -328,7 +332,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 			// Access text content
 			if content.Type == "text" {
 				textContent := content.Text
-				
+
 				// Extract content with annotations
 				if len(textContent.Annotations) > 0 {
 					// Process annotations to extract file references
@@ -340,7 +344,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 								Score:    1.0, // OpenAI doesn't provide explicit scores
 								Metadata: make(map[string]string),
 							}
-							
+
 							results = append(results, result)
 						}
 					}
@@ -386,14 +390,6 @@ func (o *OpenAIProvider) GetStats(ctx context.Context) (*VectorStoreStats, error
 func (o *OpenAIProvider) Close() error {
 	// OpenAI client doesn't need explicit cleanup
 	return nil
-}
-
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // GetAssistantID returns the OpenAI assistant ID
