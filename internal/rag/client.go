@@ -13,19 +13,48 @@ type MCPClientInterface interface {
 	CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
 }
 
-// Client wraps SimpleRAG to implement the MCPClientInterface
+// Client wraps RAG providers to implement the MCPClientInterface
 // This allows the LLM-MCP bridge to treat RAG as a regular MCP tool
 type Client struct {
-	rag     *SimpleRAG
-	maxDocs int // Maximum documents to return in a single call
+	provider RAGProvider       // Can be SimpleRAG, VectorProviderAdapter, etc.
+	factory  *RAGFactory       // Factory for creating providers
+	maxDocs  int              // Maximum documents to return in a single call
+	config   map[string]interface{} // Configuration for provider
 }
 
-// NewClient creates a new RAG client wrapper
+// NewClient creates a new RAG client wrapper with default simple provider
 func NewClient(ragDatabase string) *Client {
+	factory := NewRAGFactory("simple", ragDatabase)
+	provider, _ := factory.CreateProvider("simple", nil)
+	
 	return &Client{
-		rag:     NewSimpleRAG(ragDatabase),
-		maxDocs: 10, // Reasonable default
+		provider: provider,
+		factory:  factory,
+		maxDocs:  10, // Reasonable default
+		config:   make(map[string]interface{}),
 	}
+}
+
+// NewClientWithProvider creates a new RAG client with specified provider
+func NewClientWithProvider(providerType string, config map[string]interface{}) (*Client, error) {
+	// Extract database path from config if available
+	dbPath := "./knowledge.json"
+	if path, ok := config["database_path"].(string); ok {
+		dbPath = path
+	}
+	
+	factory := NewRAGFactory(providerType, dbPath)
+	provider, err := factory.CreateProvider(providerType, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create provider: %w", err)
+	}
+	
+	return &Client{
+		provider: provider,
+		factory:  factory,
+		maxDocs:  10,
+		config:   config,
+	}, nil
 }
 
 // CallTool implements the MCPClientInterface for RAG tools
@@ -77,10 +106,42 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		limit = c.maxDocs
 	}
 
-	// Perform search with context cancellation support
+	// Check if provider is a VectorProviderAdapter to use vector search
+	if adapter, ok := c.provider.(*VectorProviderAdapter); ok {
+		// Use vector search
+		results, err := adapter.GetProvider().Search(ctx, query, SearchOptions{
+			Limit: limit,
+		})
+		if err != nil {
+			return "", fmt.Errorf("vector search failed: %w", err)
+		}
+		return c.formatVectorSearchResults(results, query), nil
+	}
+
+	// Fall back to traditional similarity search for other providers
 	resultChan := make(chan searchResult, 1)
 	go func() {
-		docs := c.rag.Search(query, limit)
+		// Use the RAGProvider interface - fall back to SimilaritySearch
+		schemaResults, err := c.provider.SimilaritySearch(ctx, query, limit)
+		var docs []Document
+		if err == nil {
+			// Convert schema.Document to our Document type
+			docs = make([]Document, len(schemaResults))
+			for i, schemaDoc := range schemaResults {
+				metadata := make(map[string]string)
+				for k, v := range schemaDoc.Metadata {
+					if str, ok := v.(string); ok {
+						metadata[k] = str
+					} else {
+						metadata[k] = fmt.Sprintf("%v", v)
+					}
+				}
+				docs[i] = Document{
+					Content:  schemaDoc.PageContent,
+					Metadata: metadata,
+				}
+			}
+		}
 		resultChan <- searchResult{docs: docs}
 	}()
 
@@ -103,26 +164,100 @@ func (c *Client) handleRAGIngest(ctx context.Context, args map[string]interface{
 		return "", fmt.Errorf("file_path cannot be empty")
 	}
 
+	// Check if provider is a VectorProviderAdapter
+	if adapter, ok := c.provider.(*VectorProviderAdapter); ok {
+		// Use vector provider for ingestion
+		provider := adapter.GetProvider()
+		
+		// Check if it's a directory or file
+		if isDirectory, _ := c.extractBoolParam(args, "is_directory", false, false); isDirectory {
+			// Get all files from directory
+			files, err := getFilesFromDirectory(filePath)
+			if err != nil {
+				return "", fmt.Errorf("failed to list files in directory %s: %w", filePath, err)
+			}
+			
+			fileIDs, err := provider.IngestFiles(ctx, files, nil)
+			if err != nil {
+				return "", fmt.Errorf("failed to ingest files from directory %s: %w", filePath, err)
+			}
+			return fmt.Sprintf("Successfully ingested %d files from directory: %s", len(fileIDs), filePath), nil
+		} else {
+			fileID, err := provider.IngestFile(ctx, filePath, nil)
+			if err != nil {
+				return "", fmt.Errorf("failed to ingest file %s: %w", filePath, err)
+			}
+			return fmt.Sprintf("Successfully ingested file: %s (ID: %s)", filePath, fileID), nil
+		}
+	}
+
+	// Fall back to RAGProvider interface methods
 	// Check if it's a directory or file
 	if isDirectory, _ := c.extractBoolParam(args, "is_directory", false, false); isDirectory {
-		count, err := c.rag.IngestDirectory(filePath)
+		count, err := c.provider.IngestDirectory(ctx, filePath)
 		if err != nil {
 			return "", fmt.Errorf("failed to ingest directory %s: %w", filePath, err)
 		}
-		return fmt.Sprintf("Successfully ingested %d PDF files from directory: %s", count, filePath), nil
+		return fmt.Sprintf("Successfully ingested %d files from directory: %s", count, filePath), nil
 	} else {
-		err := c.rag.IngestPDF(filePath)
+		err := c.provider.IngestPDF(ctx, filePath)
 		if err != nil {
-			return "", fmt.Errorf("failed to ingest PDF %s: %w", filePath, err)
+			return "", fmt.Errorf("failed to ingest file %s: %w", filePath, err)
 		}
-		return fmt.Sprintf("Successfully ingested PDF: %s", filePath), nil
+		return fmt.Sprintf("Successfully ingested file: %s", filePath), nil
 	}
 }
 
 // handleRAGStats returns statistics about the knowledge base
 func (c *Client) handleRAGStats(ctx context.Context, args map[string]interface{}) (string, error) {
-	count := c.rag.GetDocumentCount()
-	return fmt.Sprintf("Knowledge base contains %d document chunks", count), nil
+	// Check if provider is a VectorProviderAdapter
+	if adapter, ok := c.provider.(*VectorProviderAdapter); ok {
+		provider := adapter.GetProvider()
+		stats, err := provider.GetStats(ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to get stats: %w", err)
+		}
+		
+		var result strings.Builder
+		result.WriteString("Vector Store Statistics:\n")
+		if stats.TotalFiles >= 0 {
+			result.WriteString(fmt.Sprintf("  Total Files: %d\n", stats.TotalFiles))
+		}
+		result.WriteString(fmt.Sprintf("  Total Chunks: %d\n", stats.TotalChunks))
+		if stats.ProcessingFiles > 0 {
+			result.WriteString(fmt.Sprintf("  Processing: %d\n", stats.ProcessingFiles))
+		}
+		if stats.FailedFiles > 0 {
+			result.WriteString(fmt.Sprintf("  Failed: %d\n", stats.FailedFiles))
+		}
+		return result.String(), nil
+	}
+	
+	// Fall back to RAGProvider interface
+	stats, err := c.provider.GetStats(ctx)
+	if err != nil {
+		// Try just getting document count
+		count, err := c.provider.GetDocumentCount(ctx)
+		if err != nil {
+			return "Statistics not available for current provider", nil
+		}
+		return fmt.Sprintf("Knowledge base contains %d documents", count), nil
+	}
+	
+	// Format full stats
+	var result strings.Builder
+	result.WriteString("Knowledge Base Statistics:\n")
+	result.WriteString(fmt.Sprintf("  Documents: %d\n", stats.DocumentCount))
+	if stats.DatabaseSize > 0 {
+		result.WriteString(fmt.Sprintf("  Database Size: %d bytes\n", stats.DatabaseSize))
+	}
+	if len(stats.FileTypeCounts) > 0 {
+		result.WriteString("  File Types:\n")
+		for fileType, count := range stats.FileTypeCounts {
+			result.WriteString(fmt.Sprintf("    %s: %d\n", fileType, count))
+		}
+	}
+	return result.String(), nil
 }
 
 type searchResult struct {
@@ -247,8 +382,63 @@ func (c *Client) extractBoolParam(args map[string]interface{}, key string, requi
 }
 
 // GetRAG returns the underlying SimpleRAG instance for direct access
+// Returns nil if not using SimpleRAG
 func (c *Client) GetRAG() *SimpleRAG {
-	return c.rag
+	// Check if it's directly SimpleRAG
+	if simpleRAG, ok := c.provider.(*SimpleRAG); ok {
+		return simpleRAG
+	}
+	
+	// Check if it's wrapped in LangChainRAGAdapter
+	if adapter, ok := c.provider.(*LangChainRAGAdapter); ok {
+		return adapter.simpleRAG
+	}
+	
+	return nil
+}
+
+// GetProvider returns the underlying RAG provider
+func (c *Client) GetProvider() RAGProvider {
+	return c.provider
+}
+
+// formatVectorSearchResults formats vector search results for display
+func (c *Client) formatVectorSearchResults(results []SearchResult, query string) string {
+	if len(results) == 0 {
+		return fmt.Sprintf("No relevant context found for query: '%s'", query)
+	}
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d relevant context(s) for '%s':\n\n", len(results), query))
+
+	for i, res := range results {
+		result.WriteString(fmt.Sprintf("--- Context %d ---\n", i+1))
+
+		// Add source information if available
+		if res.FileName != "" {
+			result.WriteString(fmt.Sprintf("Source: %s", res.FileName))
+			if res.Score > 0 {
+				result.WriteString(fmt.Sprintf(" (score: %.2f)", res.Score))
+			}
+			result.WriteString("\n")
+		}
+
+		// Add content with reasonable truncation
+		content := strings.TrimSpace(res.Content)
+		if len(content) > 800 {
+			content = content[:800] + "..."
+		}
+		result.WriteString(fmt.Sprintf("Content: %s\n", content))
+
+		// Add highlights if available
+		if len(res.Highlights) > 0 {
+			result.WriteString(fmt.Sprintf("Highlights: %s\n", strings.Join(res.Highlights, " | ")))
+		}
+
+		result.WriteString("\n")
+	}
+
+	return result.String()
 }
 
 // SetMaxDocs configures the maximum number of documents to return in search results
@@ -257,3 +447,4 @@ func (c *Client) SetMaxDocs(max int) {
 		c.maxDocs = max
 	}
 }
+

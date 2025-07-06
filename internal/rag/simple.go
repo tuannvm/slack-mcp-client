@@ -13,7 +13,9 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tmc/langchaingo/documentloaders"
+	"github.com/tmc/langchaingo/schema"
 	"github.com/tmc/langchaingo/textsplitter"
+	"github.com/tmc/langchaingo/vectorstores"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	mcpinternal "github.com/tuannvm/slack-mcp-client/internal/mcp"
 )
@@ -127,8 +129,13 @@ func (r *SimpleRAG) calculateRelevanceScore(doc Document, queryWords []string) f
 	return score
 }
 
-// IngestPDF processes a PDF file using existing LangChain patterns
-func (r *SimpleRAG) IngestPDF(filePath string) error {
+// IngestPDFSimple processes a PDF file using existing LangChain patterns (for backward compatibility)
+func (r *SimpleRAG) IngestPDFSimple(filePath string) error {
+	return r.IngestPDF(context.Background(), filePath)
+}
+
+// IngestPDF implements RAGProvider interface
+func (r *SimpleRAG) IngestPDF(ctx context.Context, filePath string, options ...IngestOption) error {
 	if filePath == "" {
 		return fmt.Errorf("file path cannot be empty")
 	}
@@ -177,8 +184,13 @@ func (r *SimpleRAG) IngestPDF(filePath string) error {
 	return r.save()
 }
 
-// IngestDirectory processes all PDF files in a directory
-func (r *SimpleRAG) IngestDirectory(dirPath string) (int, error) {
+// IngestDirectorySimple processes all PDF files in a directory (for backward compatibility)
+func (r *SimpleRAG) IngestDirectorySimple(dirPath string) (int, error) {
+	return r.IngestDirectory(context.Background(), dirPath)
+}
+
+// IngestDirectory implements RAGProvider interface
+func (r *SimpleRAG) IngestDirectory(ctx context.Context, dirPath string, options ...IngestOption) (int, error) {
 	if dirPath == "" {
 		return 0, fmt.Errorf("directory path cannot be empty")
 	}
@@ -190,7 +202,7 @@ func (r *SimpleRAG) IngestDirectory(dirPath string) (int, error) {
 		}
 
 		if strings.ToLower(filepath.Ext(filePath)) == ".pdf" {
-			if err := r.IngestPDF(filePath); err != nil {
+			if err := r.IngestPDF(ctx, filePath, options...); err != nil {
 				return fmt.Errorf("failed to ingest %s: %w", filePath, err)
 			}
 			count++
@@ -206,8 +218,14 @@ func (r *SimpleRAG) IngestDirectory(dirPath string) (int, error) {
 }
 
 // GetDocumentCount returns the total number of documents in the knowledge base
-func (r *SimpleRAG) GetDocumentCount() int {
+// This is the original method for backward compatibility
+func (r *SimpleRAG) GetDocumentCountSimple() int {
 	return len(r.documents)
+}
+
+// GetDocumentCount implements RAGProvider interface
+func (r *SimpleRAG) GetDocumentCount(ctx context.Context) (int, error) {
+	return len(r.documents), nil
 }
 
 // save writes the documents to the JSON file
@@ -324,4 +342,76 @@ func (r *SimpleRAG) AsToolInfo() mcpinternal.ToolInfo {
 			"required": []string{"query"},
 		},
 	}
+}
+
+// Implement RAGProvider interface methods for SimpleRAG
+
+// AddDocuments implements the LangChain Go VectorStore interface
+func (r *SimpleRAG) AddDocuments(ctx context.Context, docs []schema.Document, options ...vectorstores.Option) ([]string, error) {
+	ids := make([]string, len(docs))
+	
+	for i, doc := range docs {
+		// Convert metadata
+		metadata := make(map[string]string)
+		for k, v := range doc.Metadata {
+			if str, ok := v.(string); ok {
+				metadata[k] = str
+			} else {
+				metadata[k] = fmt.Sprintf("%v", v)
+			}
+		}
+		
+		// Add document
+		r.documents = append(r.documents, Document{
+			Content:  doc.PageContent,
+			Metadata: metadata,
+		})
+		ids[i] = fmt.Sprintf("doc_%d", len(r.documents))
+	}
+	
+	return ids, r.save()
+}
+
+// SimilaritySearch implements the LangChain Go VectorStore interface
+func (r *SimpleRAG) SimilaritySearch(ctx context.Context, query string, numDocuments int, options ...vectorstores.Option) ([]schema.Document, error) {
+	results := r.Search(query, numDocuments)
+	
+	// Convert to schema.Document
+	docs := make([]schema.Document, len(results))
+	for i, result := range results {
+		metadata := make(map[string]any)
+		for k, v := range result.Metadata {
+			metadata[k] = v
+		}
+		
+		docs[i] = schema.Document{
+			PageContent: result.Content,
+			Metadata:    metadata,
+		}
+	}
+	
+	return docs, nil
+}
+
+// DeleteDocuments implements RAGManager interface
+func (r *SimpleRAG) DeleteDocuments(ctx context.Context, ids []string) error {
+	// SimpleRAG doesn't track IDs, so this is a no-op
+	return fmt.Errorf("delete documents not implemented for SimpleRAG")
+}
+
+// GetStats implements RAGManager interface
+func (r *SimpleRAG) GetStats(ctx context.Context) (*RAGStats, error) {
+	count := r.GetDocumentCountSimple()
+	return &RAGStats{
+		DocumentCount: int64(count),
+		FileTypeCounts: map[string]int{
+			"pdf": count, // Assume all are PDFs for now
+		},
+	}, nil
+}
+
+// Close implements RAGManager interface
+func (r *SimpleRAG) Close() error {
+	// SimpleRAG doesn't need cleanup
+	return nil
 }

@@ -97,57 +97,16 @@ const (
 	ProviderTypeElastic  ProviderType = "elastic"
 	ProviderTypeChroma   ProviderType = "chroma"
 	ProviderTypePinecone ProviderType = "pinecone"
+	ProviderTypeSimple   ProviderType = "simple"
 )
-
-// RAGFactory creates RAG providers based on configuration
-type RAGFactory struct {
-	providers map[ProviderType]ProviderConstructor
-}
-
-// ProviderConstructor creates a RAG provider
-type ProviderConstructor func(config ProviderConfig) (RAGProvider, error)
 
 // ProviderConfig holds provider-specific configuration
 type ProviderConfig struct {
+	Provider     string                 `json:"provider"`     // Provider name: "simple", "openai", etc.
 	DatabasePath string                 `json:"database_path"`
 	Options      map[string]interface{} `json:"options"`
 }
 
-// NewRAGFactory creates a new factory with registered providers
-func NewRAGFactory() *RAGFactory {
-	factory := &RAGFactory{
-		providers: make(map[ProviderType]ProviderConstructor),
-	}
-
-	// Register built-in providers
-	factory.RegisterProvider(ProviderTypeJSON, NewLangChainCompatibleRAG)
-
-	return factory
-}
-
-// RegisterProvider registers a new RAG provider constructor
-func (f *RAGFactory) RegisterProvider(providerType ProviderType, constructor ProviderConstructor) {
-	f.providers[providerType] = constructor
-}
-
-// CreateProvider creates a RAG provider of the specified type
-func (f *RAGFactory) CreateProvider(providerType ProviderType, config ProviderConfig) (RAGProvider, error) {
-	constructor, exists := f.providers[providerType]
-	if !exists {
-		return nil, fmt.Errorf("unknown RAG provider type: %s", providerType)
-	}
-
-	return constructor(config)
-}
-
-// GetSupportedProviders returns a list of supported provider types
-func (f *RAGFactory) GetSupportedProviders() []ProviderType {
-	types := make([]ProviderType, 0, len(f.providers))
-	for providerType := range f.providers {
-		types = append(types, providerType)
-	}
-	return types
-}
 
 // NewLangChainCompatibleRAG creates a RAG provider that's compatible with LangChain Go
 func NewLangChainCompatibleRAG(config ProviderConfig) (RAGProvider, error) {
@@ -231,7 +190,7 @@ func (l *LangChainRAGAdapter) IngestPDF(ctx context.Context, filePath string, op
 		opt(config)
 	}
 
-	return l.simpleRAG.IngestPDF(filePath)
+	return l.simpleRAG.IngestPDF(ctx, filePath, options...)
 }
 
 // IngestDirectory implements RAGManager interface
@@ -245,7 +204,7 @@ func (l *LangChainRAGAdapter) IngestDirectory(ctx context.Context, dirPath strin
 		opt(config)
 	}
 
-	return l.simpleRAG.IngestDirectory(dirPath)
+	return l.simpleRAG.IngestDirectory(ctx, dirPath, options...)
 }
 
 // DeleteDocuments implements RAGManager interface
@@ -257,12 +216,12 @@ func (l *LangChainRAGAdapter) DeleteDocuments(ctx context.Context, ids []string)
 
 // GetDocumentCount implements RAGManager interface
 func (l *LangChainRAGAdapter) GetDocumentCount(ctx context.Context) (int, error) {
-	return l.simpleRAG.GetDocumentCount(), nil
+	return l.simpleRAG.GetDocumentCountSimple(), nil
 }
 
 // GetStats implements RAGManager interface
 func (l *LangChainRAGAdapter) GetStats(ctx context.Context) (*RAGStats, error) {
-	count := l.simpleRAG.GetDocumentCount()
+	count := l.simpleRAG.GetDocumentCountSimple()
 	return &RAGStats{
 		DocumentCount: int64(count),
 		FileTypeCounts: map[string]int{
