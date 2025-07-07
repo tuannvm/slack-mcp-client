@@ -247,7 +247,7 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
 				// Add to message history
-				c.addToHistory(ev.Channel, "user", ev.Text)
+				c.addToHistory(ev.Channel, ev.ThreadTimeStamp, "user", ev.Text)
 				parentTS := ev.ThreadTimeStamp
 				if parentTS == "" {
 					parentTS = ev.TimeStamp // Use the original message timestamp if no thread
@@ -263,9 +263,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 	}
 }
 
+func historyKey(channelID, threadTS string) string {
+	return fmt.Sprintf("%s:%s", channelID, threadTS)
+}
+
 // addToHistory adds a message to the channel history
-func (c *Client) addToHistory(channelID, role, content string) {
-	history, exists := c.messageHistory[channelID]
+func (c *Client) addToHistory(channelID, threadTS, role, content string) {
+	key := historyKey(channelID, threadTS)
+	history, exists := c.messageHistory[key]
 	if !exists {
 		history = []Message{}
 	}
@@ -283,14 +288,14 @@ func (c *Client) addToHistory(channelID, role, content string) {
 		history = history[len(history)-c.historyLimit:]
 	}
 
-	c.messageHistory[channelID] = history
+	c.messageHistory[key] = history
 }
 
 // getContextFromHistory builds a context string from message history
 //
 //nolint:unused // Reserved for future use
-func (c *Client) getContextFromHistory(channelID string) string {
-	history, exists := c.messageHistory[channelID]
+func (c *Client) getContextFromHistory(channelID string, threadTS string) string {
+	history, exists := c.messageHistory[historyKey(channelID, threadTS)]
 	if !exists || len(history) == 0 {
 		return ""
 	}
@@ -329,9 +334,9 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
 	// Get context from history
-	contextHistory := c.getContextFromHistory(channelID)
+	contextHistory := c.getContextFromHistory(channelID, threadTS)
 
-	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
+	c.addToHistory(channelID, threadTS, "user", userPrompt) // Add user message to history
 
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, thinkingMessage)
@@ -363,7 +368,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
 	} else {
 		sendMsg := func(msg string) {
-			c.addToHistory(channelID, "assistant", msg) // Original LLM response (tool call JSON)
+			c.addToHistory(channelID, threadTS, "assistant", msg) // Original LLM response (tool call JSON)
 			c.userFrontend.SendMessage(channelID, threadTS, msg)
 		}
 
@@ -451,9 +456,9 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		// Construct a new prompt incorporating the original prompt and the tool result
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
-		// Add history for non-comprehensive results
-		c.addToHistory(channelID, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
-		c.addToHistory(channelID, "tool", finalResponse)            // Tool execution result
+		// Add history
+		c.addToHistory(channelID, threadTS, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
+		c.addToHistory(channelID, threadTS, "tool", finalResponse)    // Tool execution result
 
 		c.logger.DebugKV("Re-prompting LLM", "prompt", rePrompt)
 
@@ -473,7 +478,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 			finalRePrompt = rePrompt
 		}
 
-		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(providerName, finalRePrompt, c.getContextFromHistory(channelID))
+		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(providerName, finalRePrompt, c.getContextFromHistory(channelID, threadTS))
 		if repromptErr != nil {
 			c.logger.ErrorKV("Error during LLM re-prompt", "error", repromptErr)
 			// Fallback: Show the tool result and the error
@@ -483,7 +488,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		}
 	} else {
 		// No tool was executed, add assistant response to history
-		c.addToHistory(channelID, "assistant", finalResponse)
+		c.addToHistory(channelID, threadTS, "assistant", finalResponse)
 	}
 
 	// Send the final response back to Slack
