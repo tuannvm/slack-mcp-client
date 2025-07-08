@@ -597,11 +597,11 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 
 			// Get document count with proper context handling
 			ctx := context.Background()
-			count, err := ragClient.GetProvider().GetDocumentCount(ctx)
+			stats, err := ragClient.GetProvider().GetStats(ctx)
 			if err != nil {
 				logger.Warn("Could not get document count: %v", err)
 			} else {
-				logger.Info("Knowledge base contains %d documents", count)
+				logger.Info("Knowledge base contains %d files, %d chunks", stats.TotalFiles, stats.TotalChunks)
 			}
 		}
 	} else {
@@ -797,21 +797,18 @@ func handleRAGList() {
 	}()
 
 	// Get the underlying vector provider
-	if adapter, ok := ragClient.GetProvider().(*rag.VectorProviderAdapter); ok {
-		ctx := context.Background()
-		files, err := adapter.GetProvider().ListFiles(ctx, 100)
-		if err != nil {
-			fmt.Printf("Error listing files: %v\n", err)
-			os.Exit(1)
-		}
+	vectorProvider := ragClient.GetProvider()
+	ctx := context.Background()
+	files, err := vectorProvider.ListFiles(ctx, 100)
+	if err != nil {
+		fmt.Printf("Error listing files: %v\n", err)
+		os.Exit(1)
+	}
 
-		fmt.Printf("Found %d files:\n", len(files))
-		for _, file := range files {
-			fmt.Printf("  - ID: %s, Name: %s, Size: %d bytes, Status: %s\n",
-				file.ID, file.Name, file.Size, file.Status)
-		}
-	} else {
-		fmt.Printf("File listing not supported for this provider\n")
+	fmt.Printf("Found %d files:\n", len(files))
+	for _, file := range files {
+		fmt.Printf("  - ID: %s, Name: %s, Size: %d bytes, Status: %s\n",
+			file.ID, file.Name, file.Size, file.Status)
 	}
 }
 
@@ -844,17 +841,14 @@ func handleRAGDelete(fileIDs string) {
 	}()
 
 	// Get the underlying vector provider
-	if adapter, ok := ragClient.GetProvider().(*rag.VectorProviderAdapter); ok {
-		ctx := context.Background()
-		for _, id := range ids {
-			if err := adapter.GetProvider().DeleteFile(ctx, id); err != nil {
-				fmt.Printf("Error deleting file %s: %v\n", id, err)
-			} else {
-				fmt.Printf("Deleted file: %s\n", id)
-			}
+	vectorProvider := ragClient.GetProvider()
+	ctx := context.Background()
+	for _, id := range ids {
+		if err := vectorProvider.DeleteFile(ctx, id); err != nil {
+			fmt.Printf("Error deleting file %s: %v\n", id, err)
+		} else {
+			fmt.Printf("Deleted file: %s\n", id)
 		}
-	} else {
-		fmt.Printf("File deletion not supported for this provider\n")
 	}
 }
 

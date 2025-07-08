@@ -1,4 +1,4 @@
-// Package rag provides a factory for creating RAG providers
+// Package rag provides a simplified factory for creating vector providers
 package rag
 
 import (
@@ -8,119 +8,25 @@ import (
 	"strings"
 )
 
-// RAGFactory creates RAG providers based on configuration
-type RAGFactory struct {
-	defaultProvider string
-	databasePath    string
+// CreateVectorProvider creates a vector provider instance based on configuration
+func CreateVectorProvider(providerType string, config map[string]interface{}) (VectorProvider, error) {
+	factory, exists := providerRegistry[providerType]
+	if !exists {
+		return nil, &ProviderNotFoundError{Provider: providerType}
+	}
+	return factory(config)
 }
 
-// NewRAGFactory creates a new RAG factory
-func NewRAGFactory(defaultProvider, databasePath string) *RAGFactory {
-	if defaultProvider == "" {
-		defaultProvider = "simple"
-	}
-	// Only set default database path for simple provider
-	if databasePath == "" && defaultProvider == "simple" {
-		databasePath = "./knowledge.json"
-	}
-
-	return &RAGFactory{
-		defaultProvider: defaultProvider,
-		databasePath:    databasePath,
-	}
-}
-
-// CreateProvider creates a RAG provider based on the given type
-func (f *RAGFactory) CreateProvider(providerType string, config map[string]interface{}) (RAGProvider, error) {
-	if providerType == "" {
-		providerType = f.defaultProvider
-	}
-
-	switch providerType {
-	case "simple":
-		// SimpleRAG doesn't fully implement RAGProvider, so wrap it
-		return NewLangChainCompatibleRAG(ProviderConfig{
-			DatabasePath: f.databasePath,
-		})
-
-	case "openai":
-		// Create OpenAI provider
-		vectorProvider, err := CreateVectorProvider(ProviderConfig{
-			Provider: "openai",
-			Options:  config,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create OpenAI provider: %w", err)
-		}
-
-		// Initialize the provider
-		if err := vectorProvider.Initialize(context.Background()); err != nil {
-			return nil, fmt.Errorf("failed to initialize OpenAI provider: %w", err)
-		}
-
-		// Wrap in adapter for backward compatibility
-		adapter, err := NewVectorProviderAdapter(vectorProvider)
-		if err != nil {
-			if closeErr := vectorProvider.Close(); closeErr != nil {
-				fmt.Printf("Warning: failed to close vector provider: %v\n", closeErr)
-			}
-			return nil, fmt.Errorf("failed to create adapter: %w", err)
-		}
-
-		return adapter, nil
-
-	default:
-		// Try to create a custom vector provider
-		vectorProvider, err := CreateVectorProvider(ProviderConfig{
-			Provider: providerType,
-			Options:  config,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("unknown RAG provider: %s", providerType)
-		}
-
-		// Initialize the provider
-		if err := vectorProvider.Initialize(context.Background()); err != nil {
-			return nil, fmt.Errorf("failed to initialize %s provider: %w", providerType, err)
-		}
-
-		// Wrap in adapter
-		adapter, err := NewVectorProviderAdapter(vectorProvider)
-		if err != nil {
-			if closeErr := vectorProvider.Close(); closeErr != nil {
-				fmt.Printf("Warning: failed to close vector provider: %v\n", closeErr)
-			}
-			return nil, fmt.Errorf("failed to create adapter: %w", err)
-		}
-
-		return adapter, nil
-	}
-}
-
-// CreateVectorProviderFromConfig creates a vector provider from configuration
-func (f *RAGFactory) CreateVectorProviderFromConfig(config map[string]interface{}) (VectorProvider, error) {
+// CreateProviderFromConfig creates a vector provider from configuration map
+func CreateProviderFromConfig(config map[string]interface{}) (VectorProvider, error) {
 	// Extract provider type from config
 	providerType, ok := config["provider"].(string)
 	if !ok {
-		providerType = f.defaultProvider
-	}
-
-	// Handle special cases
-	if providerType == "simple" {
-		return NewSimpleRAGAdapter(f.databasePath), nil
-	}
-
-	// Extract provider-specific config
-	providerConfig := make(map[string]interface{})
-	if pc, ok := config[providerType].(map[string]interface{}); ok {
-		providerConfig = pc
+		providerType = "simple" // Default to simple provider
 	}
 
 	// Create the vector provider
-	provider, err := CreateVectorProvider(ProviderConfig{
-		Provider: providerType,
-		Options:  providerConfig,
-	})
+	provider, err := CreateVectorProvider(providerType, config)
 	if err != nil {
 		return nil, err
 	}
@@ -148,9 +54,11 @@ func ExtractRAGConfig(llmProviderConfig map[string]interface{}) map[string]inter
 	// Extract RAG provider
 	if provider, ok := llmProviderConfig["rag_provider"].(string); ok {
 		ragConfig["provider"] = provider
+	} else {
+		ragConfig["provider"] = "simple" // Default
 	}
 
-	// Extract database path
+	// Extract database path (for simple provider)
 	if dbPath, ok := llmProviderConfig["rag_database"].(string); ok {
 		ragConfig["database_path"] = dbPath
 	}
@@ -163,34 +71,12 @@ func ExtractRAGConfig(llmProviderConfig map[string]interface{}) map[string]inter
 		}
 	}
 
-	// Extract custom_prompt from the main config (not just the LLM provider config)
-	// This requires passing the full config, but for now we'll need to handle this differently
-
-	// Extract provider-specific configs
-	// For OpenAI
-	if openaiConfig, ok := llmProviderConfig["rag_openai"].(map[string]interface{}); ok {
-		ragConfig["openai"] = openaiConfig
-	} else {
-		// Try to construct OpenAI config from environment or LLM config
-		openaiConfig := make(map[string]interface{})
-
-		// Use API key from environment or LLM config
+	// Add OpenAI API key from environment if using OpenAI provider
+	if provider, ok := ragConfig["provider"].(string); ok && provider == "openai" {
 		if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
-			openaiConfig["api_key"] = apiKey
+			ragConfig["api_key"] = apiKey
 		} else if apiKey, ok := llmProviderConfig["api_key"].(string); ok {
-			openaiConfig["api_key"] = apiKey
-		}
-
-		// Add other OpenAI-specific settings if present
-		if assistantID, ok := llmProviderConfig["rag_assistant_id"].(string); ok {
-			openaiConfig["assistant_id"] = assistantID
-		}
-		if vectorStoreID, ok := llmProviderConfig["rag_vector_store_id"].(string); ok {
-			openaiConfig["vector_store_id"] = vectorStoreID
-		}
-
-		if len(openaiConfig) > 0 {
-			ragConfig["openai"] = openaiConfig
+			ragConfig["api_key"] = apiKey
 		}
 	}
 
@@ -207,10 +93,8 @@ func GetProviderFromFlags(ragProvider string, llmProvider string) string {
 	// Otherwise, infer from LLM provider for convenience
 	switch strings.ToLower(llmProvider) {
 	case "openai":
-		// If using OpenAI LLM, default to OpenAI RAG
 		return "openai"
 	default:
-		// Default to simple for all other cases
 		return "simple"
 	}
 }

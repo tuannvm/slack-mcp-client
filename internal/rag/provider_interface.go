@@ -76,18 +76,7 @@ func RegisterVectorProvider(name string, factory VectorProviderFactory) {
 	providerRegistry[name] = factory
 }
 
-// CreateVectorProvider creates a vector provider instance based on configuration
-func CreateVectorProvider(config ProviderConfig) (VectorProvider, error) {
-	factory, exists := providerRegistry[config.Provider]
-	if !exists {
-		// Default to simple provider for backward compatibility
-		if config.Provider == "" || config.Provider == "simple" {
-			return nil, nil // Will use existing SimpleRAG
-		}
-		return nil, &ProviderNotFoundError{Provider: config.Provider}
-	}
-	return factory(config.Options)
-}
+// Note: CreateVectorProvider is now in factory.go
 
 // ProviderNotFoundError indicates a requested provider is not registered
 type ProviderNotFoundError struct {
