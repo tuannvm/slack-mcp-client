@@ -117,6 +117,7 @@ func (c *SSEMCPClientWithRetry) connect() error {
 	initReq := mcp.InitializeRequest{}
 	initReq.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	if _, err = sseClient.Initialize(c.ctx, initReq); err != nil {
+		_ = sseClient.Close()
 		return err
 	}
 
