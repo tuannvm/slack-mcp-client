@@ -436,10 +436,11 @@ func (c *Client) formatVectorSearchResults(results []SearchResult, query string)
 			result.WriteString("\n")
 		}
 
-		// Add content with reasonable truncation
+		// For OpenAI provider, we want the full comprehensive analysis
+		// Only truncate if extremely long (>10000 chars) to prevent overwhelming output
 		content := strings.TrimSpace(res.Content)
-		if len(content) > 800 {
-			content = content[:800] + "..."
+		if len(content) > 10000 {
+			content = content[:10000] + "...\n[Content truncated - full response was " + fmt.Sprintf("%d", len(res.Content)) + " characters]"
 		}
 		result.WriteString(fmt.Sprintf("Content: %s\n", content))
 

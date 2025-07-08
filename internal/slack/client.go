@@ -292,8 +292,20 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 	c.userFrontend.SendMessage(channelID, threadTS, thinkingMessage)
 
 	if !c.llmMCPBridge.UseAgent {
-		// Call LLM using the integrated logic
-		llmResponse, err := c.llmMCPBridge.CallLLM(providerName, userPrompt, contextHistory)
+		// Prepare the final prompt with custom prompt as system instruction
+		var finalPrompt string
+		customPrompt := string(c.cfg.CustomPrompt)
+
+		if customPrompt != "" {
+			// Use custom prompt as system instruction, then add user prompt
+			finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, userPrompt)
+			c.logger.DebugKV("Using custom prompt as system instruction", "custom_prompt_length", len(customPrompt))
+		} else {
+			finalPrompt = userPrompt
+		}
+
+		// Call LLM using the integrated logic with system instruction
+		llmResponse, err := c.llmMCPBridge.CallLLM(providerName, finalPrompt, contextHistory)
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
 			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
@@ -385,29 +397,9 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		c.logger.Debug("Tool executed. Re-prompting LLM with tool result.")
 		c.logger.DebugKV("Tool result", "result", logging.TruncateForLog(finalResponse, 500))
 
-		// Check if this is a comprehensive OpenAI RAG result that should be returned directly
-		// OpenAI Assistant already processed the data, no need for second LLM processing
-		isComprehensiveRAGResult := (strings.Contains(finalResponse, "Context") || 
-									 strings.Contains(finalResponse, "### ") || 
-									 strings.Contains(finalResponse, "#### ")) && 
-									len(finalResponse) > 1500
-		
-		if isComprehensiveRAGResult {
-			c.logger.Debug("Detected comprehensive RAG result from OpenAI Assistant. Returning directly without LLM processing.")
-			
-			// Add to history and send directly
-			c.addToHistory(channelID, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
-			c.addToHistory(channelID, "tool", finalResponse)            // Tool execution result
-			c.addToHistory(channelID, "assistant", finalResponse)       // Final response
-			
-			// Send the comprehensive RAG result directly
-			c.userFrontend.SendMessage(channelID, threadTS, finalResponse)
-			return
-		}
-
-		// For non-comprehensive results, use normal LLM processing
+		// Always re-prompt LLM with tool results for synthesis
 		// Construct a new prompt incorporating the original prompt and the tool result
-		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI used a tool and received the following result:\n```\n%s\n```\nPlease formulate a helpful natural language response to the user based *only* on the user's original question and the tool result provided.", userPrompt, finalResponse)
+		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
 		// Add history for non-comprehensive results
 		c.addToHistory(channelID, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
@@ -415,11 +407,23 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 
 		c.logger.DebugKV("Re-prompting LLM", "prompt", rePrompt)
 
-		// Re-prompt using the LLM client
+		// Re-prompt using the LLM client with custom prompt as system instruction
 		var repromptErr error
 		// Get the provider name from config again for the re-prompt
 		providerName := c.cfg.LLMProvider
-		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(providerName, rePrompt, c.getContextFromHistory(channelID))
+
+		// Prepare the re-prompt with custom prompt as system instruction
+		var finalRePrompt string
+		customPrompt := string(c.cfg.CustomPrompt)
+
+		if customPrompt != "" {
+			// Use custom prompt as system instruction for re-prompt too
+			finalRePrompt = fmt.Sprintf("System instructions: %s\n\n%s", customPrompt, rePrompt)
+		} else {
+			finalRePrompt = rePrompt
+		}
+
+		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(providerName, finalRePrompt, c.getContextFromHistory(channelID))
 		if repromptErr != nil {
 			c.logger.ErrorKV("Error during LLM re-prompt", "error", repromptErr)
 			// Fallback: Show the tool result and the error
