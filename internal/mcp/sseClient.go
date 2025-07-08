@@ -12,7 +12,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
 
-var (
+const (
 	maxReconnectAttempts = 5
 	baseBackoffDuration  = time.Second
 )
@@ -106,7 +106,7 @@ func (c *SSEMCPClientWithRetry) connect() error {
 		return err
 	}
 
-	if err = sseClient.Start(context.Background()); err != nil {
+	if err = sseClient.Start(c.ctx); err != nil {
 		return err
 	}
 
@@ -124,8 +124,10 @@ func (c *SSEMCPClientWithRetry) connect() error {
 func (c *SSEMCPClientWithRetry) triggerReconnect() <-chan struct{} {
 	select {
 	case c.reconnectCh <- struct{}{}:
+		c.mutex.Lock()
 		done := make(chan struct{})
 		c.reconnectDone = done
+		c.mutex.Unlock()
 		return done
 	default:
 		if c.reconnectDone == nil {
@@ -144,6 +146,8 @@ func (c *SSEMCPClientWithRetry) reconnectLoop() {
 		case <-c.ctx.Done():
 			return
 		case <-c.reconnectCh:
+			var success bool
+
 			for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
 				if err := c.connect(); err != nil {
 					c.log.InfoKV("Reconnect failed", "attempt", attempt, "error", err)
@@ -155,14 +159,20 @@ func (c *SSEMCPClientWithRetry) reconnectLoop() {
 					}
 				} else {
 					c.log.Info("Reconnected successfully")
+					success = true
 					break
 				}
 			}
 
+			c.mutex.Lock()
 			if c.reconnectDone != nil {
 				close(c.reconnectDone)
-				c.reconnectDone = nil
+				if !success {
+					c.log.Error("All reconnect attempts failed — client is still disconnected")
+					c.reconnectDone = nil
+				}
 			}
+			c.mutex.Unlock()
 		}
 	}
 }
