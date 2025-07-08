@@ -99,16 +99,18 @@ func (c *SSEMCPClientWithRetry) connect() error {
 
 	if c.Client != nil {
 		if err := c.Client.Close(); err != nil {
-			return err
+			c.log.WarnKV("Failed to close old client during reconnect", "error", err)
 		}
 	}
 
 	sseClient, err := client.NewSSEMCPClient(c.serverAddr)
 	if err != nil {
+		_ = sseClient.Close()
 		return err
 	}
 
 	if err = sseClient.Start(c.ctx); err != nil {
+		_ = sseClient.Close()
 		return err
 	}
 
