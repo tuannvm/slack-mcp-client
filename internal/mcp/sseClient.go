@@ -98,7 +98,9 @@ func (c *SSEMCPClientWithRetry) connect() error {
 	defer c.mutex.Unlock()
 
 	if c.Client != nil {
-		c.Client.Close()
+		if err := c.Client.Close(); err != nil {
+			return err
+		}
 	}
 
 	sseClient, err := client.NewSSEMCPClient(c.serverAddr)
