@@ -8,34 +8,58 @@ import (
 	"strings"
 )
 
-// MCPClientInterface defines the interface that MCP clients should implement
-type MCPClientInterface interface {
-	CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error)
-}
-
-// Client wraps SimpleRAG to implement the MCPClientInterface
+// Client wraps vector providers to implement the MCP tool interface
 // This allows the LLM-MCP bridge to treat RAG as a regular MCP tool
 type Client struct {
-	rag     *SimpleRAG
-	maxDocs int // Maximum documents to return in a single call
+	provider VectorProvider
+	maxDocs  int // Maximum documents to return in a single call
 }
 
-// NewClient creates a new RAG client wrapper
+// NewClient creates a new RAG client with simple provider (legacy compatibility)
 func NewClient(ragDatabase string) *Client {
+	config := map[string]interface{}{
+		"provider":      "simple",
+		"database_path": ragDatabase,
+	}
+
+	provider, err := CreateProviderFromConfig(config)
+	if err != nil {
+		// Fallback to simple provider for backward compatibility
+		simpleProvider := NewSimpleProvider(ragDatabase)
+		_ = simpleProvider.Initialize(context.Background())
+		return &Client{
+			provider: simpleProvider,
+			maxDocs:  10,
+		}
+	}
+
 	return &Client{
-		rag:     NewSimpleRAG(ragDatabase),
-		maxDocs: 10, // Reasonable default
+		provider: provider,
+		maxDocs:  10,
 	}
 }
 
-// CallTool implements the MCPClientInterface for RAG tools
-func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
-	// Validate context
-	if ctx == nil {
-		return "", fmt.Errorf("context cannot be nil")
+// NewClientWithProvider creates a new RAG client with specified provider
+func NewClientWithProvider(providerType string, config map[string]interface{}) (*Client, error) {
+	// Ensure provider type is set in config
+	if config == nil {
+		config = make(map[string]interface{})
+	}
+	config["provider"] = providerType
+
+	provider, err := CreateProviderFromConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}
 
-	// Validate arguments
+	return &Client{
+		provider: provider,
+		maxDocs:  20, // Higher default for vector stores
+	}, nil
+}
+
+// CallTool implements the MCP tool interface for RAG operations
+func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	if args == nil {
 		return "", fmt.Errorf("arguments cannot be nil")
 	}
@@ -60,200 +84,154 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		return "", err
 	}
 
-	if strings.TrimSpace(query) == "" {
-		return "", fmt.Errorf("query cannot be empty")
+	// Extract optional limit parameter
+	limit := c.maxDocs
+	if limitParam, exists := args["limit"]; exists {
+		if limitInt, ok := limitParam.(int); ok {
+			limit = limitInt
+		} else if limitFloat, ok := limitParam.(float64); ok {
+			limit = int(limitFloat)
+		} else if limitStr, ok := limitParam.(string); ok {
+			if parsed, parseErr := strconv.Atoi(limitStr); parseErr == nil {
+				limit = parsed
+			}
+		}
 	}
 
-	// Extract limit parameter with validation
-	limit, err := c.extractIntParam(args, "limit", false, 3)
+	// Clamp limit to reasonable bounds
+	if limit <= 0 {
+		limit = 3
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	// Perform search using the provider
+	results, err := c.provider.Search(ctx, query, SearchOptions{
+		Limit: limit,
+	})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("search failed: %w", err)
 	}
 
-	// Validate limit bounds
-	if limit < 1 {
-		limit = 1
-	} else if limit > c.maxDocs {
-		limit = c.maxDocs
+	// Format results for display
+	if len(results) == 0 {
+		return "No relevant context found for query: '" + query + "'", nil
 	}
 
-	// Perform search with context cancellation support
-	resultChan := make(chan searchResult, 1)
-	go func() {
-		docs := c.rag.Search(query, limit)
-		resultChan <- searchResult{docs: docs}
-	}()
+	// Build response string
+	var response strings.Builder
+	response.WriteString(fmt.Sprintf("Found %d relevant context(s) for '%s':\n", len(results), query))
 
-	select {
-	case <-ctx.Done():
-		return "", fmt.Errorf("search cancelled: %w", ctx.Err())
-	case result := <-resultChan:
-		return c.formatSearchResults(result.docs, query), nil
+	for i, result := range results {
+		response.WriteString(fmt.Sprintf("--- Context %d ---\n", i+1))
+
+		// Add source information if available
+		if result.FileName != "" {
+			response.WriteString(fmt.Sprintf("Source: %s", result.FileName))
+			if result.Score > 0 {
+				response.WriteString(fmt.Sprintf(" (score: %.2f)", result.Score))
+			}
+			response.WriteString("\n")
+		}
+
+		// Add content
+		response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
+
+		// Add highlights if available
+		if len(result.Highlights) > 0 {
+			response.WriteString(fmt.Sprintf("Highlights: %s\n", strings.Join(result.Highlights, " | ")))
+		}
 	}
+
+	return response.String(), nil
 }
 
 // handleRAGIngest processes document ingestion requests
 func (c *Client) handleRAGIngest(ctx context.Context, args map[string]interface{}) (string, error) {
+	// Extract file path parameter
 	filePath, err := c.extractStringParam(args, "file_path", true)
 	if err != nil {
 		return "", err
 	}
 
-	if strings.TrimSpace(filePath) == "" {
-		return "", fmt.Errorf("file_path cannot be empty")
-	}
-
-	// Check if it's a directory or file
-	if isDirectory, _ := c.extractBoolParam(args, "is_directory", false, false); isDirectory {
-		count, err := c.rag.IngestDirectory(filePath)
-		if err != nil {
-			return "", fmt.Errorf("failed to ingest directory %s: %w", filePath, err)
-		}
-		return fmt.Sprintf("Successfully ingested %d PDF files from directory: %s", count, filePath), nil
-	} else {
-		err := c.rag.IngestPDF(filePath)
-		if err != nil {
-			return "", fmt.Errorf("failed to ingest PDF %s: %w", filePath, err)
-		}
-		return fmt.Sprintf("Successfully ingested PDF: %s", filePath), nil
-	}
-}
-
-// handleRAGStats returns statistics about the knowledge base
-func (c *Client) handleRAGStats(ctx context.Context, args map[string]interface{}) (string, error) {
-	count := c.rag.GetDocumentCount()
-	return fmt.Sprintf("Knowledge base contains %d document chunks", count), nil
-}
-
-type searchResult struct {
-	docs []Document
-}
-
-// formatSearchResults formats search results for display
-func (c *Client) formatSearchResults(docs []Document, query string) string {
-	if len(docs) == 0 {
-		return fmt.Sprintf("No relevant context found for query: '%s'", query)
-	}
-
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d relevant context(s) for '%s':\n\n", len(docs), query))
-
-	for i, doc := range docs {
-		result.WriteString(fmt.Sprintf("--- Context %d ---\n", i+1))
-
-		// Add source information if available
-		if fileName, ok := doc.Metadata["file_name"]; ok {
-			result.WriteString(fmt.Sprintf("Source: %s", fileName))
-			if chunkIndex, hasChunk := doc.Metadata["chunk_index"]; hasChunk {
-				result.WriteString(fmt.Sprintf(" (chunk %s)", chunkIndex))
+	// Extract optional metadata
+	metadata := make(map[string]string)
+	if metaParam, exists := args["metadata"]; exists {
+		if metaMap, ok := metaParam.(map[string]interface{}); ok {
+			for k, v := range metaMap {
+				if str, ok := v.(string); ok {
+					metadata[k] = str
+				} else {
+					metadata[k] = fmt.Sprintf("%v", v)
+				}
 			}
-			result.WriteString("\n")
 		}
-
-		// Add content with reasonable truncation
-		content := strings.TrimSpace(doc.Content)
-		if len(content) > 800 {
-			content = content[:800] + "..."
-		}
-		result.WriteString(fmt.Sprintf("Content: %s\n\n", content))
 	}
 
-	return result.String()
+	// Ingest the file
+	fileID, err := c.provider.IngestFile(ctx, filePath, metadata)
+	if err != nil {
+		return "", fmt.Errorf("ingestion failed: %w", err)
+	}
+
+	return fmt.Sprintf("Successfully ingested file: %s (ID: %s)", filePath, fileID), nil
 }
 
-// extractStringParam safely extracts a string parameter
-func (c *Client) extractStringParam(args map[string]interface{}, key string, required bool) (string, error) {
-	value, exists := args[key]
+// handleRAGStats returns statistics about the vector store
+func (c *Client) handleRAGStats(ctx context.Context, args map[string]interface{}) (string, error) {
+	stats, err := c.provider.GetStats(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to get stats: %w", err)
+	}
+
+	var response strings.Builder
+	response.WriteString("RAG Vector Store Statistics:\n")
+	response.WriteString(fmt.Sprintf("Total Files: %d\n", stats.TotalFiles))
+	response.WriteString(fmt.Sprintf("Total Chunks: %d\n", stats.TotalChunks))
+	response.WriteString(fmt.Sprintf("Processing Files: %d\n", stats.ProcessingFiles))
+	response.WriteString(fmt.Sprintf("Failed Files: %d\n", stats.FailedFiles))
+
+	if stats.StorageSizeBytes > 0 {
+		response.WriteString(fmt.Sprintf("Storage Size: %.2f MB\n", float64(stats.StorageSizeBytes)/(1024*1024)))
+	}
+
+	response.WriteString(fmt.Sprintf("Last Updated: %s\n", stats.LastUpdated.Format("2006-01-02 15:04:05")))
+
+	return response.String(), nil
+}
+
+// extractStringParam extracts and validates a string parameter from args
+func (c *Client) extractStringParam(args map[string]interface{}, paramName string, required bool) (string, error) {
+	value, exists := args[paramName]
 	if !exists {
 		if required {
-			return "", fmt.Errorf("required parameter '%s' not found", key)
+			return "", fmt.Errorf("missing required parameter: %s", paramName)
 		}
 		return "", nil
 	}
 
-	switch v := value.(type) {
-	case string:
-		return v, nil
-	case nil:
-		if required {
-			return "", fmt.Errorf("parameter '%s' cannot be nil", key)
-		}
-		return "", nil
-	default:
-		return "", fmt.Errorf("parameter '%s' must be a string, got %T", key, value)
+	strValue, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("parameter %s must be a string, got %T", paramName, value)
 	}
+
+	if required && strings.TrimSpace(strValue) == "" {
+		return "", fmt.Errorf("parameter %s cannot be empty", paramName)
+	}
+
+	return strValue, nil
 }
 
-// extractIntParam safely extracts an integer parameter
-func (c *Client) extractIntParam(args map[string]interface{}, key string, required bool, defaultValue int) (int, error) {
-	value, exists := args[key]
-	if !exists {
-		if required {
-			return 0, fmt.Errorf("required parameter '%s' not found", key)
-		}
-		return defaultValue, nil
-	}
-
-	switch v := value.(type) {
-	case int:
-		return v, nil
-	case int64:
-		return int(v), nil
-	case float64:
-		return int(v), nil
-	case string:
-		parsed, err := strconv.Atoi(v)
-		if err != nil {
-			return 0, fmt.Errorf("parameter '%s' must be a valid integer, got '%s'", key, v)
-		}
-		return parsed, nil
-	case nil:
-		if required {
-			return 0, fmt.Errorf("parameter '%s' cannot be nil", key)
-		}
-		return defaultValue, nil
-	default:
-		return 0, fmt.Errorf("parameter '%s' must be an integer, got %T", key, value)
-	}
+// GetProvider returns the underlying vector provider (for testing/debugging)
+func (c *Client) GetProvider() VectorProvider {
+	return c.provider
 }
 
-// extractBoolParam safely extracts a boolean parameter
-func (c *Client) extractBoolParam(args map[string]interface{}, key string, required bool, defaultValue bool) (bool, error) {
-	value, exists := args[key]
-	if !exists {
-		if required {
-			return false, fmt.Errorf("required parameter '%s' not found", key)
-		}
-		return defaultValue, nil
+// Close cleans up the client and its provider
+func (c *Client) Close() error {
+	if c.provider != nil {
+		return c.provider.Close()
 	}
-
-	switch v := value.(type) {
-	case bool:
-		return v, nil
-	case string:
-		parsed, err := strconv.ParseBool(v)
-		if err != nil {
-			return false, fmt.Errorf("parameter '%s' must be a valid boolean, got '%s'", key, v)
-		}
-		return parsed, nil
-	case nil:
-		if required {
-			return false, fmt.Errorf("parameter '%s' cannot be nil", key)
-		}
-		return defaultValue, nil
-	default:
-		return false, fmt.Errorf("parameter '%s' must be a boolean, got %T", key, value)
-	}
-}
-
-// GetRAG returns the underlying SimpleRAG instance for direct access
-func (c *Client) GetRAG() *SimpleRAG {
-	return c.rag
-}
-
-// SetMaxDocs configures the maximum number of documents to return in search results
-func (c *Client) SetMaxDocs(max int) {
-	if max > 0 {
-		c.maxDocs = max
-	}
+	return nil
 }
