@@ -61,7 +61,7 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 	}
 
 	promptBuilder.WriteString("You have access to the following tools. Analyze the user's request to determine if a tool is needed.\n\n")
-	
+
 	// Debug: log the available tools
 	b.logger.DebugKV("Generating tool prompt", "tool_count", len(b.availableTools))
 
@@ -78,7 +78,7 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 	for name, toolInfo := range b.availableTools {
 		promptBuilder.WriteString(fmt.Sprintf("\nTool Name: %s\n", name))
 		promptBuilder.WriteString(fmt.Sprintf("  Description: %s\n", toolInfo.ToolDescription))
-		
+
 		// Debug: log each tool being added
 		b.logger.DebugKV("Adding tool to prompt", "tool", name, "description", toolInfo.ToolDescription)
 		// Attempt to marshal the input schema map into a JSON string for display

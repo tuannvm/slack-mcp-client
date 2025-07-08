@@ -125,7 +125,7 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 
 	for i, result := range results {
 		response.WriteString(fmt.Sprintf("--- Context %d ---\n", i+1))
-		
+
 		// Add source information if available
 		if result.FileName != "" {
 			response.WriteString(fmt.Sprintf("Source: %s", result.FileName))
@@ -134,10 +134,10 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 			}
 			response.WriteString("\n")
 		}
-		
+
 		// Add content
 		response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
-		
+
 		// Add highlights if available
 		if len(result.Highlights) > 0 {
 			response.WriteString(fmt.Sprintf("Highlights: %s\n", strings.Join(result.Highlights, " | ")))
@@ -191,11 +191,11 @@ func (c *Client) handleRAGStats(ctx context.Context, args map[string]interface{}
 	response.WriteString(fmt.Sprintf("Total Chunks: %d\n", stats.TotalChunks))
 	response.WriteString(fmt.Sprintf("Processing Files: %d\n", stats.ProcessingFiles))
 	response.WriteString(fmt.Sprintf("Failed Files: %d\n", stats.FailedFiles))
-	
+
 	if stats.StorageSizeBytes > 0 {
 		response.WriteString(fmt.Sprintf("Storage Size: %.2f MB\n", float64(stats.StorageSizeBytes)/(1024*1024)))
 	}
-	
+
 	response.WriteString(fmt.Sprintf("Last Updated: %s\n", stats.LastUpdated.Format("2006-01-02 15:04:05")))
 
 	return response.String(), nil

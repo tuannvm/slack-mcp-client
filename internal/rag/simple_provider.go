@@ -40,7 +40,7 @@ func NewSimpleProvider(dbPath string) *SimpleProvider {
 	if dbPath == "" {
 		dbPath = "./knowledge.json"
 	}
-	
+
 	provider := &SimpleProvider{dbPath: dbPath}
 	provider.load()
 	return provider
@@ -58,12 +58,16 @@ func (s *SimpleProvider) IngestFile(ctx context.Context, filePath string, metada
 		return "", fmt.Errorf("simple provider only supports PDF files, got: %s", filePath)
 	}
 
-	// Load PDF using LangChain Go  
+	// Load PDF using LangChain Go
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open PDF file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close file: %v\n", err)
+		}
+	}()
 
 	loader := documentloaders.NewPDF(file, 0)
 	docs, err := loader.Load(ctx)
@@ -87,22 +91,22 @@ func (s *SimpleProvider) IngestFile(ctx context.Context, filePath string, metada
 		if err != nil {
 			return "", fmt.Errorf("failed to split document: %w", err)
 		}
-		
+
 		// Convert text chunks to schema.Document
 		for i, chunk := range chunks {
 			chunkDoc := schema.Document{
 				PageContent: chunk,
 				Metadata:    make(map[string]interface{}),
 			}
-			
+
 			// Copy original metadata
 			for k, v := range doc.Metadata {
 				chunkDoc.Metadata[k] = v
 			}
-			
+
 			// Add chunk index
 			chunkDoc.Metadata["chunk_index"] = i
-			
+
 			allChunks = append(allChunks, chunkDoc)
 		}
 	}
@@ -110,20 +114,20 @@ func (s *SimpleProvider) IngestFile(ctx context.Context, filePath string, metada
 	// Convert to our format and add to storage
 	fileName := filepath.Base(filePath)
 	fileID := fmt.Sprintf("file_%d", len(s.documents))
-	
+
 	for i, chunk := range allChunks {
 		docMetadata := make(map[string]string)
-		
+
 		// Copy provided metadata
 		for k, v := range metadata {
 			docMetadata[k] = v
 		}
-		
+
 		// Add file information
 		docMetadata["file_name"] = fileName
 		docMetadata["file_path"] = filePath
 		docMetadata["chunk_index"] = fmt.Sprintf("%d", i)
-		
+
 		// Copy chunk metadata
 		for k, v := range chunk.Metadata {
 			if str, ok := v.(string); ok {
@@ -138,7 +142,7 @@ func (s *SimpleProvider) IngestFile(ctx context.Context, filePath string, metada
 			Content:  chunk.PageContent,
 			Metadata: docMetadata,
 		}
-		
+
 		s.documents = append(s.documents, doc)
 	}
 
@@ -153,7 +157,7 @@ func (s *SimpleProvider) IngestFile(ctx context.Context, filePath string, metada
 // IngestFiles implements VectorProvider interface
 func (s *SimpleProvider) IngestFiles(ctx context.Context, filePaths []string, metadata map[string]string) ([]string, error) {
 	fileIDs := make([]string, 0, len(filePaths))
-	
+
 	for _, filePath := range filePaths {
 		fileID, err := s.IngestFile(ctx, filePath, metadata)
 		if err != nil {
@@ -163,7 +167,7 @@ func (s *SimpleProvider) IngestFiles(ctx context.Context, filePaths []string, me
 		}
 		fileIDs = append(fileIDs, fileID)
 	}
-	
+
 	return fileIDs, nil
 }
 
@@ -172,7 +176,7 @@ func (s *SimpleProvider) DeleteFile(ctx context.Context, fileID string) error {
 	// Remove all documents with matching file ID
 	var filteredDocs []SimpleDocument
 	removed := 0
-	
+
 	for _, doc := range s.documents {
 		if strings.HasPrefix(doc.ID, fileID+"_") {
 			removed++
@@ -180,18 +184,18 @@ func (s *SimpleProvider) DeleteFile(ctx context.Context, fileID string) error {
 			filteredDocs = append(filteredDocs, doc)
 		}
 	}
-	
+
 	if removed == 0 {
 		return fmt.Errorf("file not found: %s", fileID)
 	}
-	
+
 	s.documents = filteredDocs
-	
+
 	// Save changes
 	if err := s.save(); err != nil {
 		return fmt.Errorf("failed to save after deletion: %w", err)
 	}
-	
+
 	return nil
 }
 
@@ -199,15 +203,15 @@ func (s *SimpleProvider) DeleteFile(ctx context.Context, fileID string) error {
 func (s *SimpleProvider) ListFiles(ctx context.Context, limit int) ([]FileInfo, error) {
 	// Group documents by file
 	fileMap := make(map[string]*FileInfo)
-	
+
 	for _, doc := range s.documents {
 		fileName, ok := doc.Metadata["file_name"]
 		if !ok {
 			continue
 		}
-		
-		filePath, _ := doc.Metadata["file_path"]
-		
+
+		filePath := doc.Metadata["file_path"]
+
 		if info, exists := fileMap[fileName]; exists {
 			info.Size++ // Count chunks as size
 		} else {
@@ -220,7 +224,7 @@ func (s *SimpleProvider) ListFiles(ctx context.Context, limit int) ([]FileInfo, 
 			}
 		}
 	}
-	
+
 	// Convert to slice
 	files := make([]FileInfo, 0, len(fileMap))
 	for _, info := range fileMap {
@@ -229,7 +233,7 @@ func (s *SimpleProvider) ListFiles(ctx context.Context, limit int) ([]FileInfo, 
 			break
 		}
 	}
-	
+
 	return files, nil
 }
 
@@ -252,7 +256,7 @@ func (s *SimpleProvider) Search(ctx context.Context, query string, options Searc
 	for _, doc := range s.documents {
 		contentLower := strings.ToLower(doc.Content)
 		score := s.calculateRelevanceScore(contentLower, queryLower, queryTerms)
-		
+
 		if score > 0 {
 			scores = append(scores, DocumentScore{
 				Document: doc,
@@ -274,9 +278,9 @@ func (s *SimpleProvider) Search(ctx context.Context, query string, options Searc
 	// Convert to SearchResult format
 	results := make([]SearchResult, len(scores))
 	for i, scored := range scores {
-		fileName, _ := scored.Document.Metadata["file_name"]
-		fileID, _ := scored.Document.Metadata["file_path"]
-		
+		fileName := scored.Document.Metadata["file_name"]
+		fileID := scored.Document.Metadata["file_path"]
+
 		result := SearchResult{
 			Content:    scored.Document.Content,
 			Score:      float32(scored.Score),
@@ -285,7 +289,7 @@ func (s *SimpleProvider) Search(ctx context.Context, query string, options Searc
 			Metadata:   scored.Document.Metadata,
 			Highlights: s.extractHighlights(scored.Document.Content, queryTerms),
 		}
-		
+
 		results[i] = result
 	}
 
@@ -298,13 +302,13 @@ func (s *SimpleProvider) GetStats(ctx context.Context) (*VectorStoreStats, error
 	if err != nil {
 		return nil, err
 	}
-	
+
 	stats := &VectorStoreStats{
 		TotalFiles:  len(files),
 		TotalChunks: len(s.documents),
 		LastUpdated: time.Now(),
 	}
-	
+
 	return stats, nil
 }
 
@@ -367,13 +371,13 @@ func (s *SimpleProvider) calculateRelevanceScore(content, query string, queryTer
 func (s *SimpleProvider) extractHighlights(content string, queryTerms []string) []string {
 	var highlights []string
 	contentLower := strings.ToLower(content)
-	
+
 	for _, term := range queryTerms {
 		if len(term) > 2 && strings.Contains(contentLower, term) {
 			highlights = append(highlights, term)
 		}
 	}
-	
+
 	return highlights
 }
 

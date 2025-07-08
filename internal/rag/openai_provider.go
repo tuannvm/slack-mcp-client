@@ -253,7 +253,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 
 	// Process search results
 	results := make([]SearchResult, 0)
-	
+
 	for i, result := range searchResults.Data {
 		// Extract content from the response
 		var content string
@@ -269,7 +269,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 		} else {
 			content = "No content available"
 		}
-		
+
 		searchResult := SearchResult{
 			Content:  content,
 			Score:    float32(result.Score),
@@ -282,7 +282,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 			},
 			Highlights: strings.Fields(strings.ToLower(query)),
 		}
-		
+
 		// Add file metadata if available
 		if result.FileID != "" {
 			searchResult.Metadata["file_id"] = result.FileID
@@ -290,7 +290,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 		if result.Filename != "" {
 			searchResult.Metadata["file_name"] = result.Filename
 		}
-		
+
 		results = append(results, searchResult)
 	}
 
