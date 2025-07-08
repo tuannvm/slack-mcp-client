@@ -132,13 +132,16 @@ func (c *SSEMCPClientWithRetry) triggerReconnect() <-chan struct{} {
 		c.mutex.Unlock()
 		return done
 	default:
-		if c.reconnectDone == nil {
+		c.mutex.RLock()
+		done := c.reconnectDone
+		c.mutex.RUnlock()
+		if done == nil {
 			// edge case
 			noop := make(chan struct{})
 			close(noop)
 			return noop
 		}
-		return c.reconnectDone
+		return done
 	}
 }
 
@@ -169,10 +172,11 @@ func (c *SSEMCPClientWithRetry) reconnectLoop() {
 			c.mutex.Lock()
 			if c.reconnectDone != nil {
 				close(c.reconnectDone)
-				if !success {
-					c.log.Error("All reconnect attempts failed — client is still disconnected")
-					c.reconnectDone = nil
-				}
+				c.reconnectDone = nil
+			}
+
+			if !success {
+				c.log.Error("All reconnect attempts failed — client is still disconnected")
 			}
 			c.mutex.Unlock()
 		}
