@@ -77,11 +77,11 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 			return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 		}
 	case "sse":
-		mcpClient, err = client.NewSSEMCPClient(addressOrCommand)
+		mcpClient, err = NewSSEMCPClientWithRetry(addressOrCommand, mcpLogger)
 		if err != nil {
 			return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 		}
-		err = mcpClient.(*client.Client).Start(context.Background())
+		err = mcpClient.(*SSEMCPClientWithRetry).Start(context.Background())
 		if err != nil {
 			return nil, customErrors.WrapMCPError(err, "client_start", fmt.Sprintf("Failed to start MCP client for %s", addressOrCommand))
 		}
