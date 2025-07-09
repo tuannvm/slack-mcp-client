@@ -40,16 +40,13 @@ func NewSSEMCPClientWithRetry(serverAddr string, log *logging.Logger) (*SSEMCPCl
 	ctx, cancel := context.WithCancel(context.Background())
 
 	c := &SSEMCPClientWithRetry{
-		Client:        sseClient,
-		serverAddr:    serverAddr,
-		log:           log,
-		ctx:           ctx,
-		cancel:        cancel,
-		reconnectCh:   make(chan struct{}, 1),
-		reconnectDone: nil,
+		Client:     sseClient,
+		serverAddr: serverAddr,
+		log:        log,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 
-	go c.reconnectLoop()
 	return c, nil
 }
 
@@ -105,7 +102,6 @@ func (c *SSEMCPClientWithRetry) connect() error {
 
 	sseClient, err := client.NewSSEMCPClient(c.serverAddr)
 	if err != nil {
-		_ = sseClient.Close()
 		return err
 	}
 
@@ -125,27 +121,25 @@ func (c *SSEMCPClientWithRetry) connect() error {
 	return nil
 }
 
-// triggerReconnect schedules a reconnect if not already in progress and returns a channel that will be closed when it's done.
 func (c *SSEMCPClientWithRetry) triggerReconnect() <-chan struct{} {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.reconnectCh == nil {
+		c.reconnectCh = make(chan struct{}, 1)
+		go c.reconnectLoop()
+	}
+
+	if c.reconnectDone == nil {
+		c.reconnectDone = make(chan struct{})
+	}
+
 	select {
 	case c.reconnectCh <- struct{}{}:
-		c.mutex.Lock()
-		done := make(chan struct{})
-		c.reconnectDone = done
-		c.mutex.Unlock()
-		return done
 	default:
-		c.mutex.RLock()
-		done := c.reconnectDone
-		c.mutex.RUnlock()
-		if done == nil {
-			// edge case
-			noop := make(chan struct{})
-			close(noop)
-			return noop
-		}
-		return done
 	}
+
+	return c.reconnectDone
 }
 
 func (c *SSEMCPClientWithRetry) reconnectLoop() {
