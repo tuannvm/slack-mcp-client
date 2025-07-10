@@ -1,11 +1,26 @@
 package llm
 
 import (
+	"context"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 )
+
+type handleContentEndFunc func(res *llms.ContentResponse)
+
+type openaiCallbackHandler struct {
+	callbacks.SimpleHandler
+	handleContentEndFunc
+}
+
+func (handler *openaiCallbackHandler) HandleLLMGenerateContentEnd(_ context.Context, res *llms.ContentResponse) {
+	handler.handleContentEndFunc(res)
+}
 
 // OpenAIModelFactory creates OpenAI LangChain model instances
 type OpenAIModelFactory struct{}
@@ -25,6 +40,29 @@ func (f *OpenAIModelFactory) Create(config map[string]interface{}, logger *loggi
 
 	opts := []openai.Option{
 		openai.WithModel(modelName), // Set model during initialization
+		openai.WithCallback(&openaiCallbackHandler{
+			SimpleHandler: callbacks.SimpleHandler{},
+			handleContentEndFunc: func(res *llms.ContentResponse) {
+				if len(res.Choices) > 0 {
+					choice := res.Choices[0]
+					if choice.GenerationInfo != nil {
+						for key, value := range choice.GenerationInfo {
+							valInt, ok := value.(int)
+							if !ok {
+								logger.WarnKV("unexpected non-int value for LLM token count", "key", key, "value", value)
+								continue
+							}
+							monitoring.LLMTokensPerRequest.
+								With(prometheus.Labels{
+									monitoring.MetricLabelType:  key,
+									monitoring.MetricLabelModel: modelName,
+								}).
+								Observe(float64(valInt))
+						}
+					}
+				}
+			},
+		}),
 	}
 
 	if apiKey != "" {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 )
 
 type ToolInfo struct {
@@ -33,8 +35,18 @@ func (t *ToolInfo) Call(ctx context.Context, input string) (string, error) {
 		return "", fmt.Errorf("failed to unmarshal input: %w", err)
 	}
 
+	isError := "false"
+	defer func() {
+		monitoring.ToolInvocations.With(prometheus.Labels{
+			monitoring.MetricLabelTool:   t.ToolName,
+			monitoring.MetricLabelServer: t.ServerName,
+			monitoring.MetricLabelError:  isError,
+		}).Inc()
+	}()
+
 	res, err := t.Client.CallTool(ctx, t.Name(), args)
 	if err != nil {
+		isError = "true"
 		return "", fmt.Errorf("while calling tool %s: %w", t.Name(), err)
 	}
 

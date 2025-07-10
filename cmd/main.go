@@ -8,16 +8,19 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
 
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
@@ -27,9 +30,10 @@ import (
 
 var (
 	// Define command-line flags
-	configFile = flag.String("config", "mcp-servers.json", "Path to the MCP server configuration JSON file")
-	debug      = flag.Bool("debug", false, "Enable debug logging")
-	mcpDebug   = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
+	configFile  = flag.String("config", "mcp-servers.json", "Path to the MCP server configuration JSON file")
+	debug       = flag.Bool("debug", false, "Enable debug logging")
+	mcpDebug    = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
+	metricsPort = flag.String("metrics-port", "8080", "Port for metrics endpoint (default: 8080)")
 
 	// RAG-related flags
 	ragIngest          = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
@@ -43,6 +47,10 @@ var (
 	ragAssistantName   = flag.String("rag-assistant-name", "", "Name for the OpenAI assistant (for init)")
 	ragVectorStoreName = flag.String("rag-vector-store-name", "", "Name for the vector store (for init)")
 )
+
+func init() {
+	monitoring.RegisterMetrics()
+}
 
 func main() {
 	flag.Parse()
@@ -91,6 +99,12 @@ func main() {
 
 	// Load and prepare configuration
 	cfg := loadAndPrepareConfig(logger)
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		logger.Info("Starting metrics server on port %s", *metricsPort)
+		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", *metricsPort), nil))
+	}()
 
 	// Initialize MCP clients and discover tools
 	mcpClients, discoveredTools := initializeMCPClients(logger, cfg)
