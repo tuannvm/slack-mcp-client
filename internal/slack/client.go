@@ -333,19 +333,43 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", providerName)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
+	// Fetch thread replies from slack
+	replies, err := c.userFrontend.GetThreadReplies(channelID, threadTS)
+	if err != nil {
+		c.logger.ErrorKV("Failed to fetch thread replies", "channel", channelID, "thread_ts", threadTS, "error", err)
+	} else {
+		c.logger.DebugKV("Fetched thread replies", "channel", channelID, "thread_ts", threadTS, "count", len(replies))
+		for _, reply := range replies {
+			exists := false
+			history := c.messageHistory[historyKey(channelID, threadTS)]
+			for _, msg := range history {
+				if msg.Role == "user" && msg.Content == reply.Text {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				role := "user"
+				if reply.BotID != "" {
+					role = "assistant"
+				}
+				c.addToHistory(channelID, threadTS, role, reply.Text)
+			}
+		}
+	}
+
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID, threadTS)
-
 	c.addToHistory(channelID, threadTS, "user", userPrompt) // Add user message to history
 
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, thinkingMessage)
 
+
 	if !c.llmMCPBridge.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
 		var finalPrompt string
 		customPrompt := c.cfg.LLM.CustomPrompt
-
 		if customPrompt != "" {
 			// Use custom prompt as system instruction, then add user prompt
 			finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, userPrompt)

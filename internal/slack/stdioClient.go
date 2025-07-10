@@ -89,6 +89,10 @@ func (client StdioClient) IsBotUser(userID string) bool {
 	return false
 }
 
+func (client StdioClient) GetThreadReplies(channelID, threadTS string) ([]slack.Message, error) {
+    return []slack.Message{}, nil
+}
+
 func (client StdioClient) SendMessage(channelID, threadTS, text string) {
 	messages := []string{
 		"----- SEND MESSAGE -----\n",
