@@ -158,6 +158,7 @@ func (c *SSEMCPClientWithRetry) sharedReconnect(ctx context.Context) error {
 		var success bool
 		var err error
 
+	reconnectLoop:
 		for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
 			err = c.connect()
 			if err == nil {
@@ -171,7 +172,7 @@ func (c *SSEMCPClientWithRetry) sharedReconnect(ctx context.Context) error {
 			case <-time.After(time.Duration(attempt) * baseBackoffDuration):
 			case <-c.ctx.Done():
 				err = c.ctx.Err()
-				break
+				break reconnectLoop
 			}
 		}
 
