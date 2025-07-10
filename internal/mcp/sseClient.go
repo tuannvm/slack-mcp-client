@@ -170,6 +170,7 @@ func (c *SSEMCPClientWithRetry) sharedReconnect(ctx context.Context) error {
 			select {
 			case <-time.After(time.Duration(attempt) * baseBackoffDuration):
 			case <-c.ctx.Done():
+				err = c.ctx.Err()
 				break
 			}
 		}
