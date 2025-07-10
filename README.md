@@ -58,7 +58,7 @@ flowchart LR
 ## Features
 
 - ✅ **Multi-Mode MCP Client**: 
-  - Server-Sent Events (SSE) for real-time communication
+  - Server-Sent Events (SSE) for real-time communication with automatic retry
   - HTTP transport for JSON-RPC
   - stdio for local development and testing
 - ✅ **Slack Integration**: 
@@ -72,6 +72,12 @@ flowchart LR
   - Ollama (Local LLMs like Llama, Mistral, etc.)
   - Factory pattern for easy provider switching
   - LangChain gateway for unified API
+- ✅ **Agent Mode**:
+  - Autonomous AI agents powered by LangChain
+  - Multi-step reasoning and tool orchestration
+  - Automatic tool chaining for complex tasks
+  - Streaming responses with real-time updates
+  - Configurable system prompts and behavior
 - ✅ **Custom Prompt Engineering**: 
   - System Prompts - Define custom AI assistant behavior and personality
 - ✅ **RAG (Retrieval-Augmented Generation)**: 
@@ -89,6 +95,11 @@ flowchart LR
   - Kubernetes Helm charts
   - Comprehensive logging and error handling
   - 88%+ test coverage
+- ✅ **Monitoring & Observability**:
+  - Prometheus metrics integration
+  - Tool invocation tracking with error rates
+  - LLM token usage monitoring
+  - Configurable metrics endpoint
 
 ## Installation
 
@@ -164,6 +175,9 @@ slack-mcp-client --debug
 
 # Specify OpenAI model
 slack-mcp-client --openai-model gpt-4o-mini
+
+# Configure metrics port
+slack-mcp-client --metrics-port 9090
 ```
 
 The application will connect to Slack and start listening for messages. You can check the logs for any errors or connection issues.
@@ -289,6 +303,120 @@ Create specialized assistants for different use cases:
 - **HR Assistant**: Policy questions, onboarding guidance
 - **Support Assistant**: Customer issue resolution
 - **Code Review Assistant**: Security, performance, best practices
+
+### Agent Mode
+
+Agent Mode enables more interactive and context-aware conversations using LangChain's agent framework. Instead of single-prompt interactions, agents can engage in multi-step reasoning, use tools more strategically, and maintain better context throughout conversations.
+
+#### How Agent Mode Works
+
+Agent Mode uses LangChain's conversational agent framework to provide:
+
+1. **Interactive Conversations**: Maintains context across multiple exchanges
+2. **Strategic Tool Usage**: Agents decide when and how to use available tools
+3. **Multi-Step Reasoning**: Can break down complex problems into manageable steps
+4. **Streaming Responses**: Provides real-time updates during processing
+5. **User Context Integration**: Incorporates user information for personalized responses
+
+#### Agent Mode Configuration
+
+Enable Agent Mode in your configuration file:
+
+```json
+{
+  "use_agent": true,
+  "use_native_tools": false,
+  "custom_prompt": "You are a DevOps expert specializing in Kubernetes and cloud infrastructure. Always think through problems step by step.",
+  "llm_provider": "langchain",
+  "llm_providers": {
+    "langchain": {
+      "type": "openai",
+      "model": "gpt-4o",
+      "agent_prompt_prefix": "You are a helpful assistant with access to various tools."
+    }
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+    },
+    "github": {
+      "command": "github-mcp-server",
+      "args": ["stdio"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"
+      }
+    }
+  }
+}
+```
+
+#### Configuration Options
+
+- **`use_agent`**: Enable agent mode (default: false)
+- **`use_native_tools`**: Use native LangChain tools vs system prompt-based tools (default: false)
+- **`agent_prompt_prefix`**: Custom prompt prefix for agent initialization
+- **`custom_prompt`**: System prompt for agent behavior
+
+#### Agent vs Standard Mode
+
+**Standard Mode**:
+- Single-prompt interactions
+- Tools described in system prompt as JSON schemas
+- Direct tool call parsing and execution
+- More predictable token usage
+- Simpler conversation flow
+
+**Agent Mode**:
+- Multi-turn conversational interactions
+- Context-aware tool usage decisions
+- Better user context integration
+- More natural conversation flow
+- Enhanced reasoning capabilities
+
+#### Agent Mode Examples
+
+**Interactive Development Consultation**:
+```
+User: "I need help optimizing my React app performance"
+
+Agent Response:
+🤖 I'd be happy to help optimize your React app performance! Let me understand your current setup better.
+
+[Agent maintains conversation context and asks relevant follow-up questions]
+Agent: "What specific performance issues are you experiencing? Are you seeing slow renders, large bundle sizes, or something else?"
+
+User: "The app takes too long to load initially"
+
+Agent: "Let me check your current bundle setup and suggest optimizations..."
+[Agent uses filesystem tools to analyze the project structure and provides targeted advice]
+```
+
+**Contextual Problem Solving**:
+```
+User: "Can you help me with my deployment pipeline?"
+
+Agent Response:
+🤖 I'll help you with your deployment pipeline. Since I know you're working on a React project, let me check your current CI/CD setup.
+
+[Agent leverages previous conversation context and user information to provide personalized assistance]
+[Agent strategically uses relevant tools based on the conversation flow]
+```
+
+#### Agent Mode Best Practices
+
+1. **System Prompts**: Design clear, specific system prompts that guide the agent's behavior
+2. **Tool Selection**: Provide relevant tools for the agent's domain
+3. **Context Management**: Agents maintain better context across conversations
+4. **User Personalization**: Leverage user context integration for personalized responses
+5. **Tool Strategy**: Choose between native tools or system prompt-based tools based on your needs
+
+#### Limitations and Considerations
+
+- **OpenAI Agent**: Native OpenAI agent in langchaingo has known issues, uses conversational agent as workaround
+- **LangChain Dependency**: Agent mode requires LangChain provider
+- **Permissions**: May require additional Slack permissions for user information retrieval
+- **Performance**: Agent mode may have different performance characteristics than standard mode
 
 ### Kubernetes Deployment with Helm
 
@@ -537,6 +665,25 @@ Configure LLM providers and Slack integration using environment variables:
 | LANGCHAIN_OLLAMA_URL  | URL for Ollama when using LangChain          | http://localhost:11434 |
 | LANGCHAIN_OLLAMA_MODEL| Model name for Ollama when using LangChain   | llama3     |
 
+### Monitoring Configuration
+
+The client includes Prometheus metrics support for monitoring tool usage and performance:
+
+- **Metrics Endpoint**: Accessible at `/metrics` on the configured port
+- **Default Port**: 8080 (configurable via `--metrics-port` flag)
+- **Metrics Available**:
+  - `slackmcp_tool_invocations_total`: Counter for tool invocations with labels for tool name, server, and error status
+  - `slackmcp_llm_tokens`: Histogram for LLM token usage by type and model
+
+Example metrics access:
+```bash
+# Access metrics endpoint
+curl http://localhost:8080/metrics
+
+# Run with custom metrics port
+slack-mcp-client --metrics-port 9090
+```
+
 ### MCP Server Configuration
 
 MCP servers are configured via a JSON configuration file (default: `mcp-servers.json`):
@@ -588,7 +735,7 @@ For more details, see the [Slack Formatting Guide](docs/format.md).
 
 The client supports three transport modes:
 
-- **SSE (default)**: Uses Server-Sent Events for real-time communication with the MCP server
+- **SSE (default)**: Uses Server-Sent Events for real-time communication with the MCP server, includes automatic retry logic for enhanced reliability
 - **HTTP**: Uses HTTP POST requests with JSON-RPC for communication
 - **stdio**: Uses standard input/output for local development and testing
 
@@ -611,11 +758,13 @@ Comprehensive documentation is available in the `docs/` directory:
 
 ### Quick Links
 - **Setup**: Start with the [Slack Configuration Guide](docs/configuration.md) for initial setup
+- **Agent Mode**: See the Agent Mode section above for autonomous AI agents with tool chaining
 - **RAG**: Check the [RAG Implementation Guide](docs/rag-json.md) for document knowledge base integration
 - **Formatting**: See the [Slack Formatting Guide](docs/format.md) for message formatting capabilities
 - **RAG SQLite**: See the [RAG SQLite Implementation](docs/rag-sqlite.md) for native Go implementation with modern upload UX
 - **Development**: Check the [Implementation Notes](docs/implementation.md) for technical details
 - **Testing**: Use the [Testing Guide](docs/test.md) for testing procedures and debugging
+- **Monitoring**: See the metrics configuration section above for Prometheus integration
 
 ## Contributing
 
