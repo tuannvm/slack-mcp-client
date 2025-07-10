@@ -26,9 +26,12 @@ type SSEMCPClientWithRetry struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mutex         sync.RWMutex
-	reconnectCh   chan struct{}
-	reconnectDone chan struct{}
+	mutex sync.RWMutex
+
+	reconnectMu           sync.Mutex
+	isReconnectInProgress bool
+	reconnectErr          error
+	reconnectDoneCh       chan struct{}
 }
 
 func NewSSEMCPClientWithRetry(serverAddr string, log *logging.Logger) (*SSEMCPClientWithRetry, error) {
@@ -66,10 +69,9 @@ func (c *SSEMCPClientWithRetry) CallTool(ctx context.Context, request mcp.CallTo
 
 	c.log.ErrorKV("Tool call failed, attempting reconnect", "error", err)
 
-	select {
-	case <-c.triggerReconnect():
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	err = c.sharedReconnect(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("tool call failed after reconnect attempt: %w", err)
 	}
 
 	result, err = c.callTool(ctx, request)
@@ -78,6 +80,18 @@ func (c *SSEMCPClientWithRetry) CallTool(ctx context.Context, request mcp.CallTo
 	}
 
 	return result, nil
+}
+
+func (c *SSEMCPClientWithRetry) Close() error {
+	c.cancel()
+
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	if c.Client != nil {
+		return c.Client.Close()
+	}
+	return nil
 }
 
 func (c *SSEMCPClientWithRetry) callTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -121,73 +135,65 @@ func (c *SSEMCPClientWithRetry) connect() error {
 	return nil
 }
 
-func (c *SSEMCPClientWithRetry) triggerReconnect() <-chan struct{} {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+// sharedReconnect ensures only one reconnect attempt runs, others wait for it.
+func (c *SSEMCPClientWithRetry) sharedReconnect(ctx context.Context) error {
+	c.reconnectMu.Lock()
+	if c.isReconnectInProgress {
+		ready := c.reconnectDoneCh
+		c.reconnectMu.Unlock()
 
-	if c.reconnectCh == nil {
-		c.reconnectCh = make(chan struct{}, 1)
-		go c.reconnectLoop()
-	}
-
-	if c.reconnectDone == nil {
-		c.reconnectDone = make(chan struct{})
-	}
-
-	select {
-	case c.reconnectCh <- struct{}{}:
-	default:
-	}
-
-	return c.reconnectDone
-}
-
-func (c *SSEMCPClientWithRetry) reconnectLoop() {
-	for {
 		select {
-		case <-c.ctx.Done():
-			return
-		case <-c.reconnectCh:
-			var success bool
-
-			for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
-				if err := c.connect(); err != nil {
-					c.log.InfoKV("Reconnect failed", "attempt", attempt, "error", err)
-
-					select {
-					case <-time.After(time.Duration(attempt) * baseBackoffDuration):
-					case <-c.ctx.Done():
-						return
-					}
-				} else {
-					c.log.Info("Reconnected successfully")
-					success = true
-					break
-				}
-			}
-
-			c.mutex.Lock()
-			if c.reconnectDone != nil {
-				close(c.reconnectDone)
-				c.reconnectDone = nil
-			}
-
-			if !success {
-				c.log.Error("All reconnect attempts failed — client is still disconnected")
-			}
-			c.mutex.Unlock()
+		case <-ready:
+			return c.reconnectErr
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
-}
 
-func (c *SSEMCPClientWithRetry) Close() error {
-	c.cancel()
+	c.isReconnectInProgress = true
+	c.reconnectDoneCh = make(chan struct{})
+	c.reconnectMu.Unlock()
 
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
+	go func() {
+		var success bool
+		var err error
 
-	if c.Client != nil {
-		return c.Client.Close()
+		for attempt := 1; attempt <= maxReconnectAttempts; attempt++ {
+			err = c.connect()
+			if err == nil {
+				success = true
+				break
+			}
+
+			c.log.InfoKV("Reconnect failed", "attempt", attempt, "error", err)
+
+			select {
+			case <-time.After(time.Duration(attempt) * baseBackoffDuration):
+			case <-c.ctx.Done():
+				break
+			}
+		}
+
+		c.reconnectMu.Lock()
+		defer c.reconnectMu.Unlock()
+
+		if success {
+			c.log.Info("Reconnected successfully")
+			c.reconnectErr = nil
+		} else {
+			c.log.Error("All reconnect attempts failed — client is still disconnected")
+			c.reconnectErr = err
+		}
+		close(c.reconnectDoneCh)
+		c.isReconnectInProgress = false
+	}()
+
+	select {
+	case <-c.reconnectDoneCh:
+		c.reconnectMu.Lock()
+		defer c.reconnectMu.Unlock()
+		return c.reconnectErr
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
 }
