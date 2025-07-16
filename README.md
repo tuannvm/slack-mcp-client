@@ -709,7 +709,7 @@ You can easily extend this setup to include additional MCP servers in the same n
 1. Create a new Slack app at https://api.slack.com/apps
 2. Enable Socket Mode and generate an app-level token
 3. Check `Allow users to send Slash commands and messages from the chat tab` in App Home page, to enable direct message to Slack app.
-![image](https://github.com/wyangsun/wyangsun.github.io/blob/master/slackapp.png)
+![image](https://github.com/user-attachments/assets/27d365bd-f60a-40dd-8d62-7d5a78130dcc)
 4. Add the following Bot Token Scopes:
    - `app_mentions:read`
    - `chat:write`
