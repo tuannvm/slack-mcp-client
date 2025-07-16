@@ -116,6 +116,9 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 		}
 
 		if len(cfg.MCPServers) > 0 {
+			if len(cfg.Servers) > 0 && logger != nil {
+				logger.WarnKV("Both 'servers' and 'mcpServers' fields found in config, 'mcpServers' will take precedence", "servers_count", len(cfg.Servers), "mcpServers_count", len(cfg.MCPServers))
+			}
 			cfg.Servers = cfg.MCPServers
 		}
 
