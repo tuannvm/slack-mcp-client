@@ -55,11 +55,6 @@ type ServerConfig struct {
 	BlockList []string `json:"block_list,omitempty"` // List of blocked tools
 }
 
-// MCPServersConfig is the top-level structure for the MCP servers configuration
-type MCPServersConfig struct {
-	MCPServers map[string]ServerConfig `json:"mcpServers"`
-}
-
 // Config defines the overall application configuration
 type Config struct {
 	UseStdIOClient *bool `json:"use_stdio_client,omitempty"` // Use stdio client instead of Slack API
@@ -67,7 +62,8 @@ type Config struct {
 	SlackBotToken string `json:"slack_bot_token"`
 	SlackAppToken string `json:"slack_app_token"`
 
-	Servers map[string]ServerConfig `json:"servers"`
+	Servers    map[string]ServerConfig `json:"servers"`
+	MCPServers map[string]ServerConfig `json:"mcpServers"`
 
 	UseNativeTools *bool                             `json:"use_native_tools,omitempty"` // Use MCP bridge for LLMs
 	LLMProvider    string                            `json:"llm_provider"`               // Name of the provider to USE (e.g., "openai", "ollama")
@@ -115,23 +111,16 @@ func LoadConfig(configFile string, logger *logging.Logger) (*Config, error) {
 			return nil, fmt.Errorf("failed to read config file: %s", err)
 		}
 
-		// First try to parse as MCPServersConfig (new format)
-		var mcpConfig MCPServersConfig
-		if err := json.Unmarshal(configData, &mcpConfig); err == nil && len(mcpConfig.MCPServers) > 0 {
-			// Successfully parsed as MCPServersConfig
-			cfg.Servers = mcpConfig.MCPServers
-			if logger != nil {
-				logger.InfoKV("Loaded MCP servers configuration from file", "file", configFile, "server_count", len(mcpConfig.MCPServers))
-			}
-		} else {
-			// Try to parse as regular Config
-			if err := json.Unmarshal(configData, cfg); err != nil {
-				return nil, fmt.Errorf("failed to parse config file: %s", err)
-			}
+		if err = json.Unmarshal(configData, cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config file: %s", err)
+		}
 
-			if logger != nil {
-				logger.InfoKV("Loaded configuration from file", "file", configFile)
-			}
+		if len(cfg.MCPServers) > 0 {
+			cfg.Servers = cfg.MCPServers
+		}
+
+		if logger != nil {
+			logger.InfoKV("Loaded MCP servers configuration from file", "file", configFile, "server_count", len(cfg.Servers))
 		}
 	}
 
