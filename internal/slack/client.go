@@ -233,14 +233,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			isNotEdited := ev.SubType != "message_changed"
 			isBot := ev.BotID != "" || ev.SubType == "bot_message"
 
-			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
-			if err != nil {
-				c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
-				return
-			}
-
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
+
+				userInfo, err := c.userFrontend.GetUserInfo(ev.User)
+				if err != nil {
+					c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
+					return
+				}
 
 				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}

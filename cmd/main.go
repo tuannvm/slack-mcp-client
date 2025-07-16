@@ -617,21 +617,45 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
-	// Use the structured logger for the Slack client
-	client, err := slackbot.NewClient(
-		userFrontend,
-		logger,          // Pass the structured logger
-		mcpClients,      // Pass the map of initialized clients
-		discoveredTools, // Pass the map of tool information
-		cfg,             // Pass the whole config object
-	)
+	// Load security configuration and determine which client to use
+	securityCfg, err := config.LoadConfigWithSecurity(*configFile, logger)
 	if err != nil {
-		logger.Fatal("Failed to initialize Slack client: %v", err)
+		logger.Fatal("Failed to load security configuration: %v", err)
+	}
+
+	// Use security-enabled client if security is enabled, otherwise use regular client
+	var slackClient interface{ Run() error }
+	if securityCfg.Security.Enabled {
+		logger.Info("Security is enabled - using secure Slack client")
+		secureClient, err := slackbot.NewSecureClient(
+			userFrontend,
+			logger,          // Pass the structured logger
+			mcpClients,      // Pass the map of initialized clients
+			discoveredTools, // Pass the map of tool information
+			securityCfg,     // Pass the security-enabled config
+		)
+		if err != nil {
+			logger.Fatal("Failed to initialize secure Slack client: %v", err)
+		}
+		slackClient = secureClient
+	} else {
+		logger.Info("Security is disabled - using regular Slack client")
+		regularClient, err := slackbot.NewClient(
+			userFrontend,
+			logger,          // Pass the structured logger
+			mcpClients,      // Pass the map of initialized clients
+			discoveredTools, // Pass the map of tool information
+			cfg,             // Pass the whole config object
+		)
+		if err != nil {
+			logger.Fatal("Failed to initialize Slack client: %v", err)
+		}
+		slackClient = regularClient
 	}
 
 	// Start listening for Slack events in a separate goroutine
 	go func() {
-		if err := client.Run(); err != nil {
+		if err := slackClient.Run(); err != nil {
 			logger.Fatal("Slack client error: %v", err)
 		}
 	}()
