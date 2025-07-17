@@ -15,9 +15,10 @@ import (
 // OpenAIConfig holds configuration for the OpenAI provider
 type OpenAIConfig struct {
 	APIKey          string
-	VectorStoreID   string // Optional: reuse existing vector store
-	VectorStoreName string // Name for the vector store (default: "Knowledge Base")
-	MaxResults      int    // Default: 20
+	VectorStoreID   string  // Optional: reuse existing vector store
+	VectorStoreName string  // Name for the vector store (default: "Knowledge Base")
+	MaxResults      int64   // Default: 20
+	ScoreThreshold  float64 // Default: 0.5
 }
 
 // OpenAIProvider implements VectorProvider using OpenAI's VectorStore API with 2025 updates
@@ -31,6 +32,7 @@ type OpenAIProvider struct {
 func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 	cfg := OpenAIConfig{
 		MaxResults:      20,
+		ScoreThreshold:  0.5,
 		VectorStoreName: "Knowledge Base",
 	}
 
@@ -54,8 +56,12 @@ func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 		cfg.VectorStoreName = vectorStoreName
 	}
 
-	if maxResults, ok := config["max_results"].(int); ok {
-		cfg.MaxResults = maxResults
+	if scoreThreshold, ok := config["score_threshold"].(float64); ok {
+		cfg.ScoreThreshold = scoreThreshold
+	}
+
+	if maxResults, ok := config["max_results"].(float64); ok {
+		cfg.MaxResults = int64(maxResults)
 	}
 
 	// Create OpenAI client
@@ -233,9 +239,14 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 	fmt.Printf("[RAG] OpenAI: Vector Store search for query '%s' (vector_store: %s)\n", query, o.vectorStoreID)
 
 	// Set up search parameters
-	limit := options.Limit
-	if limit <= 0 {
-		limit = o.config.MaxResults
+	limit := o.config.MaxResults
+	if o.config.MaxResults < 0 {
+		limit = 20
+	}
+
+	scoreThreshold := o.config.ScoreThreshold
+	if scoreThreshold < 0 {
+		scoreThreshold = 0.1
 	}
 
 	// Use OpenAI's Vector Store Search API with proper union type
@@ -243,7 +254,11 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 		Query: openai.VectorStoreSearchParamsQueryUnion{
 			OfString: openai.String(query),
 		},
-		MaxNumResults: openai.Int(int64(limit)),
+		MaxNumResults: openai.Int(limit),
+		RankingOptions: openai.VectorStoreSearchParamsRankingOptions{
+			ScoreThreshold: openai.Float(scoreThreshold),
+			Ranker:         "auto",
+		},
 	}
 
 	searchResults, err := o.client.VectorStores.Search(ctx, o.vectorStoreID, searchParams)

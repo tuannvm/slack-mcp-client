@@ -18,7 +18,7 @@ GOLINT=golangci-lint
 # Build the binary
 build:
 	mkdir -p $(BUILD_DIR)
-	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/$(BINARY_NAME)
+	$(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/
 
 # Run the binary
 run: build
