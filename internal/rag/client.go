@@ -107,7 +107,7 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		}
 
 		// Add content
-		//response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
+		response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
 
 		// Add highlights if available
 		if len(result.Highlights) > 0 {
