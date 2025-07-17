@@ -4,7 +4,6 @@ package rag
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -12,7 +11,6 @@ import (
 // This allows the LLM-MCP bridge to treat RAG as a regular MCP tool
 type Client struct {
 	provider VectorProvider
-	maxDocs  int // Maximum documents to return in a single call
 }
 
 // NewClient creates a new RAG client with simple provider (legacy compatibility)
@@ -29,13 +27,11 @@ func NewClient(ragDatabase string) *Client {
 		_ = simpleProvider.Initialize(context.Background())
 		return &Client{
 			provider: simpleProvider,
-			maxDocs:  10,
 		}
 	}
 
 	return &Client{
 		provider: provider,
-		maxDocs:  10,
 	}
 }
 
@@ -54,7 +50,6 @@ func NewClientWithProvider(providerType string, config map[string]interface{}) (
 
 	return &Client{
 		provider: provider,
-		maxDocs:  20, // Higher default for vector stores
 	}, nil
 }
 
@@ -84,32 +79,8 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		return "", err
 	}
 
-	// Extract optional limit parameter
-	limit := c.maxDocs
-	if limitParam, exists := args["limit"]; exists {
-		if limitInt, ok := limitParam.(int); ok {
-			limit = limitInt
-		} else if limitFloat, ok := limitParam.(float64); ok {
-			limit = int(limitFloat)
-		} else if limitStr, ok := limitParam.(string); ok {
-			if parsed, parseErr := strconv.Atoi(limitStr); parseErr == nil {
-				limit = parsed
-			}
-		}
-	}
-
-	// Clamp limit to reasonable bounds
-	if limit <= 0 {
-		limit = 3
-	}
-	if limit > 20 {
-		limit = 20
-	}
-
 	// Perform search using the provider
-	results, err := c.provider.Search(ctx, query, SearchOptions{
-		Limit: limit,
-	})
+	results, err := c.provider.Search(ctx, query, SearchOptions{})
 	if err != nil {
 		return "", fmt.Errorf("search failed: %w", err)
 	}
@@ -136,7 +107,7 @@ func (c *Client) handleRAGSearch(ctx context.Context, args map[string]interface{
 		}
 
 		// Add content
-		response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
+		//response.WriteString(fmt.Sprintf("Content: %s\n", result.Content))
 
 		// Add highlights if available
 		if len(result.Highlights) > 0 {

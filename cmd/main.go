@@ -549,22 +549,32 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 			discoveredTools = make(map[string]mcp.ToolInfo)
 		}
 
-		// Manually add RAG tools since we'll create the client in the Slack package
-		discoveredTools["rag_search"] = mcp.ToolInfo{
-			ToolName:        "rag_search",
-			ToolDescription: "Search the RAG knowledge base for relevant information",
-			InputSchema: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]interface{}{
-						"type":        "string",
-						"description": "The search query to find relevant information",
-					},
-					"limit": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum number of results to return (default: 5, max: 20)",
-						"minimum":     1,
-						"maximum":     20,
+		// Only set database_path for providers that need it
+		if ragProviderType == "simple" {
+			if ragConfig["database_path"] == nil {
+				ragConfig["database_path"] = ragDatabase
+			}
+		}
+
+		logger.Info("Using RAG provider: %s", ragProviderType)
+
+		ragClient, err := rag.NewClientWithProvider(ragProviderType, ragConfig)
+		if err != nil {
+			logger.Error("Failed to create RAG client: %v", err)
+			logger.Info("RAG will be disabled")
+		} else {
+			// Create tool info using the RAG client
+			ragToolInfo := mcp.ToolInfo{
+				ServerName:      "rag_search",
+				ToolName:        "rag_search",
+				ToolDescription: "Search knowledge base for relevant context",
+				InputSchema: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "Search query for knowledge base",
+						},
 					},
 				},
 				"required": []string{"query"},
