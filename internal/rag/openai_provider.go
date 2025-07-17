@@ -30,9 +30,12 @@ type OpenAIProvider struct {
 
 // NewOpenAIProvider creates a new OpenAI vector provider instance
 func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
+	defaultMaxResults := int64(20)
+	defaultScoreThreshold := float64(0.5)
+
 	cfg := OpenAIConfig{
-		MaxResults:      20,
-		ScoreThreshold:  0.5,
+		MaxResults:      defaultMaxResults,
+		ScoreThreshold:  defaultScoreThreshold,
 		VectorStoreName: "Knowledge Base",
 	}
 
@@ -62,6 +65,8 @@ func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 
 	if maxResults, ok := config["max_results"].(float64); ok {
 		cfg.MaxResults = int64(maxResults)
+	} else if maxResultsInt, ok := config["max_results"].(int); ok {
+		cfg.MaxResults = int64(maxResultsInt)
 	}
 
 	// Create OpenAI client
@@ -240,12 +245,12 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 
 	// Set up search parameters
 	limit := o.config.MaxResults
-	if o.config.MaxResults < 0 {
+	if o.config.MaxResults <= 0 {
 		limit = 20
 	}
 
 	scoreThreshold := o.config.ScoreThreshold
-	if scoreThreshold < 0 {
+	if scoreThreshold <= 0 {
 		scoreThreshold = 0.1
 	}
 
