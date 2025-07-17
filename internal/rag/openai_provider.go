@@ -251,7 +251,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 
 	scoreThreshold := o.config.ScoreThreshold
 	if scoreThreshold <= 0 {
-		scoreThreshold = 0.1
+		scoreThreshold = 0.5 // Use the default value defined in OpenAIConfig
 	}
 
 	// Use OpenAI's Vector Store Search API with proper union type
