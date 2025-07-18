@@ -559,8 +559,8 @@ func (b *LLMMCPBridge) CallLLM(providerName, prompt, contextHistory string) (*ll
 	options := llm.ProviderOptions{
 		// Model: Let the provider use its configured default or handle overrides if needed.
 		// Model: c.cfg.OpenAIModelName, // Example: If you still want a global default hint
-		Temperature: 0.7,  // Consider making configurable
-		MaxTokens:   2048, // Consider making configurable
+		Temperature: 0.4,   // Consider making configurable
+		MaxTokens:   10240, // Consider making configurable
 	}
 
 	if !b.useNativeTools {
