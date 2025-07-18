@@ -21,6 +21,9 @@ type OpenAIConfig struct {
 	MaxResults           int64   // Default: 20
 	ScoreThreshold       float64 // Default: 0.5
 	VectorStoreNameRegex string  // Regex for the vector store name
+	RewriteQuery         bool    // Whether to rewrite the query
+	VsMetadataKey        string  // Key for the vector store metadata
+	VsMetadataValue      string  // Value for the vector store metadata
 }
 
 // OpenAIProvider implements VectorProvider using OpenAI's VectorStore API with 2025 updates
@@ -73,6 +76,18 @@ func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 		cfg.MaxResults = int64(maxResults)
 	} else if maxResultsInt, ok := config["max_results"].(int); ok {
 		cfg.MaxResults = int64(maxResultsInt)
+	}
+
+	if rewriteQuery, ok := config["rewrite_query"].(bool); ok {
+		cfg.RewriteQuery = rewriteQuery
+	}
+
+	if vsMetadataKey, ok := config["vs_metadata_key"].(string); ok {
+		cfg.VsMetadataKey = vsMetadataKey
+	}
+
+	if vsMetadataValue, ok := config["vs_metadata_value"].(string); ok {
+		cfg.VsMetadataValue = vsMetadataValue
 	}
 
 	// Create OpenAI client
@@ -259,7 +274,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 				return nil, fmt.Errorf("invalid vector store name regex: %w", err)
 			}
 			for _, vs := range vectorStores.Data {
-				if re.MatchString(vs.Name) {
+				if re.MatchString(vs.Name) && vs.Metadata[o.config.VsMetadataKey] == o.config.VsMetadataValue {
 					o.vectorStoreID = vs.ID
 					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, o.vectorStoreID)
 					break
@@ -288,6 +303,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 			OfString: openai.String(query),
 		},
 		MaxNumResults: openai.Int(limit),
+		RewriteQuery:  openai.Bool(o.config.RewriteQuery),
 		RankingOptions: openai.VectorStoreSearchParamsRankingOptions{
 			ScoreThreshold: openai.Float(scoreThreshold),
 			Ranker:         "auto",
