@@ -21,6 +21,12 @@ type AccessController struct {
 
 // NewAccessController creates a new AccessController instance
 func NewAccessController(config *SecurityConfig, logger *logging.Logger) *AccessController {
+	if config == nil {
+		panic("security config cannot be nil")
+	}
+	if logger == nil {
+		panic("logger cannot be nil")
+	}
 	return &AccessController{
 		config: config,
 		logger: logger,
