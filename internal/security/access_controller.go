@@ -118,23 +118,29 @@ func (ac *AccessController) logAccessAttempt(userID, channelID string, decision 
 		return
 	}
 
-	logLevel := "INFO"
-	if !decision.Allowed {
-		logLevel = "WARN"
-	}
-
 	logMessage := fmt.Sprintf("Access %s", map[bool]string{true: "granted", false: "denied"}[decision.Allowed])
 
-	ac.logger.InfoKV(
-		logMessage,
-		"level", logLevel,
-		"user_id", userID,
-		"channel_id", channelID,
-		"allowed", decision.Allowed,
-		"reason", decision.Reason,
-		"security_enabled", ac.config.Enabled,
-		"strict_mode", ac.config.StrictMode,
-	)
+	if decision.Allowed {
+		ac.logger.InfoKV(
+			logMessage,
+			"user_id", userID,
+			"channel_id", channelID,
+			"allowed", decision.Allowed,
+			"reason", decision.Reason,
+			"security_enabled", ac.config.Enabled,
+			"strict_mode", ac.config.StrictMode,
+		)
+	} else {
+		ac.logger.WarnKV(
+			logMessage,
+			"user_id", userID,
+			"channel_id", channelID,
+			"allowed", decision.Allowed,
+			"reason", decision.Reason,
+			"security_enabled", ac.config.Enabled,
+			"strict_mode", ac.config.StrictMode,
+		)
+	}
 }
 
 // GetRejectionMessage returns the configured rejection message
