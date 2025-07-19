@@ -66,8 +66,6 @@ jobs:
           only-new-issues: true
           install-mode: binary
           skip-cache: false
-          skip-pkg-cache: true
-          skip-build-cache: true
 
       - name: Check formatting
         run: |
@@ -152,7 +150,7 @@ jobs:
       - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.txt
+          files: ./coverage.txt
           flags: unittests
           fail_ci_if_error: false
 
@@ -176,4 +174,4 @@ jobs:
           cache: true
 
       - name: Build
-        run: go build -v ./... 
+        run: go build -v ./...
