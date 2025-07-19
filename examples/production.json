@@ -1,0 +1,69 @@
+{
+  "$schema": "../schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "useAgent": true,
+    "customPrompt": "You are a production DevOps assistant. Focus on operational excellence, security, and reliability.",
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.3,
+        "maxTokens": 2000
+      },
+      "anthropic": {
+        "model": "claude-3-5-sonnet-20241022",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "temperature": 0.3
+      }
+    }
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+      "initializeTimeoutSeconds": 60,
+      "tools": {
+        "allowList": ["read_file", "list_directory"],
+        "blockList": ["delete_file", "write_file"]
+      }
+    },
+    "kubernetes": {
+      "command": "kubectl-mcp-server",
+      "args": ["--context", "production"],
+      "transport": "stdio",
+      "tools": {
+        "allowList": ["get_pods", "get_services", "describe_pod", "get_logs"]
+      }
+    },
+    "monitoring": {
+      "url": "https://monitoring.company.com/mcp",
+      "transport": "sse",
+      "tools": {
+        "allowList": ["get_metrics", "get_alerts", "get_dashboards"]
+      }
+    }
+  },
+  "rag": {
+    "enabled": true,
+    "provider": "openai",
+    "chunkSize": 1500,
+    "providers": {
+      "openai": {
+        "indexName": "production-knowledge-base",
+        "dimensions": 1536
+      }
+    }
+  },
+  "monitoring": {
+    "enabled": true,
+    "metricsPort": 8080,
+    "loggingLevel": "info"
+  }
+}

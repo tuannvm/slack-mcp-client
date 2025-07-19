@@ -1,0 +1,46 @@
+{
+  "$schema": "../schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "customPrompt": "You are a development assistant. Help with coding tasks and debugging.",
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.7
+      },
+      "ollama": {
+        "model": "llama3",
+        "baseUrl": "http://localhost:11434",
+        "temperature": 0.7
+      }
+    }
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+      "tools": {
+        "allowList": ["read_file", "write_file", "list_directory"]
+      }
+    },
+    "git": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git", "."],
+      "tools": {
+        "allowList": ["git_status", "git_diff", "git_log"]
+      }
+    }
+  },
+  "monitoring": {
+    "enabled": true,
+    "metricsPort": 8080,
+    "loggingLevel": "debug"
+  }
+}

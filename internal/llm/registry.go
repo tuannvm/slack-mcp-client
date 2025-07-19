@@ -43,25 +43,20 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 	}
 
 	// Iterate through the providers defined in the configuration
-	for name, providerConfig := range cfg.LLMProviders {
+	for name, providerConfig := range cfg.LLM.Providers {
 		registryLogger.DebugKV("Attempting to initialize provider", "name", name)
-
-		// Ensure all providers use LangChain
-		langchainConfig := make(map[string]interface{})
-		for k, v := range providerConfig {
-			langchainConfig[k] = v
+		langchainConfig := map[string]interface{}{
+			"model":       providerConfig.Model,
+			"api_key":     providerConfig.APIKey,
+			"base_url":    providerConfig.BaseURL,
+			"temperature": providerConfig.Temperature,
+			"max_tokens":  providerConfig.MaxTokens,
 		}
-
-		// Use the LangChain factory we already retrieved
-
-		// Create the provider instance using the LangChain factory
 		providerInstance, err := langchainFactory(langchainConfig, logger)
 		if err != nil {
 			registryLogger.ErrorKV("Failed to initialize LangChain provider", "provider_name", name, "error", err)
 			continue
 		}
-
-		// Store the initialized provider
 		r.providers[name] = providerInstance
 		initializedProviders++
 		registryLogger.InfoKV("Successfully initialized and registered LLM provider through LangChain", "name", name)
@@ -73,13 +68,13 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 	}
 
 	// Set the primary provider from the configuration
-	if cfg.LLMProvider != "" {
-		if _, exists := r.providers[cfg.LLMProvider]; exists {
-			r.primary = cfg.LLMProvider
+	if cfg.LLM.Provider != "" {
+		if _, exists := r.providers[cfg.LLM.Provider]; exists {
+			r.primary = cfg.LLM.Provider
 			registryLogger.InfoKV("Set primary LLM provider", "name", r.primary)
 		} else {
 			// Primary provider specified in config was not successfully initialized
-			registryLogger.ErrorKV("Primary LLM provider specified in config could not be initialized or found", "configured_primary", cfg.LLMProvider)
+			registryLogger.ErrorKV("Primary LLM provider specified in config could not be initialized or found", "configured_primary", cfg.LLM.Provider)
 
 			// Default to OpenAI if the specified provider is not available
 			if _, exists := r.providers[ProviderTypeOpenAI]; exists {
