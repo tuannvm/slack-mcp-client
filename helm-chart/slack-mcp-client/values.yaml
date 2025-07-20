@@ -47,19 +47,33 @@ env:
   MCP_MODE: "sse"
   LOG_LEVEL: "info"
 
-# Config file (mcp-servers.json)
+# Config file (config.json)
 configMap:
   create: false
   data: {}
   #data:
-  #  mcp-servers.json: |
+  #  config.json: |
   #    {
+  #      "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+  #      "version": "2.0",
+  #      "slack": {
+  #        "botToken": "${SLACK_BOT_TOKEN}",
+  #        "appToken": "${SLACK_APP_TOKEN}"
+  #      },
+  #      "llm": {
+  #        "provider": "openai",
+  #        "providers": {
+  #          "openai": {
+  #            "model": "gpt-4o",
+  #            "apiKey": "${OPENAI_API_KEY}"
+  #          }
+  #        }
+  #      },
   #      "mcpServers": {
   #        "kubernetes": {
-  #          "type": "stdio",
   #          "command": "npx",
   #          "args": ["mcp-server-kubernetes"],
-  #          "initialize_timeout_seconds": 30
+  #          "initializeTimeoutSeconds": 30
   #        }
   #      }
   #    }

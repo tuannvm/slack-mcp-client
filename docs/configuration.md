@@ -6,6 +6,12 @@ This document provides comprehensive configuration guidance for the Slack MCP Cl
 
 The Slack MCP Client has evolved from a simple MCP server connector to a comprehensive LLM orchestration platform. This guide outlines the unified configuration approach that prioritizes simplicity, DRY principles, and excellent user experience.
 
+### Naming Convention
+
+Configuration files use **camelCase** naming for JSON fields (e.g., `botToken`, `mcpServers`, `useNativeTools`). This follows modern JSON API conventions and provides better IDE support with the included JSON schema.
+
+> **Note**: The application automatically detects and converts legacy snake_case configurations for backward compatibility.
+
 ## Configuration Architecture
 
 ### Philosophy: Single File, Logical Sections
@@ -19,15 +25,24 @@ Instead of multiple configuration files that create cognitive overhead, use a **
 config.json                     # Single configuration file
 custom-prompt.txt               # Optional custom prompt file
 ├── examples/
-│   ├── config.json.example     # Complete example
-│   ├── minimal.json.example    # Minimal setup
-│   ├── development.json.example # Development config
-│   └── custom-prompt.txt.example # Custom prompt example
+│   ├── minimal.json            # Minimal setup example
+│   ├── development.json        # Development config example
+│   ├── production.json         # Production config example
+│   └── custom-prompt.txt       # Custom prompt example
 ├── schema/
-│   └── config-schema.json      # Single schema file
-└── migrations/
-    └── migrate-v1-to-v2.go     # Migration utility
+│   └── config-schema.json      # JSON schema for validation
+└── scripts/
+    └── migrate-config.sh       # Migration utility
 ```
+
+### JSON Schema Support
+
+The configuration includes comprehensive JSON schema support for enhanced developer experience:
+
+- **Schema Reference**: Include `"$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json"` for IDE support
+- **Autocomplete**: IDEs provide intelligent autocomplete for configuration fields
+- **Validation**: Real-time validation of field types, required fields, and value constraints
+- **Documentation**: Inline field descriptions and examples
 
 ## Complete Configuration Reference
 
@@ -35,39 +50,39 @@ Below is the complete configuration schema showing all available options. Fields
 
 ```json
 {
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
   "version": "2.0",                                    // ⭐ Required
   "slack": {
-    "bot_token": "${SLACK_BOT_TOKEN}",                // ⭐ Required
-    "app_token": "${SLACK_APP_TOKEN}",                // ⭐ Required
-    "use_stdio_client": false                         // ⚙️ Default: false
+    "botToken": "${SLACK_BOT_TOKEN}",                 // ⭐ Required
+    "appToken": "${SLACK_APP_TOKEN}"                  // ⭐ Required
   },
   "llm": {
     "provider": "openai",                             // ⚙️ Default: "openai"
-    "use_native_tools": false,                        // ⚙️ Default: false
-    "use_agent": false,                               // ⚙️ Default: false
-    "custom_prompt": "You are a helpful assistant.",  // 🔧 Optional
-    "custom_prompt_file": "custom-prompt.txt",        // 🔧 Optional
-    "replace_tool_prompt": false,                     // ⚙️ Default: false
+    "useNativeTools": false,                          // ⚙️ Default: false
+    "useAgent": false,                                // ⚙️ Default: false
+    "customPrompt": "You are a helpful assistant.",   // 🔧 Optional
+    "customPromptFile": "custom-prompt.txt",          // 🔧 Optional
+    "replaceToolPrompt": false,                       // ⚙️ Default: false
     "providers": {
       "openai": {
         "model": "gpt-4o",                            // ⚙️ Default: "gpt-4o"
-        "api_key": "${OPENAI_API_KEY}",               // ⭐ Required if using OpenAI
+        "apiKey": "${OPENAI_API_KEY}",                // ⭐ Required if using OpenAI
         "temperature": 0.7,                           // ⚙️ Default: 0.7
-        "max_tokens": 2000                            // 🔧 Optional
+        "maxTokens": 2000                             // 🔧 Optional
       },
       "anthropic": {
         "model": "claude-3-5-sonnet-20241022",        // ⚙️ Default: "claude-3-5-sonnet-20241022"
-        "api_key": "${ANTHROPIC_API_KEY}",            // ⭐ Required if using Anthropic
+        "apiKey": "${ANTHROPIC_API_KEY}",             // ⭐ Required if using Anthropic
         "temperature": 0.7                            // ⚙️ Default: 0.7
       },
       "ollama": {
         "model": "llama3",                            // ⚙️ Default: "llama3"
-        "base_url": "http://localhost:11434",         // ⚙️ Default: "http://localhost:11434"
+        "baseUrl": "http://localhost:11434",          // ⚙️ Default: "http://localhost:11434"
         "temperature": 0.7                            // ⚙️ Default: 0.7
       }
     }
   },
-  "mcp_servers": {
+  "mcpServers": {
     "server-name": {
       "command": "npx",                               // 🔧 Optional (required if not using url)
       "args": ["-y", "@modelcontextprotocol/server"], // 🔧 Optional
@@ -77,31 +92,31 @@ Below is the complete configuration schema showing all available options. Fields
         "DEBUG": "true"
       },
       "disabled": false,                              // ⚙️ Default: false
-      "initialize_timeout_seconds": 30,               // ⚙️ Default: 30
+      "initializeTimeoutSeconds": 30,                 // ⚙️ Default: 30
       "tools": {
-        "allow_list": ["tool1", "tool2"],             // 🔧 Optional
-        "block_list": ["dangerous_tool"]              // 🔧 Optional
+        "allowList": ["tool1", "tool2"],              // 🔧 Optional
+        "blockList": ["dangerous_tool"]               // 🔧 Optional
       }
     }
   },
   "rag": {
     "enabled": false,                                 // ⚙️ Default: false
     "provider": "simple",                             // ⚙️ Default: "simple"
-    "chunk_size": 1000,                               // ⚙️ Default: 1000
+    "chunkSize": 1000,                                // ⚙️ Default: 1000
     "providers": {
       "simple": {
-        "database_path": "./rag.db"                   // ⚙️ Default: "./rag.db"
+        "databasePath": "./rag.db"                    // ⚙️ Default: "./rag.db"
       },
       "openai": {
-        "index_name": "slack-mcp-rag",                // ⚙️ Default: "slack-mcp-rag"
+        "indexName": "slack-mcp-rag",                 // ⚙️ Default: "slack-mcp-rag"
         "dimensions": 1536                            // ⚙️ Default: 1536
       }
     }
   },
   "monitoring": {
     "enabled": true,                                  // ⚙️ Default: true
-    "metrics_port": 8080,                             // ⚙️ Default: 8080
-    "logging_level": "info"                           // ⚙️ Default: "info"
+    "metricsPort": 8080,                              // ⚙️ Default: 8080
+    "loggingLevel": "info"                            // ⚙️ Default: "info"
   }
 }
 ```
@@ -118,12 +133,13 @@ Below is the complete configuration schema showing all available options. Fields
 
 ```json
 {
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
   "version": "2.0",
   "slack": {
-    "bot_token": "${SLACK_BOT_TOKEN}",
-    "app_token": "${SLACK_APP_TOKEN}"
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
   },
-  "mcp_servers": {
+  "mcpServers": {
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
@@ -137,29 +153,30 @@ Below is the complete configuration schema showing all available options. Fields
 
 ```json
 {
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
   "version": "2.0",
   "slack": {
-    "bot_token": "${SLACK_BOT_TOKEN}",
-    "app_token": "${SLACK_APP_TOKEN}"
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
   },
   "llm": {
     "provider": "openai",
-    "use_native_tools": true,
-    "custom_prompt": "You are a DevOps assistant."
+    "useNativeTools": true,
+    "customPrompt": "You are a DevOps assistant."
   },
-  "mcp_servers": {
+  "mcpServers": {
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
       "tools": {
-        "allow_list": ["read_file", "write_file", "list_directory"]
+        "allowList": ["read_file", "write_file", "list_directory"]
       }
     },
     "api-server": {
       "url": "https://api.company.com/mcp",
       "transport": "sse",
       "tools": {
-        "allow_list": ["weather", "search"]
+        "allowList": ["weather", "search"]
       }
     }
   },
@@ -169,8 +186,8 @@ Below is the complete configuration schema showing all available options. Fields
   },
   "monitoring": {
     "enabled": true,
-    "metrics_port": 8080,
-    "logging_level": "info"
+    "metricsPort": 8080,
+    "loggingLevel": "info"
   }
 }
 ```
@@ -180,45 +197,46 @@ Below is the complete configuration schema showing all available options. Fields
 
 ```json
 {
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
   "version": "2.0",
   "slack": {
-    "bot_token": "${SLACK_BOT_TOKEN}",
-    "app_token": "${SLACK_APP_TOKEN}"
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
   },
   "llm": {
     "provider": "anthropic",
-    "use_native_tools": true,
-    "use_agent": true,
-    "custom_prompt_file": "custom-prompt.txt",
+    "useNativeTools": true,
+    "useAgent": true,
+    "customPromptFile": "custom-prompt.txt",
     "providers": {
       "openai": {
         "model": "gpt-4o",
-        "api_key": "${OPENAI_API_KEY}",
+        "apiKey": "${OPENAI_API_KEY}",
         "temperature": 0.7,
-        "max_tokens": 2000
+        "maxTokens": 2000
       },
       "anthropic": {
         "model": "claude-3-5-sonnet-20241022",
-        "api_key": "${ANTHROPIC_API_KEY}",
+        "apiKey": "${ANTHROPIC_API_KEY}",
         "temperature": 0.5
       },
       "ollama": {
         "model": "llama3.1:8b",
-        "base_url": "http://localhost:11434",
+        "baseUrl": "http://localhost:11434",
         "temperature": 0.8
       }
     }
   },
-  "mcp_servers": {
+  "mcpServers": {
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
       "env": {
         "DEBUG": "true"
       },
-      "initialize_timeout_seconds": 60,
+      "initializeTimeoutSeconds": 60,
       "tools": {
-        "block_list": ["delete_file"]
+        "blockList": ["delete_file"]
       }
     },
     "kubernetes": {
@@ -226,25 +244,25 @@ Below is the complete configuration schema showing all available options. Fields
       "args": ["--context", "production"],
       "transport": "stdio",
       "tools": {
-        "allow_list": ["get_pods", "get_services", "describe_pod"]
+        "allowList": ["get_pods", "get_services", "describe_pod"]
       }
     }
   },
   "rag": {
     "enabled": true,
     "provider": "openai",
-    "chunk_size": 1500,
+    "chunkSize": 1500,
     "providers": {
       "openai": {
-        "index_name": "company-knowledge-base",
+        "indexName": "company-knowledge-base",
         "dimensions": 1536
       }
     }
   },
   "monitoring": {
     "enabled": true,
-    "metrics_port": 8080,
-    "logging_level": "debug"
+    "metricsPort": 8080,
+    "loggingLevel": "debug"
   }
 }
 ```
@@ -327,7 +345,7 @@ In the "App Home" section:
 {
   "llm": {
     "provider": "openai",
-    "custom_prompt": "You are a helpful DevOps assistant focused on Kubernetes."
+    "customPrompt": "You are a helpful DevOps assistant focused on Kubernetes."
   }
 }
 ```
@@ -337,12 +355,12 @@ In the "App Home" section:
 {
   "llm": {
     "provider": "openai",
-    "custom_prompt_file": "custom-prompt.txt"
+    "customPromptFile": "custom-prompt.txt"
   }
 }
 ```
 
-**Priority**: `custom_prompt_file` takes precedence over `custom_prompt` if both are set
+**Priority**: `customPromptFile` takes precedence over `customPrompt` if both are set
 
 ## Kubernetes Deployment
 
@@ -369,14 +387,15 @@ configMap:
   data:
     config.json: |
       {
+        "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
         "version": "2.0",
         "slack": {
-          "bot_token": "${SLACK_BOT_TOKEN}",
-          "app_token": "${SLACK_APP_TOKEN}"
+          "botToken": "${SLACK_BOT_TOKEN}",
+          "appToken": "${SLACK_APP_TOKEN}"
         },
         "llm": {
           "provider": {{ .Values.app.config.llm.provider | quote }},
-          "custom_prompt": {{ .Values.app.config.llm.customPrompt | quote }}
+          "customPrompt": {{ .Values.app.config.llm.customPrompt | quote }}
         }
       }
 ```
@@ -423,11 +442,25 @@ The application validates configuration after loading environment variables and 
 
 ## Migration from Legacy Format
 
-If you're upgrading from the legacy `mcp-servers.json` format:
+The application supports both automatic detection and manual migration from legacy formats:
 
-1. **Automatic Migration**: Run `./slack-mcp-client --migrate-config`
+### Automatic Detection (Recommended)
+Legacy configurations are automatically detected and converted at runtime:
+- **Legacy `mcp-servers.json`**: Automatically detected by presence of `mcpServers` field without `version`, `slack`, or `llm` fields
+- **Snake_case format**: Legacy snake_case field names are automatically converted during loading
+- **No action required**: Existing configurations continue to work without changes
+
+### Manual Migration
+For permanent migration to the new format:
+
+1. **Automatic Migration**: Run `./slack-mcp-client --migrate-config --config legacy-config.json`
 2. **Manual Migration**: Use the provided examples as templates
 3. **Validation**: Test with `--config-validate` before deployment
+
+### Migration Benefits
+- **IDE Support**: JSON schema provides autocomplete and validation
+- **Modern Format**: camelCase follows current JSON API conventions
+- **Better Documentation**: Inline field descriptions via schema
 
 ## Troubleshooting
 
@@ -456,7 +489,7 @@ Enable debug logging for detailed troubleshooting:
 {
   "monitoring": {
     "enabled": true,
-    "logging_level": "debug"
+    "loggingLevel": "debug"
   }
 }
 ```

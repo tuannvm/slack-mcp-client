@@ -70,13 +70,21 @@ $ ./slack-mcp-client --rag-search "market demand" | wc -l
 
 ## 🎯 **Immediate Priorities**
 
-### **Quick Wins (Immediate)**
+### **Critical: Configuration Refactoring (Immediate)** 🚨
+**RAG Package Modernization** - Essential for maintainability and configuration consistency:
+- **Problem**: RAG uses legacy `map[string]interface{}` config while app uses structured `config.RAGConfig`
+- **Solution**: Refactor RAG package to use structured configuration directly
+- **Benefit**: Eliminates complexity, aligns with unified config architecture
+- **Risk**: Low - maintains backward compatibility with automatic migration
+- **Details**: See [RAG Refactoring Plan](./rag-refactoring-plan.md)
+
+### **Quick Wins (After Refactoring)**
 1. **Text file support** - Expand beyond PDF-only
 2. **Duplicate detection** - Content hashing to prevent re-ingestion
 3. **Better search scoring** - Word proximity and relevance ranking
 4. **Metadata filtering** - Search by file type, date, etc.
 
-### **Performance Fix (Next Priority)**  
+### **Performance Fix (Future Priority)**  
 **SQLite Migration** - The critical upgrade needed for real scalability:
 - **Problem**: Current 351KB JSON shows scalability cliff approaching
 - **Solution**: SQLite FTS5 provides enterprise-grade search performance  
@@ -119,9 +127,16 @@ $ ./slack-mcp-client --rag-search "market demand" | wc -l
 
 ## 🚀 **Next Steps**
 
-1. **Review Current Performance**: Monitor JSON file size and search latency
-2. **Plan SQLite Migration**: Review detailed implementation in [rag-sqlite.md](./rag-sqlite.md)
-3. **Implement Quick Wins**: Start with text file support and duplicate detection
+### **Phase 1: Configuration Refactoring (Immediate)**
+1. **Review Refactoring Plan**: Approve approach in [rag-refactoring-plan.md](./rag-refactoring-plan.md)
+2. **Implement Structured Config**: Update RAG package to use `config.RAGConfig` directly
+3. **Simplify Integration**: Remove MCP wrapper complexity, use direct integration
+4. **Test and Validate**: Ensure all existing functionality works with new architecture
+
+### **Phase 2: Feature Enhancement (After Refactoring)**
+1. **Implement Quick Wins**: Text file support, duplicate detection, better scoring
+2. **Monitor Performance**: Track JSON file size and search latency
+3. **Plan SQLite Migration**: Review detailed implementation in [rag-sqlite.md](./rag-sqlite.md)
 4. **Schedule Migration**: Plan SQLite upgrade when performance becomes critical
 
-**The current system works well but is approaching scalability limits. SQLite migration is the recommended next major upgrade for sustained growth.**
+**The current system works well but requires architectural alignment with the unified configuration system. RAG refactoring is the critical prerequisite for all future enhancements.**

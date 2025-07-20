@@ -9,14 +9,34 @@ data:
   {{- if .Values.configMap.data }}
   {{- toYaml .Values.configMap.data | nindent 2 }}
   {{- else }}
-  mcp-servers.json: |
+  config.json: |
     {
-      "mcpServers": {
-        "example-server": {
-          "command": "npx",
-          "args": ["-y", "@modelcontextprotocol/server-filesystem"],
-          "env": {}
+      "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+      "version": "2.0",
+      "slack": {
+        "botToken": "${SLACK_BOT_TOKEN}",
+        "appToken": "${SLACK_APP_TOKEN}"
+      },
+      "llm": {
+        "provider": "openai",
+        "providers": {
+          "openai": {
+            "model": "gpt-4o",
+            "apiKey": "${OPENAI_API_KEY}",
+            "temperature": 0.7
+          }
         }
+      },
+      "mcpServers": {
+        "filesystem": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"]
+        }
+      },
+      "monitoring": {
+        "enabled": true,
+        "metricsPort": 8080,
+        "loggingLevel": "info"
       }
     }
   {{- end }}

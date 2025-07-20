@@ -526,9 +526,7 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
-	// RAG integration temporarily disabled during config refactoring
-	// TODO: Re-implement RAG integration with new config structure
-	logger.Info("RAG integration temporarily disabled during config refactoring")
+	// RAG integration is handled in the Slack client initialization
 
 	var err error
 
