@@ -1,6 +1,8 @@
-# Slack MCP Client in Go
+# Slack MCP Client
 
-This project provides a Slack bot client that serves as a bridge between Slack and Model Context Protocol (MCP) servers. By leveraging Slack as the user interface, it allows LLM models to interact with multiple MCP servers using standardized MCP tools.
+**A production-ready bridge between Slack and AI models with full MCP compatibility.**
+
+This client enables AI models (OpenAI, Anthropic, Ollama) to interact with real tools and systems through Slack conversations. Built on the industry-standard Model Context Protocol (MCP), it provides secure access to filesystems, databases, Kubernetes clusters, Git repositories, and custom tools.
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/tuannvm/slack-mcp-client/build.yml?branch=main&label=CI%2FCD&logo=github)](https://github.com/tuannvm/slack-mcp-client/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/tuannvm/slack-mcp-client?logo=go)](https://github.com/tuannvm/slack-mcp-client/blob/main/go.mod)
@@ -9,11 +11,32 @@ This project provides a Slack bot client that serves as a bridge between Slack a
 [![GitHub Release](https://img.shields.io/github/v/release/tuannvm/slack-mcp-client?sort=semver)](https://github.com/tuannvm/slack-mcp-client/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Overview
+> **Compatible with MCP Specification 2025-06-18** - Compliant with the latest Model Context Protocol standards
 
-This project implements a Slack bot client that acts as a bridge between Slack and Model Context Protocol (MCP) servers. It uses Slack as a user interface while enabling LLM models to communicate with various MCP servers through standardized MCP tools.
+## Key Features
 
-Important distinction: This client is not designed to interact with the Slack API directly as its primary purpose. However, it can achieve Slack API functionality by connecting to a dedicated Slack MCP server (such as [modelcontextprotocol/servers/slack](https://github.com/modelcontextprotocol/servers/tree/main/src/slack)) alongside other MCP servers.
+- **Universal MCP Compatibility** - Supports all transport methods (HTTP, SSE, stdio)
+- **Multi-Provider LLM Support** - OpenAI GPT-4o, Anthropic Claude, Ollama local models
+- **Agent Mode** - Multi-step reasoning with LangChain for complex workflows
+- **RAG Integration** - Knowledge base with semantic search capabilities
+- **Production Ready** - Comprehensive configuration, monitoring, and security
+
+## Use Cases
+
+- **DevOps Teams** - Infrastructure automation and monitoring through Slack
+- **Development Teams** - Code review, Git operations, and file management
+- **Support Teams** - Database queries, system status checks, and troubleshooting
+- **General Use** - AI assistance with actual tools and system integration
+
+## MCP Compatibility
+
+**Compliant with the official Model Context Protocol (2025-06-18 specification):**
+
+- **All Transport Methods** - HTTP, SSE, and stdio protocols
+- **JSON-RPC 2.0** - Standard communication protocol
+- **Official MCP Servers** - Compatible with all [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
+- **Custom MCP Servers** - Works with any MCP-compliant server
+- **Security Standards** - Implements user consent, data privacy, and tool safety requirements
 
 ## How It Works
 
