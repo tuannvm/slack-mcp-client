@@ -1,6 +1,8 @@
-# Slack MCP Client in Go
+# Slack MCP Client
 
-This project provides a Slack bot client that serves as a bridge between Slack and Model Context Protocol (MCP) servers. By leveraging Slack as the user interface, it allows LLM models to interact with multiple MCP servers using standardized MCP tools.
+**A production-ready bridge between Slack and AI models with full MCP compatibility.**
+
+This client enables AI models (OpenAI, Anthropic, Ollama) to interact with real tools and systems through Slack conversations. Built on the industry-standard Model Context Protocol (MCP), it provides secure access to filesystems, databases, Kubernetes clusters, Git repositories, and custom tools.
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/tuannvm/slack-mcp-client/build.yml?branch=main&label=CI%2FCD&logo=github)](https://github.com/tuannvm/slack-mcp-client/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/tuannvm/slack-mcp-client?logo=go)](https://github.com/tuannvm/slack-mcp-client/blob/main/go.mod)
@@ -9,51 +11,111 @@ This project provides a Slack bot client that serves as a bridge between Slack a
 [![GitHub Release](https://img.shields.io/github/v/release/tuannvm/slack-mcp-client?sort=semver)](https://github.com/tuannvm/slack-mcp-client/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Overview
+> **Compatible with MCP Specification 2025-06-18** - Compliant with the latest Model Context Protocol standards
 
-This project implements a Slack bot client that acts as a bridge between Slack and Model Context Protocol (MCP) servers. It uses Slack as a user interface while enabling LLM models to communicate with various MCP servers through standardized MCP tools.
+## Key Features
 
-Important distinction: This client is not designed to interact with the Slack API directly as its primary purpose. However, it can achieve Slack API functionality by connecting to a dedicated Slack MCP server (such as [modelcontextprotocol/servers/slack](https://github.com/modelcontextprotocol/servers/tree/main/src/slack)) alongside other MCP servers.
+- **Universal MCP Compatibility** - Supports all transport methods (HTTP, SSE, stdio)
+- **Multi-Provider LLM Support** - OpenAI GPT-4o, Anthropic Claude, Ollama local models
+- **Agent Mode** - Multi-step reasoning with LangChain for complex workflows
+- **RAG Integration** - Knowledge base with semantic search capabilities
+- **Production Ready** - Comprehensive configuration, monitoring, and security
+
+## Use Cases
+
+- **DevOps Teams** - Infrastructure automation and monitoring through Slack
+- **Development Teams** - Code review, Git operations, and file management
+- **Support Teams** - Database queries, system status checks, and troubleshooting
+- **General Use** - AI assistance with actual tools and system integration
+
+## MCP Compatibility
+
+**Compliant with the official Model Context Protocol (2025-06-18 specification):**
+
+- **All Transport Methods** - HTTP, SSE, and stdio protocols
+- **JSON-RPC 2.0** - Standard communication protocol
+- **Official MCP Servers** - Compatible with all [modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
+- **Custom MCP Servers** - Works with any MCP-compliant server
+- **Security Standards** - Implements user consent, data privacy, and tool safety requirements
 
 ## How It Works
 
 ![Image](https://github.com/user-attachments/assets/48a587e4-7895-4a6f-9745-61b21894c34c)
 
 ```mermaid
-flowchart LR
-    User([User]) --> SlackBot
+flowchart TB
+    User([👤 User]) --> Slack{🔗 Slack Interface}
     
-    subgraph SlackBotService[Slack Bot Service]
-        SlackBot[Slack Bot] <--> MCPClient[MCP Client]
+    subgraph Core[🏗️ Core Architecture]
+        Slack --> Bridge[🌉 LLM-MCP Bridge<br/>Orchestration Layer]
+        
+        subgraph LLM[🤖 AI Processing]
+            Bridge --> LLMRegistry[LLM Provider Registry]
+            LLMRegistry --> OpenAI[OpenAI<br/>GPT-4o]
+            LLMRegistry --> Anthropic[Anthropic<br/>Claude]
+            LLMRegistry --> Ollama[Ollama<br/>Local Models]
+            
+            Bridge --> Agent{🎯 Agent Mode?}
+            Agent -->|Yes| LangChain[🔄 LangChain Agent<br/>Multi-step Reasoning]
+            Agent -->|No| Standard[⚡ Standard Mode<br/>Single Response]
+        end
+        
+        subgraph Knowledge[📚 Knowledge & Memory]
+            Bridge --> RAG[🧠 RAG System]
+            RAG --> SimpleRAG[📄 JSON Store<br/>Simple Documents]
+            RAG --> VectorRAG[🔍 OpenAI Vector Store<br/>Semantic Search]
+        end
+        
+        subgraph Tools[🛠️ Tool Ecosystem]
+            Bridge --> MCPManager[MCP Client Manager]
+            MCPManager --> FileSystem[📁 Filesystem<br/>Read/Write Files]
+            MCPManager --> Git[🌿 Git<br/>Repository Tools]
+            MCPManager --> Kubernetes[☸️ Kubernetes<br/>Cluster Management]
+            MCPManager --> Custom[🔧 Custom Tools<br/>HTTP/SSE/stdio]
+        end
     end
     
-
+    subgraph Infrastructure[⚙️ Infrastructure]
+        Config[📋 Unified Config<br/>JSON Schema]
+        Monitoring[📊 Monitoring<br/>Prometheus Metrics]
+        Logging[📝 Structured Logging<br/>Debug & Analytics]
+    end
     
-    MCPClient <--> MCPServer1[MCP Server 1]
-    MCPClient <--> MCPServer2[MCP Server 2]
-    MCPClient <--> MCPServer3[MCP Server 3]
+    Config -.-> Core
+    Core -.-> Monitoring
+    Core -.-> Logging
     
-    MCPServer1 <--> Tools1[(Tools)]
-    MCPServer2 <--> Tools2[(Tools)]
-    MCPServer3 <--> Tools3[(Tools)]
+    style Core fill:#F8F9FA,stroke:#6C757D,stroke-width:3px
+    style LLM fill:#E3F2FD,stroke:#1976D2,stroke-width:2px
+    style Knowledge fill:#E8F5E8,stroke:#388E3C,stroke-width:2px
+    style Tools fill:#FFF3E0,stroke:#F57C00,stroke-width:2px
+    style Infrastructure fill:#F3E5F5,stroke:#7B1FA2,stroke-width:2px
     
-    style SlackBotService fill:#F8F9F9,stroke:#333,stroke-width:2px
-    style SlackBot fill:#F4D03F,stroke:#333,stroke-width:2px
-    style MCPClient fill:#2ECC71,stroke:#333,stroke-width:2px
-    style MCPServer1 fill:#E74C3C,stroke:#333,stroke-width:2px
-    style MCPServer2 fill:#E74C3C,stroke:#333,stroke-width:2px
-    style MCPServer3 fill:#E74C3C,stroke:#333,stroke-width:2px
-    style Tools1 fill:#9B59B6,stroke:#333,stroke-width:2px
-    style Tools2 fill:#9B59B6,stroke:#333,stroke-width:2px
-    style Tools3 fill:#9B59B6,stroke:#333,stroke-width:2px
+    style User fill:#4CAF50,stroke:#2E7D32,stroke-width:2px,color:#fff
+    style Slack fill:#4A90E2,stroke:#1565C0,stroke-width:2px,color:#fff
+    style Bridge fill:#FF9800,stroke:#E65100,stroke-width:2px,color:#fff
+    style LangChain fill:#9C27B0,stroke:#4A148C,stroke-width:2px,color:#fff
+    style RAG fill:#2196F3,stroke:#0D47A1,stroke-width:2px,color:#fff
 ```
 
-1. **User** interacts only with Slack, sending messages through the Slack interface
-2. **Slack Bot Service** is a single process that includes:
-   - The Slack Bot component that handles Slack messages
-   - The MCP Client component that communicates with MCP servers
-3. The **MCP Client** forwards requests to the appropriate MCP Server(s)
-4. **MCP Servers** execute their respective tools and return results
+1. **User** interacts through Slack, sending messages that trigger intelligent AI workflows
+2. **LLM-MCP Bridge** serves as the intelligent orchestration layer that:
+   - Routes requests to appropriate LLM providers (OpenAI, Anthropic, Ollama)
+   - Chooses between Agent Mode (multi-step reasoning) or Standard Mode (single response)
+   - Integrates RAG system for knowledge retrieval and context enhancement
+   - Manages tool discovery and execution across multiple MCP servers
+3. **Knowledge & Memory** system provides contextual intelligence:
+   - Simple JSON store for lightweight document storage
+   - OpenAI Vector Store for semantic search and enterprise-grade RAG
+4. **Tool Ecosystem** connects to diverse external systems:
+   - Filesystem operations for file management
+   - Git integration for repository interactions  
+   - Kubernetes cluster management and monitoring
+   - Custom tools via HTTP, SSE, or stdio protocols
+5. **Infrastructure** ensures production-ready deployment:
+   - Unified JSON configuration with environment variable support
+   - Prometheus metrics for observability and monitoring
+   - Structured logging for debugging and analytics
 
 ## Features
 
@@ -65,41 +127,41 @@ flowchart LR
   - Uses Socket Mode for secure, firewall-friendly communication
   - Works with both channels and direct messages
   - Rich message formatting with Markdown and Block Kit
-  - Automatic conversion of quoted strings to code blocks for better readability
+  - Customizable bot behavior and message history
 - ✅ **Multi-Provider LLM Support**:
   - OpenAI (GPT-4, GPT-4o, etc.)
   - Anthropic (Claude 3.5 Sonnet, etc.) 
   - Ollama (Local LLMs like Llama, Mistral, etc.)
-  - Factory pattern for easy provider switching
+  - Native tool calling and agent mode support
   - LangChain gateway for unified API
 - ✅ **Agent Mode**:
   - Autonomous AI agents powered by LangChain
   - Multi-step reasoning and tool orchestration
-  - Automatic tool chaining for complex tasks
+  - Configurable agent iterations and behavior
   - Streaming responses with real-time updates
-  - Configurable system prompts and behavior
-- ✅ **Custom Prompt Engineering**: 
-  - System Prompts - Define custom AI assistant behavior and personality
+  - Advanced prompt engineering capabilities
 - ✅ **RAG (Retrieval-Augmented Generation)**: 
-  - LangChain Go Compatible - Drop-in replacement for standard vector stores
-  - Document Processing - PDF ingestion with intelligent chunking
-  - CLI Tools - Command-line utilities for document management
-  - Extensible Design - Easy to add SQLite, Redis, or vector embeddings
-- ✅ **Tool Registration**: Dynamically register and call MCP tools
-- ✅ **Configuration Management**:
-  - JSON-based MCP server configuration
-  - Environment variable support
-  - Multiple transport modes (HTTP/SSE, stdio)
+  - Multiple providers: Simple JSON storage, OpenAI Vector Store
+  - Reusable vector stores with `vectorStoreId` support
+  - Configurable search parameters and similarity metrics
+  - PDF ingestion with intelligent chunking
+  - CLI tools for document management
+- ✅ **Unified Configuration**:
+  - Single JSON configuration file with JSON schema validation
+  - Comprehensive timeout and retry configuration
+  - Environment variable substitution and overrides
+  - All underlying package options exposed
+  - Smart defaults with full customization capability
 - ✅ **Production Ready**:
-  - Docker container support
-  - Kubernetes Helm charts
+  - Docker container support with GHCR publishing
+  - Kubernetes Helm charts with OCI registry
   - Comprehensive logging and error handling
-  - 88%+ test coverage
+  - 88%+ test coverage with security scanning
 - ✅ **Monitoring & Observability**:
   - Prometheus metrics integration
   - Tool invocation tracking with error rates
-  - LLM token usage monitoring
-  - Configurable metrics endpoint
+  - LLM token usage monitoring by model and type
+  - Configurable metrics endpoint and logging levels
 
 ## Installation
 
@@ -144,18 +206,39 @@ EOL
 source .env
 ```
 
-2. Create an MCP servers configuration file:
+2. Create a unified configuration file:
 
 ```bash
-# Create mcp-servers.json in the current directory
-cat > mcp-servers.json << EOL
+# Create config.json with the new unified configuration format
+cat > config.json << EOL
 {
+  "\$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "\${SLACK_BOT_TOKEN}",
+    "appToken": "\${SLACK_APP_TOKEN}"
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "\${OPENAI_API_KEY}",
+        "temperature": 0.7
+      }
+    }
+  },
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$HOME"],
-      "env": {}
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "\$HOME"]
     }
+  },
+  "monitoring": {
+    "enabled": true,
+    "metricsPort": 8080,
+    "loggingLevel": "info"
   }
 }
 EOL
@@ -164,21 +247,41 @@ EOL
 3. Run the application:
 
 ```bash
-# Run with default settings (looks for mcp-servers.json in current directory)
-slack-mcp-client
+# Run with unified configuration (looks for config.json in current directory)
+slack-mcp-client --config config.json
 
-# Or specify a custom config file location
-slack-mcp-client --config /path/to/mcp-servers.json
+# Enable debug mode with structured logging
+slack-mcp-client --config config.json --debug
 
-# Enable debug mode
-slack-mcp-client --debug
+# Validate configuration before running
+slack-mcp-client --config-validate --config config.json
 
-# Specify OpenAI model
-slack-mcp-client --openai-model gpt-4o-mini
-
-# Configure metrics port
-slack-mcp-client --metrics-port 9090
+# Configure metrics port via config file or flag
+slack-mcp-client --config config.json --metrics-port 9090
 ```
+
+### Migrating from Legacy Configuration
+
+If you have an existing `mcp-servers.json` file from a previous version, you can migrate to the new unified configuration format:
+
+```bash
+# Automatic migration (recommended)
+slack-mcp-client --migrate-config --config legacy-mcp-servers.json --output config.json
+
+# Manual migration: Use examples as templates
+cp examples/minimal.json config.json
+# Edit config.json with your specific settings
+
+# Validate the new configuration
+slack-mcp-client --config-validate --config config.json
+```
+
+The new configuration format provides:
+- **Single File**: All settings in one `config.json` file
+- **JSON Schema**: IDE support with autocomplete and validation
+- **Environment Variables**: Use `${VAR_NAME}` syntax for secrets
+- **Smart Defaults**: Minimal configuration required for basic usage
+- **Comprehensive Options**: All underlying package settings exposed
 
 The application will connect to Slack and start listening for messages. You can check the logs for any errors or connection issues.
 
@@ -192,18 +295,35 @@ The client includes an improved RAG (Retrieval-Augmented Generation) system that
 
 ```json
 {
-  "llm_provider": "openai",
-  "llm_providers": {
-    "openai": {
-      "type": "openai", 
-      "model": "gpt-4o",
-      "rag_config": {
-        "enabled": true,
-        "provider": "json",
-        "database_path": "./knowledge.json",
-        "chunk_size": 1000,
-        "chunk_overlap": 200,
-        "max_results": 10
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}"
+      }
+    }
+  },
+  "rag": {
+    "enabled": true,
+    "provider": "simple",
+    "chunkSize": 1000,
+    "providers": {
+      "simple": {
+        "databasePath": "./knowledge.json"
+      },
+      "openai": {
+        "indexName": "my-knowledge-base",
+        "vectorStoreId": "vs_existing_store_id",
+        "dimensions": 1536,
+        "maxResults": 10
       }
     }
   }
@@ -278,17 +398,22 @@ Define prompts in your configuration:
 
 ```json
 {
-  "llm_provider": "openai",
-  "llm_providers": {
-    "openai": {
-      "type": "openai",
-      "model": "gpt-4o",
-      "system_prompt": "You are a helpful DevOps assistant specializing in Kubernetes and cloud infrastructure.",
-      "conversation_starters": [
-        "Help me debug a Kubernetes pod issue",
-        "Explain best practices for CI/CD pipelines", 
-        "Review my Dockerfile for optimization"
-      ]
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "customPrompt": "You are a helpful DevOps assistant specializing in Kubernetes and cloud infrastructure.",
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.7
+      }
     }
   }
 }
@@ -324,15 +449,24 @@ Enable Agent Mode in your configuration file:
 
 ```json
 {
-  "use_agent": true,
-  "use_native_tools": false,
-  "custom_prompt": "You are a DevOps expert specializing in Kubernetes and cloud infrastructure. Always think through problems step by step.",
-  "llm_provider": "langchain",
-  "llm_providers": {
-    "langchain": {
-      "type": "openai",
-      "model": "gpt-4o",
-      "agent_prompt_prefix": "You are a helpful assistant with access to various tools."
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "useAgent": true,
+    "customPrompt": "You are a DevOps expert specializing in Kubernetes and cloud infrastructure. Always think through problems step by step.",
+    "maxAgentIterations": 25,
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.7
+      }
     }
   },
   "mcpServers": {
@@ -344,7 +478,7 @@ Enable Agent Mode in your configuration file:
       "command": "github-mcp-server",
       "args": ["stdio"],
       "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
       }
     }
   }
@@ -353,10 +487,10 @@ Enable Agent Mode in your configuration file:
 
 #### Configuration Options
 
-- **`use_agent`**: Enable agent mode (default: false)
-- **`use_native_tools`**: Use native LangChain tools vs system prompt-based tools (default: false)
-- **`agent_prompt_prefix`**: Custom prompt prefix for agent initialization
-- **`custom_prompt`**: System prompt for agent behavior
+- **`llm.useAgent`**: Enable agent mode (default: false)
+- **`llm.useNativeTools`**: Use native LangChain tools vs system prompt-based tools (default: false)
+- **`llm.customPrompt`**: System prompt for agent behavior
+- **`llm.maxAgentIterations`**: Maximum agent reasoning steps (default: 20)
 
 #### Agent vs Standard Mode
 
@@ -686,35 +820,87 @@ curl http://localhost:8080/metrics
 slack-mcp-client --metrics-port 9090
 ```
 
-### MCP Server Configuration
+### Unified Configuration Format
 
-MCP servers are configured via a JSON configuration file (default: `mcp-servers.json`):
+All configuration is now managed through a single `config.json` file with comprehensive options:
 
 ```json
 {
+  "$schema": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}",
+    "messageHistory": 50,
+    "thinkingMessage": "Processing..."
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "useAgent": false,
+    "customPrompt": "You are a helpful assistant.",
+    "maxAgentIterations": 20,
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.7,
+        "maxTokens": 2000
+      },
+      "anthropic": {
+        "model": "claude-3-5-sonnet-20241022",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "temperature": 0.7
+      }
+    }
+  },
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"],
-      "env": {}
-    },
-    "github": {
-      "command": "github-mcp-server",
-      "args": ["stdio"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "your-token"
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+      "initializeTimeoutSeconds": 30,
+      "tools": {
+        "allowList": ["read_file", "write_file", "list_directory"],
+        "blockList": ["delete_file"]
       }
     },
     "web-api": {
-      "mode": "http",
       "url": "http://localhost:8080/mcp",
-      "initialize_timeout_seconds": 30
+      "transport": "sse",
+      "initializeTimeoutSeconds": 30
     }
+  },
+  "rag": {
+    "enabled": true,
+    "provider": "openai",
+    "chunkSize": 1000,
+    "providers": {
+      "openai": {
+        "vectorStoreId": "vs_existing_store_id",
+        "dimensions": 1536,
+        "maxResults": 10
+      }
+    }
+  },
+  "timeouts": {
+    "httpRequestTimeout": "30s",
+    "toolProcessingTimeout": "3m",
+    "mcpInitTimeout": "30s"
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "baseBackoff": "500ms",
+    "maxBackoff": "5s"
+  },
+  "monitoring": {
+    "enabled": true,
+    "metricsPort": 8080,
+    "loggingLevel": "info"
   }
 }
 ```
 
-For detailed configuration options, see the [Implementation Notes](docs/implementation.md).
+For detailed configuration options and migration guides, see the [Configuration Guide](docs/configuration.md).
 
 ## Slack-Formatted Output
 

@@ -1,0 +1,68 @@
+{
+  "$schema": "../schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}"
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "customPrompt": "You are a development assistant. Help with coding tasks and debugging.",
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.7
+      },
+      "anthropic": {
+        "model": "claude-3-5-sonnet-20241022",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "temperature": 0.7
+      },
+      "ollama": {
+        "model": "llama3",
+        "baseUrl": "http://localhost:11434",
+        "temperature": 0.7
+      }
+    }
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+      "tools": {
+        "allowList": ["read_file", "write_file", "list_directory"]
+      }
+    },
+    "git": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git", "."],
+      "tools": {
+        "allowList": ["git_status", "git_diff", "git_log"]
+      }
+    }
+  },
+  "rag": {
+    "enabled": true,
+    "provider": "simple",
+    "providers": {
+      "simple": {
+        "databasePath": "./dev-knowledge.json"
+      },
+      "openai": {
+        "indexName": "dev-knowledge-base",
+        "dimensions": 1536,
+        "maxResults": 5
+      }
+    }
+  },
+  "timeouts": {
+    "toolProcessingTimeout": "5m",
+    "mcpInitTimeout": "60s"
+  },
+  "retry": {
+    "maxAttempts": 5,
+    "mcpReconnectAttempts": 10
+  }
+}

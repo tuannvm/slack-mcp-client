@@ -1,0 +1,290 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/tuannvm/slack-mcp-client/schema/config-schema.json",
+  "title": "Slack MCP Client Configuration",
+  "description": "Configuration schema for the Slack MCP Client application",
+  "type": "object",
+  "required": ["version", "slack"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "2.0",
+      "description": "Configuration format version"
+    },
+    "slack": {
+      "type": "object",
+      "required": ["botToken", "appToken"],
+      "properties": {
+        "botToken": {
+          "type": "string",
+          "description": "Slack bot token (xoxb-*) or environment variable reference (${SLACK_BOT_TOKEN})",
+          "pattern": "^(xoxb-|\\$\\{[A-Z_]+\\}).*"
+        },
+        "appToken": {
+          "type": "string", 
+          "description": "Slack app token (xapp-*) or environment variable reference (${SLACK_APP_TOKEN})",
+          "pattern": "^(xapp-|\\$\\{[A-Z_]+\\}).*"
+        }
+      },
+      "additionalProperties": false
+    },
+    "llm": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": ["openai", "anthropic", "ollama"],
+          "default": "openai",
+          "description": "Primary LLM provider to use"
+        },
+        "useNativeTools": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use LangChain native tools instead of system prompt-based tools"
+        },
+        "useAgent": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable agent mode for multi-step reasoning"
+        },
+        "customPrompt": {
+          "type": "string",
+          "description": "Custom system prompt for the AI assistant"
+        },
+        "customPromptFile": {
+          "type": "string",
+          "description": "Path to file containing custom system prompt"
+        },
+        "replaceToolPrompt": {
+          "type": "boolean",
+          "default": false,
+          "description": "Replace default tool prompt entirely instead of prepending"
+        },
+        "providers": {
+          "type": "object",
+          "properties": {
+            "openai": {
+              "$ref": "#/$defs/llm_provider"
+            },
+            "anthropic": {
+              "$ref": "#/$defs/llm_provider"
+            },
+            "ollama": {
+              "$ref": "#/$defs/llm_provider"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcpServers": {
+      "type": "object",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "$ref": "#/$defs/mcp_server"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Map of MCP server configurations"
+    },
+    "rag": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable RAG (Retrieval-Augmented Generation) functionality"
+        },
+        "provider": {
+          "type": "string",
+          "enum": ["simple", "openai"],
+          "default": "simple",
+          "description": "RAG provider implementation to use"
+        },
+        "chunkSize": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 10000,
+          "default": 1000,
+          "description": "Size of text chunks for RAG processing"
+        },
+        "providers": {
+          "type": "object",
+          "properties": {
+            "simple": {
+              "$ref": "#/$defs/rag_simple_provider"
+            },
+            "openai": {
+              "$ref": "#/$defs/rag_openai_provider"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "monitoring": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable monitoring and metrics collection"
+        },
+        "metricsPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8080,
+          "description": "Port for Prometheus metrics endpoint"
+        },
+        "loggingLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"],
+          "default": "info",
+          "description": "Logging level for the application"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "llm_provider": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model name to use for this provider"
+        },
+        "apiKey": {
+          "type": "string",
+          "description": "API key or environment variable reference (${API_KEY_VAR})"
+        },
+        "baseUrl": {
+          "type": "string",
+          "format": "uri",
+          "description": "Base URL for the API (mainly for Ollama)"
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "default": 0.7,
+          "description": "Temperature setting for response randomness"
+        },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of tokens in response"
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp_server": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Command to execute for stdio transport"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments for the command"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "URL for HTTP/SSE transport"
+        },
+        "transport": {
+          "type": "string",
+          "enum": ["stdio", "sse", "http"],
+          "description": "Transport protocol (auto-detected if not specified)"
+        },
+        "env": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Z_][A-Z0-9_]*$": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Environment variables for the MCP server"
+        },
+        "disabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable this MCP server"
+        },
+        "initializeTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "default": 30,
+          "description": "Timeout for server initialization in seconds"
+        },
+        "tools": {
+          "$ref": "#/$defs/mcp_tools"
+        }
+      },
+      "oneOf": [
+        {"required": ["command"]},
+        {"required": ["url"]}
+      ],
+      "additionalProperties": false
+    },
+    "mcp_tools": {
+      "type": "object",
+      "properties": {
+        "allowList": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Only allow these tools (if specified, blocks all others)"
+        },
+        "blockList": {
+          "type": "array", 
+          "items": {
+            "type": "string"
+          },
+          "description": "Block these specific tools"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rag_simple_provider": {
+      "type": "object",
+      "properties": {
+        "databasePath": {
+          "type": "string",
+          "default": "./rag.db",
+          "description": "Path to the RAG database file"
+        }
+      },
+      "additionalProperties": false
+    },
+    "rag_openai_provider": {
+      "type": "object",
+      "properties": {
+        "indexName": {
+          "type": "string",
+          "default": "slack-mcp-rag",
+          "description": "Name of the OpenAI vector index"
+        },
+        "dimensions": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1536,
+          "description": "Vector dimensions for embeddings"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+} 
