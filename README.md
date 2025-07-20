@@ -43,10 +43,16 @@ This client enables AI models (OpenAI, Anthropic, Ollama) to interact with real 
 ![Image](https://github.com/user-attachments/assets/48a587e4-7895-4a6f-9745-61b21894c34c)
 
 ```mermaid
-flowchart TB
+flowchart LR
     User([👤 User]) --> Slack{🔗 Slack Interface}
+
+    subgraph Infrastructure[Observability]
+        Config[📋 Unified Config<br/>JSON Schema]
+        Monitoring[📊 Monitoring<br/>Prometheus Metrics]
+        Logging[📝 Structured Logging<br/>Debug & Analytics]
+    end
     
-    subgraph Core[🏗️ Core Architecture]
+    subgraph Core[Features]
         Slack --> Bridge[🌉 LLM-MCP Bridge<br/>Orchestration Layer]
         
         subgraph LLM[🤖 AI Processing]
@@ -66,20 +72,14 @@ flowchart TB
             RAG --> VectorRAG[🔍 OpenAI Vector Store<br/>Semantic Search]
         end
         
-        subgraph Tools[🛠️ Tool Ecosystem]
-            Bridge --> MCPManager[MCP Client Manager]
-            MCPManager --> FileSystem[📁 Filesystem<br/>Read/Write Files]
-            MCPManager --> Git[🌿 Git<br/>Repository Tools]
-            MCPManager --> Kubernetes[☸️ Kubernetes<br/>Cluster Management]
-            MCPManager --> Custom[🔧 Custom Tools<br/>HTTP/SSE/stdio]
+        subgraph Tools[🛠️ MCP Mode]
+            Bridge --> MCPManager[MCP Client]
+            MCPManager --> FileSystem[📁 Filesystem MCP Server<br/>Read/Write Files]
+            MCPManager --> Git[🌿 Git MCP Server <br/>Repository Tools]
+            MCPManager --> Kubernetes[☸️ Kubernetes MCP Server<br/>Cluster Management]
         end
     end
     
-    subgraph Infrastructure[⚙️ Infrastructure]
-        Config[📋 Unified Config<br/>JSON Schema]
-        Monitoring[📊 Monitoring<br/>Prometheus Metrics]
-        Logging[📝 Structured Logging<br/>Debug & Analytics]
-    end
     
     Config -.-> Core
     Core -.-> Monitoring
