@@ -99,10 +99,12 @@ type RAGConfig struct {
 
 // RAGProviderConfig contains RAG provider-specific settings
 type RAGProviderConfig struct {
-	DatabasePath     string `json:"databasePath,omitempty"`
-	IndexName        string `json:"indexName,omitempty"`
-	Dimensions       int    `json:"dimensions,omitempty"`
-	SimilarityMetric string `json:"similarityMetric,omitempty"`
+	DatabasePath     string `json:"databasePath,omitempty"`     // Simple provider: path to JSON database
+	IndexName        string `json:"indexName,omitempty"`        // OpenAI provider: vector store name
+	VectorStoreID    string `json:"vectorStoreId,omitempty"`    // OpenAI provider: existing vector store ID
+	Dimensions       int    `json:"dimensions,omitempty"`       // OpenAI provider: embedding dimensions
+	SimilarityMetric string `json:"similarityMetric,omitempty"` // OpenAI provider: similarity metric
+	MaxResults       int    `json:"maxResults,omitempty"`       // OpenAI provider: maximum search results
 }
 
 // MonitoringConfig contains monitoring and observability settings

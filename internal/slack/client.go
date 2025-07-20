@@ -19,6 +19,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/rag"
 )
 
 const thinkingMessage = "Thinking..."
@@ -78,6 +79,56 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	}
 
 	// Check if RAG client is available in config and add it
+	if cfg.RAG.Enabled {
+		clientLogger.InfoKV("RAG enabled, creating client for bridge integration", "provider", cfg.RAG.Provider)
+		
+		// Use the legacy API for now until we properly update the RAG package
+		// Convert structured config to legacy format
+		ragConfig := map[string]interface{}{
+			"provider": cfg.RAG.Provider,
+		}
+		
+		// Add provider-specific settings
+		if providerSettings, exists := cfg.RAG.Providers[cfg.RAG.Provider]; exists {
+			switch cfg.RAG.Provider {
+			case "simple":
+				ragConfig["database_path"] = providerSettings.DatabasePath
+			case "openai":
+				if providerSettings.IndexName != "" {
+					ragConfig["vector_store_name"] = providerSettings.IndexName
+				}
+				if providerSettings.VectorStoreID != "" {
+					ragConfig["vector_store_id"] = providerSettings.VectorStoreID
+				}
+				if providerSettings.Dimensions > 0 {
+					ragConfig["dimensions"] = providerSettings.Dimensions
+				}
+				if providerSettings.SimilarityMetric != "" {
+					ragConfig["similarity_metric"] = providerSettings.SimilarityMetric
+				}
+				if providerSettings.MaxResults > 0 {
+					ragConfig["max_results"] = providerSettings.MaxResults
+				}
+				// Add OpenAI API key from LLM config or environment
+				if openaiConfig, exists := cfg.LLM.Providers["openai"]; exists && openaiConfig.APIKey != "" {
+					ragConfig["api_key"] = openaiConfig.APIKey
+				}
+			}
+		}
+		
+		// Set chunk size
+		if cfg.RAG.ChunkSize > 0 {
+			ragConfig["chunk_size"] = cfg.RAG.ChunkSize
+		}
+		
+		ragClient, err := rag.NewClientWithProvider(cfg.RAG.Provider, ragConfig)
+		if err != nil {
+			clientLogger.ErrorKV("Failed to create RAG client", "error", err)
+		} else {
+			rawClientMap["rag"] = ragClient
+			clientLogger.DebugKV("Added RAG client to raw map for bridge", "name", "rag")
+		}
+	}
 
 	logLevel := getLogLevel(stdLogger)
 

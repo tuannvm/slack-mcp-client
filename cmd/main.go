@@ -526,7 +526,71 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
-	// RAG integration is handled in the Slack client initialization
+	// Initialize RAG client if enabled and add tools to discoveredTools
+	// The actual RAG client will be created in the Slack client where it gets added to the bridge
+	if cfg.RAG.Enabled {
+		logger.InfoKV("RAG enabled, preparing tools for bridge integration", "provider", cfg.RAG.Provider)
+		
+		// Add RAG tools to discoveredTools for bridge integration
+		if discoveredTools == nil {
+			discoveredTools = make(map[string]mcp.ToolInfo)
+		}
+		
+		// Manually add RAG tools since we'll create the client in the Slack package
+		discoveredTools["rag_search"] = mcp.ToolInfo{
+			ToolName:        "rag_search",
+			ToolDescription: "Search the RAG knowledge base for relevant information",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "The search query to find relevant information",
+					},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum number of results to return (default: 5, max: 20)",
+						"minimum":     1,
+						"maximum":     20,
+					},
+				},
+				"required": []string{"query"},
+			},
+			ServerName: "rag", // Internal RAG server identifier
+		}
+		discoveredTools["rag_ingest"] = mcp.ToolInfo{
+			ToolName:        "rag_ingest",
+			ToolDescription: "Ingest a file into the RAG knowledge base",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the file to ingest",
+					},
+					"metadata": map[string]interface{}{
+						"type":        "object",
+						"description": "Optional metadata for the file",
+					},
+				},
+				"required": []string{"file_path"},
+			},
+			ServerName: "rag", // Internal RAG server identifier
+		}
+		discoveredTools["rag_stats"] = mcp.ToolInfo{
+			ToolName:        "rag_stats",
+			ToolDescription: "Get statistics about the RAG knowledge base",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+			ServerName: "rag", // Internal RAG server identifier
+		}
+		
+		logger.InfoKV("Added RAG tools to available tools", "tool_count", 3)
+	} else {
+		logger.Info("RAG integration disabled in configuration")
+	}
 
 	var err error
 
