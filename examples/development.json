@@ -15,6 +15,11 @@
         "apiKey": "${OPENAI_API_KEY}",
         "temperature": 0.7
       },
+      "anthropic": {
+        "model": "claude-3-5-sonnet-20241022",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "temperature": 0.7
+      },
       "ollama": {
         "model": "llama3",
         "baseUrl": "http://localhost:11434",
@@ -38,9 +43,26 @@
       }
     }
   },
-  "monitoring": {
+  "rag": {
     "enabled": true,
-    "metricsPort": 8080,
-    "loggingLevel": "debug"
+    "provider": "simple",
+    "providers": {
+      "simple": {
+        "databasePath": "./dev-knowledge.json"
+      },
+      "openai": {
+        "indexName": "dev-knowledge-base",
+        "dimensions": 1536,
+        "maxResults": 5
+      }
+    }
+  },
+  "timeouts": {
+    "toolProcessingTimeout": "5m",
+    "mcpInitTimeout": "60s"
+  },
+  "retry": {
+    "maxAttempts": 5,
+    "mcpReconnectAttempts": 10
   }
 }

@@ -54,7 +54,9 @@ Below is the complete configuration schema showing all available options. Fields
   "version": "2.0",                                    // ⭐ Required
   "slack": {
     "botToken": "${SLACK_BOT_TOKEN}",                 // ⭐ Required
-    "appToken": "${SLACK_APP_TOKEN}"                  // ⭐ Required
+    "appToken": "${SLACK_APP_TOKEN}",                 // ⭐ Required
+    "messageHistory": 50,                             // ⚙️ Default: 50 messages per channel
+    "thinkingMessage": "Thinking..."                  // ⚙️ Default: "Thinking..."
   },
   "llm": {
     "provider": "openai",                             // ⚙️ Default: "openai"
@@ -63,6 +65,7 @@ Below is the complete configuration schema showing all available options. Fields
     "customPrompt": "You are a helpful assistant.",   // 🔧 Optional
     "customPromptFile": "custom-prompt.txt",          // 🔧 Optional
     "replaceToolPrompt": false,                       // ⚙️ Default: false
+    "maxAgentIterations": 20,                         // ⚙️ Default: 20 iterations
     "providers": {
       "openai": {
         "model": "gpt-4o",                            // ⚙️ Default: "gpt-4o"
@@ -109,9 +112,27 @@ Below is the complete configuration schema showing all available options. Fields
       },
       "openai": {
         "indexName": "slack-mcp-rag",                 // ⚙️ Default: "slack-mcp-rag"
-        "dimensions": 1536                            // ⚙️ Default: 1536
+        "vectorStoreId": "vs_existing_store_id",      // 🔧 Optional: reuse existing vector store
+        "dimensions": 1536,                           // ⚙️ Default: 1536
+        "similarityMetric": "cosine",                 // 🔧 Optional: cosine, euclidean
+        "maxResults": 10                              // ⚙️ Default: 10 search results
       }
     }
+  },
+  "timeouts": {
+    "httpRequestTimeout": "30s",                      // ⚙️ Default: 30s
+    "mcpInitTimeout": "30s",                          // ⚙️ Default: 30s
+    "toolProcessingTimeout": "3m",                    // ⚙️ Default: 3m
+    "bridgeOperationTimeout": "3m",                   // ⚙️ Default: 3m
+    "pingTimeout": "5s",                              // ⚙️ Default: 5s
+    "responseProcessing": "1m"                        // ⚙️ Default: 1m
+  },
+  "retry": {
+    "maxAttempts": 3,                                 // ⚙️ Default: 3 attempts
+    "baseBackoff": "500ms",                           // ⚙️ Default: 500ms
+    "maxBackoff": "5s",                               // ⚙️ Default: 5s
+    "mcpReconnectAttempts": 5,                        // ⚙️ Default: 5 attempts
+    "mcpReconnectBackoff": "1s"                       // ⚙️ Default: 1s
   },
   "monitoring": {
     "enabled": true,                                  // ⚙️ Default: true

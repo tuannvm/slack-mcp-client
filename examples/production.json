@@ -57,9 +57,25 @@
     "providers": {
       "openai": {
         "indexName": "production-knowledge-base",
-        "dimensions": 1536
+        "vectorStoreId": "vs_production_store_id",
+        "dimensions": 1536,
+        "similarityMetric": "cosine",
+        "maxResults": 10
       }
     }
+  },
+  "timeouts": {
+    "httpRequestTimeout": "60s",
+    "toolProcessingTimeout": "10m",
+    "bridgeOperationTimeout": "10m",
+    "mcpInitTimeout": "120s"
+  },
+  "retry": {
+    "maxAttempts": 5,
+    "baseBackoff": "1s",
+    "maxBackoff": "30s",
+    "mcpReconnectAttempts": 10,
+    "mcpReconnectBackoff": "5s"
   },
   "monitoring": {
     "enabled": true,

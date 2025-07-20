@@ -65,41 +65,41 @@ flowchart LR
   - Uses Socket Mode for secure, firewall-friendly communication
   - Works with both channels and direct messages
   - Rich message formatting with Markdown and Block Kit
-  - Automatic conversion of quoted strings to code blocks for better readability
+  - Customizable bot behavior and message history
 - ✅ **Multi-Provider LLM Support**:
   - OpenAI (GPT-4, GPT-4o, etc.)
   - Anthropic (Claude 3.5 Sonnet, etc.) 
   - Ollama (Local LLMs like Llama, Mistral, etc.)
-  - Factory pattern for easy provider switching
+  - Native tool calling and agent mode support
   - LangChain gateway for unified API
 - ✅ **Agent Mode**:
   - Autonomous AI agents powered by LangChain
   - Multi-step reasoning and tool orchestration
-  - Automatic tool chaining for complex tasks
+  - Configurable agent iterations and behavior
   - Streaming responses with real-time updates
-  - Configurable system prompts and behavior
-- ✅ **Custom Prompt Engineering**: 
-  - System Prompts - Define custom AI assistant behavior and personality
+  - Advanced prompt engineering capabilities
 - ✅ **RAG (Retrieval-Augmented Generation)**: 
-  - LangChain Go Compatible - Drop-in replacement for standard vector stores
-  - Document Processing - PDF ingestion with intelligent chunking
-  - CLI Tools - Command-line utilities for document management
-  - Extensible Design - Easy to add SQLite, Redis, or vector embeddings
-- ✅ **Tool Registration**: Dynamically register and call MCP tools
-- ✅ **Configuration Management**:
-  - JSON-based MCP server configuration
-  - Environment variable support
-  - Multiple transport modes (HTTP/SSE, stdio)
+  - Multiple providers: Simple JSON storage, OpenAI Vector Store
+  - Reusable vector stores with `vectorStoreId` support
+  - Configurable search parameters and similarity metrics
+  - PDF ingestion with intelligent chunking
+  - CLI tools for document management
+- ✅ **Unified Configuration**:
+  - Single JSON configuration file with JSON schema validation
+  - Comprehensive timeout and retry configuration
+  - Environment variable substitution and overrides
+  - All underlying package options exposed
+  - Smart defaults with full customization capability
 - ✅ **Production Ready**:
-  - Docker container support
-  - Kubernetes Helm charts
+  - Docker container support with GHCR publishing
+  - Kubernetes Helm charts with OCI registry
   - Comprehensive logging and error handling
-  - 88%+ test coverage
+  - 88%+ test coverage with security scanning
 - ✅ **Monitoring & Observability**:
   - Prometheus metrics integration
   - Tool invocation tracking with error rates
-  - LLM token usage monitoring
-  - Configurable metrics endpoint
+  - LLM token usage monitoring by model and type
+  - Configurable metrics endpoint and logging levels
 
 ## Installation
 

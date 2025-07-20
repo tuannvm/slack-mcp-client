@@ -5,6 +5,14 @@
     "botToken": "${SLACK_BOT_TOKEN}",
     "appToken": "${SLACK_APP_TOKEN}"
   },
+  "llm": {
+    "provider": "openai",
+    "providers": {
+      "openai": {
+        "apiKey": "${OPENAI_API_KEY}"
+      }
+    }
+  },
   "mcpServers": {
     "filesystem": {
       "command": "npx",
