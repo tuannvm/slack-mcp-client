@@ -7,6 +7,7 @@ require (
 	github.com/mark3labs/mcp-go v0.31.0
 	github.com/openai/openai-go v1.8.2
 	github.com/prometheus/client_golang v1.22.0
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/slack-go/slack v0.16.0
 	github.com/tmc/langchaingo v0.1.13
 )
@@ -47,7 +48,6 @@ require (
 	github.com/prometheus/client_model v0.6.1 // indirect
 	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
-	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1 // indirect
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/cast v1.7.1 // indirect

@@ -122,7 +122,7 @@ type MonitoringConfig struct {
 // TimeoutConfig contains timeout settings for various operations
 type TimeoutConfig struct {
 	HTTPRequestTimeout     string `json:"httpRequestTimeout,omitempty"`     // HTTP client timeout (default: "30s")
-	MCPInitTimeout         string `json:"mcpInitTimeout,omitempty"`         // MCP client initialization (default: "30s") 
+	MCPInitTimeout         string `json:"mcpInitTimeout,omitempty"`         // MCP client initialization (default: "30s")
 	ToolProcessingTimeout  string `json:"toolProcessingTimeout,omitempty"`  // Tool call processing (default: "3m")
 	BridgeOperationTimeout string `json:"bridgeOperationTimeout,omitempty"` // Bridge operation timeout (default: "3m")
 	PingTimeout            string `json:"pingTimeout,omitempty"`            // Health check ping timeout (default: "5s")
@@ -131,11 +131,11 @@ type TimeoutConfig struct {
 
 // RetryConfig contains retry and resilience settings
 type RetryConfig struct {
-	MaxAttempts           int    `json:"maxAttempts,omitempty"`           // Max retry attempts (default: 3)
-	BaseBackoff           string `json:"baseBackoff,omitempty"`           // Base backoff duration (default: "500ms")
-	MaxBackoff            string `json:"maxBackoff,omitempty"`            // Maximum backoff duration (default: "5s")
-	MCPReconnectAttempts  int    `json:"mcpReconnectAttempts,omitempty"`  // MCP SSE reconnection attempts (default: 5)
-	MCPReconnectBackoff   string `json:"mcpReconnectBackoff,omitempty"`   // MCP reconnection backoff (default: "1s")
+	MaxAttempts          int    `json:"maxAttempts,omitempty"`          // Max retry attempts (default: 3)
+	BaseBackoff          string `json:"baseBackoff,omitempty"`          // Base backoff duration (default: "500ms")
+	MaxBackoff           string `json:"maxBackoff,omitempty"`           // Maximum backoff duration (default: "5s")
+	MCPReconnectAttempts int    `json:"mcpReconnectAttempts,omitempty"` // MCP SSE reconnection attempts (default: 5)
+	MCPReconnectBackoff  string `json:"mcpReconnectBackoff,omitempty"`  // MCP reconnection backoff (default: "1s")
 }
 
 // ApplyDefaults applies default values to the configuration

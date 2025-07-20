@@ -530,12 +530,12 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 	// The actual RAG client will be created in the Slack client where it gets added to the bridge
 	if cfg.RAG.Enabled {
 		logger.InfoKV("RAG enabled, preparing tools for bridge integration", "provider", cfg.RAG.Provider)
-		
+
 		// Add RAG tools to discoveredTools for bridge integration
 		if discoveredTools == nil {
 			discoveredTools = make(map[string]mcp.ToolInfo)
 		}
-		
+
 		// Manually add RAG tools since we'll create the client in the Slack package
 		discoveredTools["rag_search"] = mcp.ToolInfo{
 			ToolName:        "rag_search",
@@ -586,7 +586,7 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 			},
 			ServerName: "rag", // Internal RAG server identifier
 		}
-		
+
 		logger.InfoKV("Added RAG tools to available tools", "tool_count", 3)
 	} else {
 		logger.Info("RAG integration disabled in configuration")

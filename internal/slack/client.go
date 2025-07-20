@@ -81,13 +81,13 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	// Check if RAG client is available in config and add it
 	if cfg.RAG.Enabled {
 		clientLogger.InfoKV("RAG enabled, creating client for bridge integration", "provider", cfg.RAG.Provider)
-		
+
 		// Use the legacy API for now until we properly update the RAG package
 		// Convert structured config to legacy format
 		ragConfig := map[string]interface{}{
 			"provider": cfg.RAG.Provider,
 		}
-		
+
 		// Add provider-specific settings
 		if providerSettings, exists := cfg.RAG.Providers[cfg.RAG.Provider]; exists {
 			switch cfg.RAG.Provider {
@@ -115,12 +115,12 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 				}
 			}
 		}
-		
+
 		// Set chunk size
 		if cfg.RAG.ChunkSize > 0 {
 			ragConfig["chunk_size"] = cfg.RAG.ChunkSize
 		}
-		
+
 		ragClient, err := rag.NewClientWithProvider(cfg.RAG.Provider, ragConfig)
 		if err != nil {
 			clientLogger.ErrorKV("Failed to create RAG client", "error", err)
