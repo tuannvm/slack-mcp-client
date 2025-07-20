@@ -21,23 +21,28 @@ type Config struct {
 	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 	RAG        RAGConfig                  `json:"rag,omitempty"`
 	Monitoring MonitoringConfig           `json:"monitoring,omitempty"`
+	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
+	Retry      RetryConfig                `json:"retry,omitempty"`
 }
 
 // SlackConfig contains Slack-specific configuration
 type SlackConfig struct {
-	BotToken string `json:"botToken"`
-	AppToken string `json:"appToken"`
+	BotToken        string `json:"botToken"`
+	AppToken        string `json:"appToken"`
+	MessageHistory  int    `json:"messageHistory,omitempty"`  // Max messages to keep in history per channel (default: 50)
+	ThinkingMessage string `json:"thinkingMessage,omitempty"` // Custom "thinking" message (default: "Thinking...")
 }
 
 // LLMConfig contains LLM provider configuration
 type LLMConfig struct {
-	Provider          string                       `json:"provider"`
-	UseNativeTools    bool                         `json:"useNativeTools,omitempty"`
-	UseAgent          bool                         `json:"useAgent,omitempty"`
-	CustomPrompt      string                       `json:"customPrompt,omitempty"`
-	CustomPromptFile  string                       `json:"customPromptFile,omitempty"`
-	ReplaceToolPrompt bool                         `json:"replaceToolPrompt,omitempty"`
-	Providers         map[string]LLMProviderConfig `json:"providers"`
+	Provider           string                       `json:"provider"`
+	UseNativeTools     bool                         `json:"useNativeTools,omitempty"`
+	UseAgent           bool                         `json:"useAgent,omitempty"`
+	CustomPrompt       string                       `json:"customPrompt,omitempty"`
+	CustomPromptFile   string                       `json:"customPromptFile,omitempty"`
+	ReplaceToolPrompt  bool                         `json:"replaceToolPrompt,omitempty"`
+	MaxAgentIterations int                          `json:"maxAgentIterations,omitempty"` // Maximum agent iterations (default: 20)
+	Providers          map[string]LLMProviderConfig `json:"providers"`
 }
 
 // LLMProviderConfig contains provider-specific settings
@@ -114,6 +119,25 @@ type MonitoringConfig struct {
 	LoggingLevel string `json:"loggingLevel,omitempty"`
 }
 
+// TimeoutConfig contains timeout settings for various operations
+type TimeoutConfig struct {
+	HTTPRequestTimeout     string `json:"httpRequestTimeout,omitempty"`     // HTTP client timeout (default: "30s")
+	MCPInitTimeout         string `json:"mcpInitTimeout,omitempty"`         // MCP client initialization (default: "30s") 
+	ToolProcessingTimeout  string `json:"toolProcessingTimeout,omitempty"`  // Tool call processing (default: "3m")
+	BridgeOperationTimeout string `json:"bridgeOperationTimeout,omitempty"` // Bridge operation timeout (default: "3m")
+	PingTimeout            string `json:"pingTimeout,omitempty"`            // Health check ping timeout (default: "5s")
+	ResponseProcessing     string `json:"responseProcessing,omitempty"`     // Slack response processing (default: "1m")
+}
+
+// RetryConfig contains retry and resilience settings
+type RetryConfig struct {
+	MaxAttempts           int    `json:"maxAttempts,omitempty"`           // Max retry attempts (default: 3)
+	BaseBackoff           string `json:"baseBackoff,omitempty"`           // Base backoff duration (default: "500ms")
+	MaxBackoff            string `json:"maxBackoff,omitempty"`            // Maximum backoff duration (default: "5s")
+	MCPReconnectAttempts  int    `json:"mcpReconnectAttempts,omitempty"`  // MCP SSE reconnection attempts (default: 5)
+	MCPReconnectBackoff   string `json:"mcpReconnectBackoff,omitempty"`   // MCP reconnection backoff (default: "1s")
+}
+
 // ApplyDefaults applies default values to the configuration
 func (c *Config) ApplyDefaults() {
 	// Set version if not specified
@@ -174,6 +198,56 @@ func (c *Config) ApplyDefaults() {
 			IndexName:  "slack-mcp-rag",
 			Dimensions: 1536,
 		}
+	}
+
+	// Slack defaults
+	if c.Slack.MessageHistory == 0 {
+		c.Slack.MessageHistory = 50
+	}
+	if c.Slack.ThinkingMessage == "" {
+		c.Slack.ThinkingMessage = "Thinking..."
+	}
+
+	// LLM defaults
+	if c.LLM.MaxAgentIterations == 0 {
+		c.LLM.MaxAgentIterations = 20
+	}
+
+	// Timeout defaults
+	if c.Timeouts.HTTPRequestTimeout == "" {
+		c.Timeouts.HTTPRequestTimeout = "30s"
+	}
+	if c.Timeouts.MCPInitTimeout == "" {
+		c.Timeouts.MCPInitTimeout = "30s"
+	}
+	if c.Timeouts.ToolProcessingTimeout == "" {
+		c.Timeouts.ToolProcessingTimeout = "3m"
+	}
+	if c.Timeouts.BridgeOperationTimeout == "" {
+		c.Timeouts.BridgeOperationTimeout = "3m"
+	}
+	if c.Timeouts.PingTimeout == "" {
+		c.Timeouts.PingTimeout = "5s"
+	}
+	if c.Timeouts.ResponseProcessing == "" {
+		c.Timeouts.ResponseProcessing = "1m"
+	}
+
+	// Retry defaults
+	if c.Retry.MaxAttempts == 0 {
+		c.Retry.MaxAttempts = 3
+	}
+	if c.Retry.BaseBackoff == "" {
+		c.Retry.BaseBackoff = "500ms"
+	}
+	if c.Retry.MaxBackoff == "" {
+		c.Retry.MaxBackoff = "5s"
+	}
+	if c.Retry.MCPReconnectAttempts == 0 {
+		c.Retry.MCPReconnectAttempts = 5
+	}
+	if c.Retry.MCPReconnectBackoff == "" {
+		c.Retry.MCPReconnectBackoff = "1s"
 	}
 
 	// Monitoring defaults
