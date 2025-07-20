@@ -46,6 +46,7 @@ func NewProviderRegistry(cfg *config.Config, logger *logging.Logger) (*ProviderR
 	for name, providerConfig := range cfg.LLM.Providers {
 		registryLogger.DebugKV("Attempting to initialize provider", "name", name)
 		langchainConfig := map[string]interface{}{
+			"type":        name,                      // Add the provider type (openai, anthropic, ollama)
 			"model":       providerConfig.Model,
 			"api_key":     providerConfig.APIKey,
 			"base_url":    providerConfig.BaseURL,
