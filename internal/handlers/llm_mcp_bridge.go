@@ -128,17 +128,40 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, s
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
+	// Connect tools to their corresponding MCP clients
+	connectedTools := make(map[string]mcp.ToolInfo)
+	for toolName, tool := range discoveredTools {
+		// Make a copy of the tool and set the client based on ServerName
+		connectedTool := tool
+		if client, exists := mcpClients[tool.ServerName]; exists {
+			connectedTool.Client = client
+			structLogger.DebugKV("Connected tool to client", "tool", toolName, "server", tool.ServerName)
+		} else {
+			structLogger.WarnKV("No client found for tool", "tool", toolName, "server", tool.ServerName, "available_clients", getClientNames(mcpClients))
+		}
+		connectedTools[toolName] = connectedTool
+	}
+
 	return &LLMMCPBridge{
 		mcpClients:        mcpClients,
 		logger:            structLogger,
 		stdLogger:         stdLogger,
-		availableTools:    discoveredTools,
+		availableTools:    connectedTools,
 		useNativeTools:    useNativeTools,
 		llmRegistry:       llmRegistry,
 		UseAgent:          useAgent,
 		customPrompt:      customPrompt,
 		replaceToolPrompt: replaceToolPrompt,
 	}
+}
+
+// getClientNames is a helper function to get client names for debugging
+func getClientNames(clients map[string]mcp.MCPClientInterface) []string {
+	names := make([]string, 0, len(clients))
+	for name := range clients {
+		names = append(names, name)
+	}
+	return names
 }
 
 // NewLLMMCPBridgeFromClients creates a new LLMMCPBridge with the given MCP Client objects
