@@ -19,6 +19,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/rag"
 )
 
 const thinkingMessage = "Thinking..."
@@ -78,17 +79,54 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	}
 
 	// Check if RAG client is available in config and add it
-	if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
-		if ragClientInterface, exists := providerConfig["_rag_client"]; exists {
-			// Type assert to get the RAG client
-			if ragClient, ok := ragClientInterface.(interface {
-				CallTool(context.Context, string, map[string]interface{}) (string, error)
-			}); ok {
-				rawClientMap["rag_search"] = ragClient
-				clientLogger.Info("Added RAG client to bridge client map")
-			} else {
-				clientLogger.Warn("RAG client found in config but type assertion failed")
+	if cfg.RAG.Enabled {
+		clientLogger.InfoKV("RAG enabled, creating client for bridge integration", "provider", cfg.RAG.Provider)
+
+		// Use the legacy API for now until we properly update the RAG package
+		// Convert structured config to legacy format
+		ragConfig := map[string]interface{}{
+			"provider": cfg.RAG.Provider,
+		}
+
+		// Add provider-specific settings
+		if providerSettings, exists := cfg.RAG.Providers[cfg.RAG.Provider]; exists {
+			switch cfg.RAG.Provider {
+			case "simple":
+				ragConfig["database_path"] = providerSettings.DatabasePath
+			case "openai":
+				if providerSettings.IndexName != "" {
+					ragConfig["vector_store_name"] = providerSettings.IndexName
+				}
+				if providerSettings.VectorStoreID != "" {
+					ragConfig["vector_store_id"] = providerSettings.VectorStoreID
+				}
+				if providerSettings.Dimensions > 0 {
+					ragConfig["dimensions"] = providerSettings.Dimensions
+				}
+				if providerSettings.SimilarityMetric != "" {
+					ragConfig["similarity_metric"] = providerSettings.SimilarityMetric
+				}
+				if providerSettings.MaxResults > 0 {
+					ragConfig["max_results"] = providerSettings.MaxResults
+				}
+				// Add OpenAI API key from LLM config or environment
+				if openaiConfig, exists := cfg.LLM.Providers["openai"]; exists && openaiConfig.APIKey != "" {
+					ragConfig["api_key"] = openaiConfig.APIKey
+				}
 			}
+		}
+
+		// Set chunk size
+		if cfg.RAG.ChunkSize > 0 {
+			ragConfig["chunk_size"] = cfg.RAG.ChunkSize
+		}
+
+		ragClient, err := rag.NewClientWithProvider(cfg.RAG.Provider, ragConfig)
+		if err != nil {
+			clientLogger.ErrorKV("Failed to create RAG client", "error", err)
+		} else {
+			rawClientMap["rag"] = ragClient
+			clientLogger.DebugKV("Added RAG client to raw map for bridge", "name", "rag")
 		}
 	}
 
@@ -106,11 +144,8 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	clientLogger.Info("LLM provider registry initialized successfully")
 
 	// Determine custom prompt settings
-	customPrompt := cfg.CustomPrompt
-	replaceToolPrompt := false
-	if cfg.ReplaceToolPrompt != nil {
-		replaceToolPrompt = *cfg.ReplaceToolPrompt
-	}
+	customPrompt := cfg.LLM.CustomPrompt
+	replaceToolPrompt := cfg.LLM.ReplaceToolPrompt
 
 	// Pass the raw map to the bridge with the configured log level
 	llmMCPBridge := handlers.NewLLMMCPBridgeFromClientsWithLogLevel(
@@ -118,8 +153,8 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		clientLogger.StdLogger(),
 		discoveredTools,
 		logLevel,
-		*cfg.UseNativeTools,
-		*cfg.UseAgent,
+		cfg.LLM.UseNativeTools,
+		cfg.LLM.UseAgent,
 		registry,
 		string(customPrompt),
 		replaceToolPrompt,
@@ -279,7 +314,7 @@ func (c *Client) getContextFromHistory(channelID string) string {
 // handleUserPrompt sends the user's text to the configured LLM provider.
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayName string) {
 	// Determine the provider to use from config
-	providerName := c.cfg.LLMProvider // Get the primary provider name from config
+	providerName := c.cfg.LLM.Provider // Get the primary provider name from config
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", providerName)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
@@ -294,7 +329,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 	if !c.llmMCPBridge.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
 		var finalPrompt string
-		customPrompt := string(c.cfg.CustomPrompt)
+		customPrompt := c.cfg.LLM.CustomPrompt
 
 		if customPrompt != "" {
 			// Use custom prompt as system instruction, then add user prompt
@@ -325,7 +360,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
 			providerName,
 			userDisplayName,
-			string(c.cfg.CustomPrompt),
+			c.cfg.LLM.CustomPrompt,
 			userPrompt,
 			contextHistory,
 			&agentCallbackHandler{
@@ -410,11 +445,11 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		// Re-prompt using the LLM client with custom prompt as system instruction
 		var repromptErr error
 		// Get the provider name from config again for the re-prompt
-		providerName := c.cfg.LLMProvider
+		providerName := c.cfg.LLM.Provider
 
 		// Prepare the re-prompt with custom prompt as system instruction
 		var finalRePrompt string
-		customPrompt := string(c.cfg.CustomPrompt)
+		customPrompt := c.cfg.LLM.CustomPrompt
 
 		if customPrompt != "" {
 			// Use custom prompt as system instruction for re-prompt too

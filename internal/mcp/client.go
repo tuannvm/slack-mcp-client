@@ -36,9 +36,9 @@ type Client struct {
 }
 
 // NewClient creates a new MCP client handler.
-// For stdio mode, addressOrCommand should be the command path, and args should be provided.
-// For http/sse modes, addressOrCommand is the URL, and args is ignored.
-func NewClient(mode, addressOrCommand string, args []string, env map[string]string, stdLogger *logging.Logger) (*Client, error) {
+// For stdio transport, addressOrCommand should be the command path, and args should be provided.
+// For http/sse transports, addressOrCommand is the URL, and args is ignored.
+func NewClient(transport, addressOrCommand string, args []string, env map[string]string, stdLogger *logging.Logger) (*Client, error) {
 	// Determine log level from environment variable
 	logLevel := logging.LevelInfo // Default to INFO
 	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
@@ -48,13 +48,13 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 	// Create a structured logger for the MCP client
 	mcpLogger := logging.New("mcp-client", logLevel)
 
-	mcpLogger.InfoKV("Creating new MCP client", "mode", mode)
+	mcpLogger.InfoKV("Creating new MCP client", "transport", transport)
 
-	// Create underlying MCP client based on mode
-	modeLower := strings.ToLower(mode)
+	// Create underlying MCP client based on transport
+	transportLower := strings.ToLower(transport)
 	var mcpClient client.MCPClient
 	var err error
-	switch modeLower {
+	switch transportLower {
 	case "stdio":
 		// Build environment slice
 		processEnv := os.Environ()
@@ -95,7 +95,7 @@ func NewClient(mode, addressOrCommand string, args []string, env map[string]stri
 			return nil, customErrors.WrapMCPError(err, "client_start", fmt.Sprintf("Failed to start MCP client for %s", addressOrCommand))
 		}
 	default:
-		return nil, customErrors.NewMCPError("invalid_mode", fmt.Sprintf("Unsupported MCP mode: %s", mode))
+		return nil, customErrors.NewMCPError("invalid_transport", fmt.Sprintf("Unsupported MCP transport: %s", transport))
 	}
 	if err != nil {
 		return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
@@ -340,7 +340,7 @@ func (c *Client) PrintEnvironment() {
 		}
 	}
 
-	// For stdio mode, check if command exists
+	// For stdio transport, check if command exists
 	if c.serverAddr == "http://localhost:8080" {
 		c.logger.DebugKV("Checking mcp-trino command", "server", c.serverAddr)
 		path, err := exec.LookPath("mcp-trino")
