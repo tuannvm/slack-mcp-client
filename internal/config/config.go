@@ -105,12 +105,17 @@ type RAGConfig struct {
 
 // RAGProviderConfig contains RAG provider-specific settings
 type RAGProviderConfig struct {
-	DatabasePath     string `json:"databasePath,omitempty"`     // Simple provider: path to JSON database
-	IndexName        string `json:"indexName,omitempty"`        // OpenAI provider: vector store name
-	VectorStoreID    string `json:"vectorStoreId,omitempty"`    // OpenAI provider: existing vector store ID
-	Dimensions       int    `json:"dimensions,omitempty"`       // OpenAI provider: embedding dimensions
-	SimilarityMetric string `json:"similarityMetric,omitempty"` // OpenAI provider: similarity metric
-	MaxResults       int    `json:"maxResults,omitempty"`       // OpenAI provider: maximum search results
+	DatabasePath             string  `json:"databasePath,omitempty"`             // Simple provider: path to JSON database
+	IndexName                string  `json:"indexName,omitempty"`                // OpenAI provider: vector store name
+	VectorStoreID            string  `json:"vectorStoreId,omitempty"`            // OpenAI provider: existing vector store ID
+	Dimensions               int     `json:"dimensions,omitempty"`               // OpenAI provider: embedding dimensions
+	SimilarityMetric         string  `json:"similarityMetric,omitempty"`         // OpenAI provider: similarity metric
+	MaxResults               int     `json:"maxResults,omitempty"`               // OpenAI provider: maximum search results
+	ScoreThreshold           float64 `json:"scoreThreshold,omitempty"`           // OpenAI provider: score threshold
+	RewriteQuery             bool    `json:"rewriteQuery,omitempty"`             // OpenAI provider: rewrite query
+	VectorStoreNameRegex     string  `json:"vectorStoreNameRegex,omitempty"`     // OpenAI provider: vector store name regex
+	VectorStoreMetadataKey   string  `json:"vectorStoreMetadataKey,omitempty"`   // OpenAI provider: vector store metadata key
+	VectorStoreMetadataValue string  `json:"vectorStoreMetadataValue,omitempty"` // OpenAI provider: vector store metadata value
 }
 
 // MonitoringConfig contains monitoring and observability settings

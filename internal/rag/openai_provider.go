@@ -15,12 +15,15 @@ import (
 
 // OpenAIConfig holds configuration for the OpenAI provider
 type OpenAIConfig struct {
-	APIKey               string
-	VectorStoreID        string  // Optional: reuse existing vector store
-	VectorStoreName      string  // Name for the vector store (default: "Knowledge Base")
-	MaxResults           int64   // Default: 20
-	ScoreThreshold       float64 // Default: 0.5
-	VectorStoreNameRegex string  // Regex for the vector store name
+	APIKey                   string
+	VectorStoreID            string  // Optional: reuse existing vector store
+	VectorStoreName          string  // Name for the vector store (default: "Knowledge Base")
+	MaxResults               int64   // Default: 20
+	ScoreThreshold           float64 // Default: 0.5
+	RewriteQuery             bool    // Whether to rewrite the query
+	VectorStoreNameRegex     string  // Regex for the vector store name
+	VectorStoreMetadataKey   string  // Key for the vector store metadata
+	VectorStoreMetadataValue string  // Value for the vector store metadata
 }
 
 // OpenAIProvider implements VectorProvider using OpenAI's VectorStore API with 2025 updates
@@ -33,12 +36,9 @@ type OpenAIProvider struct {
 // NewOpenAIProvider creates a new OpenAI vector provider instance
 func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 	defaultMaxResults := int64(20)
-	defaultScoreThreshold := float64(0.5)
 
 	cfg := OpenAIConfig{
-		MaxResults:      defaultMaxResults,
-		ScoreThreshold:  defaultScoreThreshold,
-		VectorStoreName: "Knowledge Base",
+		MaxResults: defaultMaxResults,
 	}
 
 	// Extract configuration
@@ -65,8 +65,20 @@ func NewOpenAIProvider(config map[string]interface{}) (VectorProvider, error) {
 		cfg.ScoreThreshold = scoreThreshold
 	}
 
+	if rewriteQuery, ok := config["rewrite_query"].(bool); ok {
+		cfg.RewriteQuery = rewriteQuery
+	}
+
 	if vectorStoreNameRegex, ok := config["vector_store_name_regex"].(string); ok {
 		cfg.VectorStoreNameRegex = vectorStoreNameRegex
+	}
+
+	if vectorStoreMetadataKey, ok := config["vs_metadata_key"].(string); ok {
+		cfg.VectorStoreMetadataKey = vectorStoreMetadataKey
+	}
+
+	if vectorStoreMetadataValue, ok := config["vs_metadata_value"].(string); ok {
+		cfg.VectorStoreMetadataValue = vectorStoreMetadataValue
 	}
 
 	if maxResults, ok := config["max_results"].(float64); ok {
@@ -98,7 +110,7 @@ func (o *OpenAIProvider) Initialize(ctx context.Context) error {
 		o.vectorStoreID = vectorStore.ID
 		fmt.Printf("[RAG] OpenAI: Using existing vector store '%s' with ID: %s\n", vectorStore.Name, o.vectorStoreID)
 	} else {
-		if o.config.VectorStoreName != "" {
+		if o.config.VectorStoreName != "" && o.config.VectorStoreNameRegex != "" {
 			// Search for existing vector store by name first
 			existingVectorStore, err := o.findVectorStoreByName(ctx, o.config.VectorStoreName)
 			if err != nil {
