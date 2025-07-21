@@ -40,58 +40,40 @@ jobs:
             # Remove v prefix to get version number
             VERSION=${GITHUB_REF#refs/tags/}
             VERSION=${VERSION#v}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "full_tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           else
             # Use input tag for manual trigger
             VERSION="${{ github.event.inputs.image_tag }}"
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "full_tag=$VERSION" >> $GITHUB_OUTPUT
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "full_tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
       
-      - name: Build Docker image
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: "${{ github.actor }}"
+          password: "${{ secrets.GITHUB_TOKEN }}"
+            
+      - name: Build and push versioned image
         id: build
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: false
-          load: true
+          push: true
           tags: |
-            slack-mcp-client:${{ steps.tag_version.outputs.version }}
+            ghcr.io/vungle/saturn:${{ steps.tag_version.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       
-      - name: Build latest tag
+      - name: Build and push latest tag
         if: github.event_name == 'push' || github.event.inputs.build_latest == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
-          push: false
-          load: true
+          push: true
           tags: |
-            slack-mcp-client:latest
+            ghcr.io/vungle/saturn:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
-      - name: Save Docker image as artifact
-        run: |
-          # Save the specified version image
-          docker save slack-mcp-client:${{ steps.tag_version.outputs.version }} > /tmp/slack-mcp-client.tar
-          
-          # If latest tag is needed, save it too
-          if [[ "${{ github.event_name }}" == "push" ]] || [[ "${{ github.event.inputs.build_latest }}" == "true" ]]; then
-            docker save slack-mcp-client:latest > /tmp/slack-mcp-client-latest.tar
-          fi
-      
-      - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: slack-mcp-client-image
-          path: /tmp/slack-mcp-client.tar
-          retention-days: 1
-      
-      - name: Upload latest image artifact
-        if: github.event_name == 'push' || github.event.inputs.build_latest == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: slack-mcp-client-latest-image
-          path: /tmp/slack-mcp-client-latest.tar
-          retention-days: 1
