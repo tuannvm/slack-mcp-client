@@ -274,7 +274,15 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 				if re.MatchString(vs.Name) {
 					o.vectorStoreID = vs.ID
 					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, o.vectorStoreID)
-					break
+					if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
+						if vs.Metadata[o.config.VectorStoreMetadataKey] == o.config.VectorStoreMetadataValue {
+							o.vectorStoreID = vs.ID
+							fmt.Printf("[RAG] OpenAI: vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, o.vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
+							break
+						}
+					} else {
+						break
+					}
 				}
 			}
 			if o.vectorStoreID == "" {
@@ -300,6 +308,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 			OfString: openai.String(query),
 		},
 		MaxNumResults: openai.Int(limit),
+		RewriteQuery:  openai.Bool(o.config.RewriteQuery),
 		RankingOptions: openai.VectorStoreSearchParamsRankingOptions{
 			ScoreThreshold: openai.Float(scoreThreshold),
 			Ranker:         "auto",
