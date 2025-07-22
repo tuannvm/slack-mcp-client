@@ -131,7 +131,6 @@ func awaitReloadTrigger(logger *logging.Logger, interval time.Duration) ReloadTr
 	}
 }
 
-
 // validateReloadInterval ensures the reload interval is valid and not too short
 func validateReloadInterval(interval string) error {
 	duration, err := time.ParseDuration(interval)
