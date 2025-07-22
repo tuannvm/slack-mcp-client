@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,9 +14,7 @@ import (
 )
 
 const (
-	maxBackoffDelay   = 5 * time.Minute
-	backoffMultiplier = 2.0
-	minReloadInterval = 1 * time.Minute
+	minReloadInterval = 10 * time.Second
 )
 
 // ReloadTrigger represents the type of trigger that caused a reload
@@ -51,7 +50,14 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 			return appFunc(logger)
 		}
 
-		logger.InfoKV("Reload enabled", "interval", cfg.Reload.Interval)
+		reloadInterval, err := time.ParseDuration(cfg.Reload.Interval)
+		if err != nil {
+			// This shouldn't happen after validation, but handle gracefully
+			logger.ErrorKV("Failed to parse reload interval after validation", "error", err)
+			return appFunc(logger)
+		}
+
+		logger.InfoKV("Reload enabled", "interval", reloadInterval)
 
 		// Setup cancellation for the current application run
 		appCtx, appCancel := context.WithCancel(context.Background())
@@ -64,7 +70,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 		}()
 
 		// Wait for reload trigger or app completion
-		trigger := awaitReloadTrigger(logger, cfg.Reload.Interval)
+		trigger := awaitReloadTrigger(logger, reloadInterval)
 
 		// Handle the trigger
 		select {
@@ -120,7 +126,7 @@ func runAppWithContext(ctx context.Context, logger *logging.Logger, appFunc func
 }
 
 // awaitReloadTrigger waits for a reload trigger
-func awaitReloadTrigger(logger *logging.Logger, intervalStr string) ReloadTrigger {
+func awaitReloadTrigger(logger *logging.Logger, interval time.Duration) ReloadTrigger {
 	// Setup signal channels
 	reloadChan := make(chan os.Signal, 1)
 	shutdownChan := make(chan os.Signal, 1)
@@ -134,17 +140,7 @@ func awaitReloadTrigger(logger *logging.Logger, intervalStr string) ReloadTrigge
 	}()
 
 	// Setup periodic timer
-	var timerChan <-chan time.Time
-	var timer *time.Timer
-
-	interval, err := time.ParseDuration(intervalStr)
-	if err != nil {
-		logger.ErrorKV("Invalid reload interval, using default", "interval", intervalStr, "error", err)
-		interval = 30 * time.Minute
-	}
-
-	timer = time.NewTimer(interval)
-	timerChan = timer.C
+	timer := time.NewTimer(interval)
 	defer timer.Stop()
 
 	logger.InfoKV("Waiting for reload trigger", "interval", interval)
@@ -159,7 +155,7 @@ func awaitReloadTrigger(logger *logging.Logger, intervalStr string) ReloadTrigge
 		logger.InfoKV("Shutdown signal received", "signal", sig)
 		return ReloadTrigger{Type: "shutdown", Signal: sig}
 
-	case <-timerChan:
+	case <-timer.C:
 		logger.Info("Periodic reload triggered")
 		return ReloadTrigger{Type: "periodic"}
 	}
@@ -169,11 +165,11 @@ func awaitReloadTrigger(logger *logging.Logger, intervalStr string) ReloadTrigge
 func validateReloadInterval(interval string) error {
 	duration, err := time.ParseDuration(interval)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid duration format: %w", err)
 	}
 
 	if duration < minReloadInterval {
-		return nil // Just log warning, don't fail
+		return fmt.Errorf("reload interval %s is below minimum of %s", duration, minReloadInterval)
 	}
 
 	return nil
