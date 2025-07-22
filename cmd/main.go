@@ -547,12 +547,6 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 						"type":        "string",
 						"description": "The search query to find relevant information",
 					},
-					"limit": map[string]interface{}{
-						"type":        "integer",
-						"description": "Maximum number of results to return (default: 5, max: 20)",
-						"minimum":     1,
-						"maximum":     20,
-					},
 				},
 				"required": []string{"query"},
 			},
@@ -708,7 +702,6 @@ func handleRAGSearch(query string) {
 	// Use the RAG client to search
 	result, err := ragClient.CallTool(ctx, "rag_search", map[string]interface{}{
 		"query": query,
-		"limit": 5,
 	})
 	if err != nil {
 		fmt.Printf("Error during search: %v\n", err)
