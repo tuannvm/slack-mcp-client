@@ -702,7 +702,6 @@ func handleRAGSearch(query string) {
 	// Use the RAG client to search
 	result, err := ragClient.CallTool(ctx, "rag_search", map[string]interface{}{
 		"query": query,
-		"limit": 5,
 	})
 	if err != nil {
 		fmt.Printf("Error during search: %v\n", err)
