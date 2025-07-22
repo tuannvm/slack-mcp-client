@@ -79,6 +79,10 @@ configMap:
   #    }
 
 # If you want to use external secret for the environment variables, you can use the following:
+# Example:
+# secret:
+#   enabled: true
+#   name: "my-secret"
 secret:
   enabled: false
   name: ""
