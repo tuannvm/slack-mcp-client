@@ -395,7 +395,7 @@ func (o *OpenAIProvider) searchVectorStore(ctx context.Context, vectorStoreNameR
 		return "", fmt.Errorf("vector store name regex cannot be empty")
 	}
 
-	vectorStoreID := ""
+	foundVectorStoreID := ""
 	// to match the vector store name regex
 	vectorStores, err := o.client.VectorStores.List(ctx, openai.VectorStoreListParams{
 		Limit: openai.Int(100), // Get up to 100 vector stores to search through
@@ -412,21 +412,25 @@ func (o *OpenAIProvider) searchVectorStore(ctx context.Context, vectorStoreNameR
 		if re.MatchString(vs.Name) {
 			if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
 				if vs.Metadata != nil && vs.Metadata[o.config.VectorStoreMetadataKey] == o.config.VectorStoreMetadataValue {
-					vectorStoreID = vs.ID
-					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
+					foundVectorStoreID = vs.ID
+					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, foundVectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
 					break
 				}
 			} else {
-				vectorStoreID = vs.ID
-				fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, vectorStoreID)
+				foundVectorStoreID = vs.ID
+				fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, foundVectorStoreID)
 				break
 			}
 		}
 	}
-	if vectorStoreID == "" {
-		return "", fmt.Errorf("no vector store found with name matching regex: %s", o.config.VectorStoreNameRegex)
+	if foundVectorStoreID == "" {
+		if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
+			return "", fmt.Errorf("no vector store found with name matching regex: %s and metadata '%s' = '%s'", o.config.VectorStoreNameRegex, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
+		} else {
+			return "", fmt.Errorf("no vector store found with name matching regex: %s", o.config.VectorStoreNameRegex)
+		}
 	}
-	return vectorStoreID, nil
+	return foundVectorStoreID, nil
 }
 
 // init registers the OpenAI provider
