@@ -255,40 +255,11 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 	if o.vectorStoreID == "" {
 		// Use dynamic vector store
 		fmt.Printf("[RAG] OpenAI: Using dynamic vector store\n")
-
-		// to match the vector store name regex
-		vectorStores, err := o.client.VectorStores.List(ctx, openai.VectorStoreListParams{
-			Limit: openai.Int(100), // Get up to 100 vector stores to search through
-		})
+		vectorStoreID, err := o.searchVectorStore(ctx, o.config.VectorStoreNameRegex)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list vector stores: %w", err)
+			return nil, fmt.Errorf("failed to search vector store: %w", err)
 		}
-
-		// Find the vector store that matches the regex
-		if o.config.VectorStoreNameRegex != "" {
-			re, err := regexp.Compile(o.config.VectorStoreNameRegex)
-			if err != nil {
-				return nil, fmt.Errorf("invalid vector store name regex: %w", err)
-			}
-			for _, vs := range vectorStores.Data {
-				if re.MatchString(vs.Name) {
-					if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
-						if vs.Metadata[o.config.VectorStoreMetadataKey] == o.config.VectorStoreMetadataValue {
-							o.vectorStoreID = vs.ID
-							fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, o.vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
-							break
-						}
-					} else {
-						o.vectorStoreID = vs.ID
-						fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, o.vectorStoreID)
-						break
-					}
-				}
-			}
-			if o.vectorStoreID == "" {
-				return nil, fmt.Errorf("no vector store found with name matching regex: %s", o.config.VectorStoreNameRegex)
-			}
-		}
+		o.vectorStoreID = vectorStoreID
 	}
 
 	// Set up search parameters
@@ -417,6 +388,41 @@ func (o *OpenAIProvider) findVectorStoreByName(ctx context.Context, name string)
 	}
 
 	return nil, nil // Not found
+}
+
+func (o *OpenAIProvider) searchVectorStore(ctx context.Context, vectorStoreNameRegex string) (string, error) {
+	vectorStoreID := ""
+	// to match the vector store name regex
+	vectorStores, err := o.client.VectorStores.List(ctx, openai.VectorStoreListParams{
+		Limit: openai.Int(100), // Get up to 100 vector stores to search through
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to list vector stores: %w", err)
+	}
+
+	re, err := regexp.Compile(vectorStoreNameRegex)
+	if err != nil {
+		return "", fmt.Errorf("invalid vector store name regex: %w", err)
+	}
+	for _, vs := range vectorStores.Data {
+		if re.MatchString(vs.Name) {
+			if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
+				if vs.Metadata != nil && vs.Metadata[o.config.VectorStoreMetadataKey] == o.config.VectorStoreMetadataValue {
+					vectorStoreID = vs.ID
+					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, o.vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
+					break
+				}
+			} else {
+				vectorStoreID = vs.ID
+				fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, o.vectorStoreID)
+				break
+			}
+		}
+	}
+	if vectorStoreID == "" {
+		return "", fmt.Errorf("no vector store found with name matching regex: %s", o.config.VectorStoreNameRegex)
+	}
+	return vectorStoreID, nil
 }
 
 // init registers the OpenAI provider
