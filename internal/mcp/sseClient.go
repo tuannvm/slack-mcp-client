@@ -2,8 +2,9 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"strings"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"sync"
 	"time"
 
@@ -63,7 +64,8 @@ func (c *SSEMCPClientWithRetry) CallTool(ctx context.Context, request mcp.CallTo
 		return result, nil
 	}
 
-	if !strings.Contains(err.Error(), "transport error") {
+	var terr *transport.Error
+	if !errors.As(err, &terr) {
 		return nil, err
 	}
 
