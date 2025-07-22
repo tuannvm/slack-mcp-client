@@ -22,14 +22,19 @@ func TestValidateReloadInterval(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name:     "valid interval - minimum 1m",
-			interval: "1m",
+			name:     "valid interval - minimum 10s",
+			interval: "10s",
 			wantErr:  false,
 		},
 		{
-			name:     "short interval - 30s (allowed)",
+			name:     "valid interval - 30s",
 			interval: "30s",
-			wantErr:  false, // We allow short intervals, just log warning
+			wantErr:  false,
+		},
+		{
+			name:     "short interval - 5s (below minimum)",
+			interval: "5s",
+			wantErr:  true,
 		},
 		{
 			name:     "invalid format",
@@ -87,15 +92,7 @@ func TestReloadTriggerTypes(t *testing.T) {
 
 func TestConstants(t *testing.T) {
 	// Verify constants are properly set
-	if maxBackoffDelay != 5*time.Minute {
-		t.Errorf("maxBackoffDelay = %v, expected 5m", maxBackoffDelay)
-	}
-	
-	if backoffMultiplier != 2.0 {
-		t.Errorf("backoffMultiplier = %v, expected 2.0", backoffMultiplier)
-	}
-	
-	if minReloadInterval != 1*time.Minute {
-		t.Errorf("minReloadInterval = %v, expected 1m", minReloadInterval)
+	if minReloadInterval != 10*time.Second {
+		t.Errorf("minReloadInterval = %v, expected 10s", minReloadInterval)
 	}
 }
