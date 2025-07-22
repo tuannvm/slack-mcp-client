@@ -221,15 +221,18 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 		case *slackevents.AppMentionEvent:
 			c.logger.InfoKV("Received app mention in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
 			messageText := c.userFrontend.RemoveBotMention(ev.Text)
-			profile, _ := c.userFrontend.GetUserInfo(ev.User)
-			// Add to message history
-			c.addToHistory(ev.Channel, ev.ThreadTimeStamp, "user", messageText, profile.userId, profile.realName, profile.email)
-			// Use handleUserPrompt for app mentions too, for consistency
+			profile, err := c.userFrontend.GetUserInfo(ev.User)
+			if err != nil {
+				c.logger.WarnKV("Failed to get user info", "user", ev.User, "error", err)
+				profile = &UserProfile{userId: ev.User, realName: "Unknown", email: ""}
+			}
+
 			parentTS := ev.ThreadTimeStamp
 			if parentTS == "" {
 				parentTS = ev.TimeStamp // Use the original message timestamp if no thread
 			}
-			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, parentTS, ev.User)
+			// Use handleUserPrompt for app mentions too, for consistency
+			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, parentTS, profile)
 
 		case *slackevents.MessageEvent:
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
@@ -240,13 +243,17 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
 				// Add to message history
-				profile, _ := c.userFrontend.GetUserInfo(ev.User)
-				c.addToHistory(ev.Channel, ev.ThreadTimeStamp, "user", ev.Text, profile.userId, profile.realName, profile.email)
+				profile, err := c.userFrontend.GetUserInfo(ev.User)
+				if err != nil {
+					c.logger.WarnKV("Failed to get user info", "user", ev.User, "error", err)
+					profile = &UserProfile{userId: ev.User, realName: "Unknown", email: ""}
+				}
+				// c.addToHistory(ev.Channel, ev.ThreadTimeStamp, "user", ev.Text, profile.userId, profile.realName, profile.email)
 				parentTS := ev.ThreadTimeStamp
 				if parentTS == "" {
 					parentTS = ev.TimeStamp // Use the original message timestamp if no thread
 				}
-				go c.handleUserPrompt(ev.Text, ev.Channel, parentTS, ev.User) // Use goroutine to avoid blocking event loop
+				go c.handleUserPrompt(ev.Text, ev.Channel, parentTS, profile) // Use goroutine to avoid blocking event loop
 			}
 
 		default:
@@ -328,7 +335,7 @@ func (c *Client) getContextFromHistory(channelID string, threadTS string) string
 }
 
 // handleUserPrompt sends the user's text to the configured LLM provider.
-func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userID string) {
+func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, profile *UserProfile) {
 	// Determine the provider to use from config
 	providerName := c.cfg.LLM.Provider // Get the primary provider name from config
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", providerName)
@@ -354,8 +361,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userID string
 				if reply.BotID != "" {
 					role = "assistant"
 				}
-				profile, _ := c.userFrontend.GetUserInfo(reply.User)
-				c.addToHistory(channelID, threadTS, role, reply.Text, profile.userId, profile.realName, profile.email)
+				replyProfile, _ := c.userFrontend.GetUserInfo(reply.User)
+				c.addToHistory(channelID, threadTS, role, reply.Text, replyProfile.userId, replyProfile.realName, replyProfile.email)
 			}
 		}
 	}
@@ -363,7 +370,6 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userID string
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID, threadTS)
 
-	profile, _ := c.userFrontend.GetUserInfo(userID)
 	c.addToHistory(channelID, threadTS, "user", userPrompt, profile.userId, profile.realName, profile.email) // Add user message to history
 
 	// Show a temporary "typing" indicator
