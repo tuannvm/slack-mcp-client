@@ -18,8 +18,8 @@ var (
 
 	reloadDuration = promauto.NewHistogram(
 		prometheus.HistogramOpts{
-			Name: "mcp_reload_duration_seconds",
-			Help: "Time spent performing complete reload cycles",
+			Name:    "mcp_reload_duration_seconds",
+			Help:    "Time spent performing complete reload cycles",
 			Buckets: prometheus.DefBuckets,
 		},
 	)

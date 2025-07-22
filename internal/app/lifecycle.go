@@ -8,13 +8,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 )
 
 const (
-	minReloadInterval    = 10 * time.Second
+	minReloadInterval      = 10 * time.Second
 	defaultShutdownTimeout = 10 * time.Second
 )
 
@@ -40,7 +40,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 
 		// Setup cancellation for the current application run
 		appCtx, appCancel := context.WithCancel(context.Background())
-		
+
 		// Run application in a goroutine
 		appDone := make(chan error, 1)
 		go func() {
@@ -64,7 +64,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 			if trigger.Type == "shutdown" {
 				logger.InfoKV("Shutdown triggered, gracefully stopping...", "signal", trigger.Signal)
 				appCancel() // Signal app to shutdown
-				
+
 				// Wait for app to finish shutting down
 				select {
 				case <-appDone:
@@ -76,10 +76,10 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 			}
 
 			logger.InfoKV("Reload triggered, shutting down current instance...", "type", trigger.Type)
-			
+
 			// Cancel current application
 			appCancel()
-			
+
 			// Wait for current app to shutdown gracefully
 			select {
 			case <-appDone:
@@ -87,10 +87,10 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 			case <-time.After(defaultShutdownTimeout):
 				logger.WarnKV("Application shutdown timed out, forcing restart", "timeout", defaultShutdownTimeout)
 			}
-			
+
 			// Record reload metrics
 			monitoring.RecordReload(trigger.Type, time.Since(reloadStartTime))
-			
+
 			// Continue the loop to reinitialize
 		}
 	}

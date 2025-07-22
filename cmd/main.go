@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/tuannvm/slack-mcp-client/internal/app"
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"github.com/tuannvm/slack-mcp-client/internal/config"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
-	"github.com/tuannvm/slack-mcp-client/internal/app"
 
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
@@ -143,7 +143,7 @@ func runMainApplication(logger *logging.Logger) error {
 
 	// Initialize and run Slack client
 	startSlackClient(logger, mcpClients, discoveredTools, cfg)
-	
+
 	return nil
 }
 
