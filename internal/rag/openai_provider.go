@@ -424,11 +424,7 @@ func (o *OpenAIProvider) searchVectorStore(ctx context.Context, vectorStoreNameR
 		}
 	}
 	if foundVectorStoreID == "" {
-		if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
-			return "", fmt.Errorf("no vector store found with name matching regex: %s and metadata '%s' = '%s'", o.config.VectorStoreNameRegex, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
-		} else {
-			return "", fmt.Errorf("no vector store found with name matching regex: %s", o.config.VectorStoreNameRegex)
-		}
+		return "", fmt.Errorf("no vector store found with name matching regex: %s and metadata '%s' = '%s'", o.config.VectorStoreNameRegex, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
 	}
 	return foundVectorStoreID, nil
 }
