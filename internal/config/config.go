@@ -103,6 +103,7 @@ type RAGConfig struct {
 }
 
 // RAGProviderConfig contains RAG provider-specific settings
+// TODO: Refactor this to use a common interface for all RAG providers, can use environment variables to configure the different providers
 type RAGProviderConfig struct {
 	DatabasePath             string  `json:"databasePath,omitempty"`             // Simple provider: path to JSON database
 	IndexName                string  `json:"indexName,omitempty"`                // OpenAI provider: vector store name
