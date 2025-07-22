@@ -42,7 +42,7 @@ spec:
             - secretRef:
                 name: {{ include "slack-mcp-client.fullname" . }}
                 optional: false
-            {{- if and .Values.secret.enabled .Values.secret.name }}
+            {{- if and .Values.secret.enabled (ne .Values.secret.name "") }}
             - secretRef:
                 name: {{ .Values.secret.name }}
                 optional: false
