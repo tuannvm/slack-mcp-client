@@ -23,8 +23,8 @@ type UserFrontend interface {
 	IsValidUser(userID string) bool
 	GetLogger() *logging.Logger
 	SendMessage(channelID, threadTS, text string)
-	GetUserInfo(userID string) (*slack.User, error)
 	GetThreadReplies(channelID, threadTS string) ([]slack.Message, error)
+	GetUserInfo(userID string) (*UserProfile, error)
 }
 
 func getLogLevel(stdLogger *logging.Logger) logging.LogLevel {
@@ -82,7 +82,14 @@ func GetSlackClient(botToken, appToken string, stdLogger *logging.Logger) (*Slac
 		mentionRegex,
 		authTest.UserID,
 		slackLogger,
+		make(map[string]*UserProfile),
 	}, nil
+}
+
+type UserProfile struct {
+	userId   string
+	realName string
+	email    string
 }
 
 type SlackClient struct {
@@ -90,6 +97,7 @@ type SlackClient struct {
 	botMentionRgx *regexp.Regexp
 	botUserID     string
 	logger        *logging.Logger
+	userCache     map[string]*UserProfile
 }
 
 func (slackClient *SlackClient) GetEventChannel() chan socketmode.Event {
@@ -112,28 +120,40 @@ func (slackClient *SlackClient) IsBotUser(userID string) bool {
 	return userID == slackClient.botUserID
 }
 
-func (slackClient *SlackClient) GetUserInfo(userID string) (*slack.User, error) {
-	user, err := slackClient.Client.GetUserInfo(userID)
-	if err != nil {
-		return nil, fmt.Errorf("while getting user info for %s: %w", userID, err)
-	}
-	return user, nil
-}
-
 func (slackClient *SlackClient) GetThreadReplies(channelID, threadTS string) ([]slack.Message, error) {
 	if channelID == "" || threadTS == "" {
 		return nil, fmt.Errorf("channelID and threadTS must be provided")
 	}
-
-	replies, _, _,  err := slackClient.GetConversationReplies(&slack.GetConversationRepliesParameters{
+	replies, _, _, err := slackClient.GetConversationReplies(&slack.GetConversationRepliesParameters{
 		ChannelID: channelID,
 		Timestamp:  threadTS,
 	})
 	if err != nil {
 		return nil, customErrors.WrapSlackError(err, "fetch_thread_replies_failed", "Failed to fetch thread replies")
 	}
-
 	return replies, nil
+}
+
+func (slackClient *SlackClient) GetUserInfo(userID string) (*UserProfile, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("userID must be provided")
+	}
+	if profile, ok := slackClient.userCache[userID]; ok {
+		return profile, nil
+	}
+	slackProfile, err := slackClient.GetUserProfile(&slack.GetUserProfileParameters{
+		UserID: userID,
+	})
+	if err != nil {
+		return nil, customErrors.WrapSlackError(err, "fetch_user_profile_failed", "Failed to fetch user profile")
+	}
+	profile := &UserProfile{
+		userId:  userID,
+		realName: slackProfile.RealName,
+		email:    slackProfile.Email,
+	}
+	slackClient.userCache[userID] = profile
+	return profile, nil
 }
 
 // SendMessage sends a message back to Slack, replying in a thread if threadTS is provided.
