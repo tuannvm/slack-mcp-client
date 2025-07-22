@@ -391,6 +391,10 @@ func (o *OpenAIProvider) findVectorStoreByName(ctx context.Context, name string)
 }
 
 func (o *OpenAIProvider) searchVectorStore(ctx context.Context, vectorStoreNameRegex string) (string, error) {
+	if vectorStoreNameRegex == "" {
+		return "", fmt.Errorf("vector store name regex cannot be empty")
+	}
+
 	vectorStoreID := ""
 	// to match the vector store name regex
 	vectorStores, err := o.client.VectorStores.List(ctx, openai.VectorStoreListParams{
@@ -409,12 +413,12 @@ func (o *OpenAIProvider) searchVectorStore(ctx context.Context, vectorStoreNameR
 			if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
 				if vs.Metadata != nil && vs.Metadata[o.config.VectorStoreMetadataKey] == o.config.VectorStoreMetadataValue {
 					vectorStoreID = vs.ID
-					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, o.vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
+					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
 					break
 				}
 			} else {
 				vectorStoreID = vs.ID
-				fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, o.vectorStoreID)
+				fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, vectorStoreID)
 				break
 			}
 		}
