@@ -23,6 +23,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
+	"github.com/tuannvm/slack-mcp-client/internal/app"
 
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
@@ -118,20 +119,32 @@ func main() {
 	logger := setupLogging()
 	logger.Info("Starting Slack MCP Client (debug=%v)", *debug)
 
-	// Load and prepare configuration
-	cfg := loadAndPrepareConfig(logger)
-
+	// Start metrics server
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
 		logger.Info("Starting metrics server on port %s", *metricsPort)
 		log.Fatal(http.ListenAndServe(fmt.Sprintf(":%s", *metricsPort), nil))
 	}()
 
+	// Run application with reload capability
+	if err := app.RunWithReload(logger, *configFile, runMainApplication); err != nil {
+		logger.Fatal("Application failed to start: %v", err)
+		os.Exit(1)
+	}
+}
+
+// runMainApplication contains the core application logic that can be reloaded
+func runMainApplication(logger *logging.Logger) error {
+	// Load and prepare configuration
+	cfg := loadAndPrepareConfig(logger)
+
 	// Initialize MCP clients and discover tools
 	mcpClients, discoveredTools := initializeMCPClients(logger, cfg)
 
 	// Initialize and run Slack client
 	startSlackClient(logger, mcpClients, discoveredTools, cfg)
+	
+	return nil
 }
 
 // setupLogging initializes the logging system
