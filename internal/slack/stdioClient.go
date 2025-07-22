@@ -94,10 +94,14 @@ func (client StdioClient) GetThreadReplies(channelID, threadTS string) ([]slack.
 }
 
 func (client StdioClient) GetUserInfo(userID string) (*UserProfile, error) {
+	currentUser, err := user.Current()
+	if err != nil {
+		return nil, fmt.Errorf("while getting current user: %w", err)
+	}
 	return &UserProfile{
 		userId:   userID,
-		realName: "Real Name",
-		email:    "user@example.com",
+		realName: currentUser.Name,
+		email:    "",
 	}, nil
 }
 
