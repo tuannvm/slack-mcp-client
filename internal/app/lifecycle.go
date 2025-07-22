@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
@@ -133,21 +131,6 @@ func awaitReloadTrigger(logger *logging.Logger, interval time.Duration) ReloadTr
 	}
 }
 
-// setupSignalHandlers sets up signal channels and returns cleanup function
-func setupSignalHandlers() (reload, shutdown chan os.Signal, cleanup func()) {
-	reloadChan := make(chan os.Signal, 1)
-	shutdownChan := make(chan os.Signal, 1)
-
-	signal.Notify(reloadChan, syscall.SIGUSR1)
-	signal.Notify(shutdownChan, syscall.SIGINT, syscall.SIGTERM)
-
-	cleanup = func() {
-		signal.Stop(reloadChan)
-		signal.Stop(shutdownChan)
-	}
-
-	return reloadChan, shutdownChan, cleanup
-}
 
 // validateReloadInterval ensures the reload interval is valid and not too short
 func validateReloadInterval(interval string) error {
