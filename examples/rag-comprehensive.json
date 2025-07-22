@@ -1,0 +1,109 @@
+{
+  "$schema": "../schema/config-schema.json",
+  "version": "2.0",
+  "slack": {
+    "botToken": "${SLACK_BOT_TOKEN}",
+    "appToken": "${SLACK_APP_TOKEN}",
+    "messageHistory": 100,
+    "thinkingMessage": "Searching knowledge base..."
+  },
+  "llm": {
+    "provider": "openai",
+    "useNativeTools": true,
+    "useAgent": true,
+    "customPrompt": "You are an AI assistant with access to a comprehensive knowledge base. Always search the knowledge base first before answering questions. Provide detailed, well-sourced responses.",
+    "maxAgentIterations": 25,
+    "providers": {
+      "openai": {
+        "model": "gpt-4o",
+        "apiKey": "${OPENAI_API_KEY}",
+        "temperature": 0.3,
+        "maxTokens": 4000
+      },
+      "anthropic": {
+        "model": "claude-3-5-sonnet-20241022",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "temperature": 0.3
+      }
+    }
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+      "tools": {
+        "allowList": ["read_file", "list_directory", "search_files"]
+      }
+    },
+    "web-search": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      },
+      "tools": {
+        "allowList": ["web_search"]
+      }
+    }
+  },
+  "rag": {
+    "enabled": true,
+    "provider": "openai",
+    "chunkSize": 1200,
+    "providers": {
+      "simple": {
+        "databasePath": "./knowledge/company-docs.json"
+      },
+      "openai": {
+        "indexName": "comprehensive-knowledge-base",
+        "vectorStoreId": "vs_comprehensive_kb_12345",
+        "dimensions": 1536,
+        "similarityMetric": "cosine",
+        "maxResults": 15
+      },
+      "development": {
+        "databasePath": "./knowledge/dev-docs.json"
+      },
+      "production": {
+        "indexName": "production-knowledge-base",
+        "vectorStoreId": "vs_production_kb_67890",
+        "dimensions": 3072,
+        "similarityMetric": "euclidean",
+        "maxResults": 20
+      },
+      "legal": {
+        "indexName": "legal-compliance-kb",
+        "dimensions": 1536,
+        "similarityMetric": "cosine",
+        "maxResults": 5
+      },
+      "technical": {
+        "indexName": "technical-documentation",
+        "vectorStoreId": "vs_technical_docs_abcdef",
+        "dimensions": 1536,
+        "similarityMetric": "cosine",
+        "maxResults": 25
+      }
+    }
+  },
+  "timeouts": {
+    "httpRequestTimeout": "45s",
+    "mcpInitTimeout": "60s",
+    "toolProcessingTimeout": "5m",
+    "bridgeOperationTimeout": "5m",
+    "pingTimeout": "10s",
+    "responseProcessing": "2m"
+  },
+  "retry": {
+    "maxAttempts": 5,
+    "baseBackoff": "750ms",
+    "maxBackoff": "15s",
+    "mcpReconnectAttempts": 8,
+    "mcpReconnectBackoff": "2s"
+  },
+  "monitoring": {
+    "enabled": true,
+    "metricsPort": 8080,
+    "loggingLevel": "info"
+  }
+}

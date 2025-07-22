@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -30,10 +31,14 @@ import (
 
 var (
 	// Define command-line flags
-	configFile  = flag.String("config", "mcp-servers.json", "Path to the MCP server configuration JSON file")
+	configFile  = flag.String("config", "config.json", "Path to the configuration file (supports both config.json and legacy mcp-servers.json formats)")
 	debug       = flag.Bool("debug", false, "Enable debug logging")
 	mcpDebug    = flag.Bool("mcpdebug", false, "Enable debug logging for MCP clients")
 	metricsPort = flag.String("metrics-port", "8080", "Port for metrics endpoint (default: 8080)")
+	// Configuration validation flag
+	configValidate = flag.Bool("config-validate", false, "Validate configuration file and exit")
+	// Configuration migration flag
+	migrateConfig = flag.Bool("migrate-config", false, "Migrate legacy configuration to new format and exit")
 
 	// RAG-related flags
 	ragIngest          = flag.String("rag-ingest", "", "Ingest PDF files from directory and exit")
@@ -54,6 +59,22 @@ func init() {
 
 func main() {
 	flag.Parse()
+	// Validate configuration and exit if requested
+	if *configValidate {
+		// Load and validate config (runtime validation and strict JSON parsing)
+		if _, err := config.LoadConfig(*configFile, nil); err != nil {
+			fmt.Fprintf(os.Stderr, "Configuration validation failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Configuration is valid")
+		os.Exit(0)
+	}
+
+	// Migrate configuration and exit if requested
+	if *migrateConfig {
+		handleConfigMigration(*configFile)
+		return
+	}
 
 	// Handle RAG utility commands first (these exit after completion)
 	if *ragInit {
@@ -161,7 +182,7 @@ func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 	// Validate LLM provider - Check against known providers from the factory
 	// This validation might be better placed after registry initialization if needed
 	// For now, just log the configured provider.
-	logger.Info("LLM Provider specified in config: %s", cfg.LLMProvider)
+	logger.Info("LLM Provider specified in config: %s", cfg.LLM.Provider)
 
 	// Apply command-line overrides AFTER loading config
 	if err := applyCommandLineOverrides(logger, cfg); err != nil {
@@ -170,9 +191,9 @@ func loadAndPrepareConfig(logger *logging.Logger) *config.Config {
 
 	// Log configuration information
 	logger.Info("Configuration loaded. Slack Bot Token Present: %t, Slack App Token Present: %t",
-		cfg.SlackBotToken != "", cfg.SlackAppToken != "")
+		cfg.Slack.BotToken != "", cfg.Slack.AppToken != "")
 	logLLMSettings(logger, cfg) // Log LLM settings
-	logger.Info("MCP Servers Configured (in file): %d", len(cfg.Servers))
+	logger.Info("MCP Servers Configured (in file): %d", len(cfg.MCPServers))
 
 	return cfg
 }
@@ -187,7 +208,7 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 	initializedClientCount := 0
 
 	logger.Info("--- Starting MCP Client Initialization and Tool Discovery --- ")
-	for serverName, serverConf := range cfg.Servers {
+	for serverName, serverConf := range cfg.MCPServers {
 		processSingleMCPServer(
 			logger,
 			serverName,
@@ -221,7 +242,7 @@ func initializeMCPClients(logger *logging.Logger, cfg *config.Config) (map[strin
 func processSingleMCPServer(
 	logger *logging.Logger,
 	serverName string,
-	serverConf config.ServerConfig,
+	serverConf config.MCPServerConfig,
 	mcpClients map[string]*mcp.Client, // Use mcp.Client
 	discoveredTools map[string]mcp.ToolInfo,
 	failedServers *[]string,
@@ -301,10 +322,10 @@ func processSingleMCPServer(
 
 	blockListMap := map[string]bool{}
 	allowListMap := map[string]bool{}
-	for _, toolName := range serverConf.BlockList {
+	for _, toolName := range serverConf.Tools.BlockList {
 		blockListMap[toolName] = true
 	}
-	for _, toolName := range serverConf.AllowList {
+	for _, toolName := range serverConf.Tools.AllowList {
 		allowListMap[toolName] = true
 	}
 
@@ -360,18 +381,18 @@ func processSingleMCPServer(
 
 // createMCPClient creates an MCP client based on configuration
 // Use mcp.Client and mcp.NewClient from the internal mcp package
-func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *log.Logger) (*mcp.Client, error) {
+func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, _ *log.Logger) (*mcp.Client, error) {
 	// Check if this is a URL-based (HTTP/SSE) configuration
 	if serverConf.URL != "" {
-		// Assume "sse" mode by default for HTTP-based connections
-		mode := serverConf.Mode
-		if mode == "" {
-			mode = "sse" // Default to SSE if not specified
+		// Assume "sse" transport by default for HTTP-based connections
+		transport := serverConf.Transport
+		if transport == "" {
+			transport = "sse" // Default to SSE if not specified
 		}
-		logger.InfoKV("Creating MCP client", "mode", mode, "address", serverConf.URL)
+		logger.InfoKV("Creating MCP client", "transport", transport, "address", serverConf.URL)
 
 		// Use the imported mcp.NewClient from internal/mcp/client.go with structured logger
-		mcpClient, createErr := mcp.NewClient(mode, serverConf.URL, nil, nil, logger)
+		mcpClient, createErr := mcp.NewClient(transport, serverConf.URL, nil, nil, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client for URL %s: %v", serverConf.URL, createErr)
 			// Create a domain-specific error with additional context
@@ -379,7 +400,7 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *
 				fmt.Sprintf("Failed to create MCP client for URL '%s'", serverConf.URL))
 
 			// Add additional context data
-			domainErr = domainErr.WithData("mode", mode)
+			domainErr = domainErr.WithData("transport", transport)
 			domainErr = domainErr.WithData("url", serverConf.URL)
 			return nil, domainErr
 		}
@@ -388,8 +409,8 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *
 
 	// Check if this is a command-based (stdio) configuration
 	if serverConf.Command != "" {
-		mode := "stdio"
-		logger.InfoKV("Creating MCP client", "mode", mode, "command", serverConf.Command, "args", serverConf.Args)
+		transport := "stdio"
+		logger.InfoKV("Creating MCP client", "transport", transport, "command", serverConf.Command, "args", serverConf.Args)
 
 		// Process environment variables
 		env := make(map[string]string)
@@ -411,7 +432,7 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *
 
 		// Create the MCP client
 		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env)
-		mcpClient, createErr := mcp.NewClient(mode, serverConf.Command, serverConf.Args, env, logger)
+		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverConf.Args, env, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client: %v", createErr)
 			// Create a domain-specific error with additional context
@@ -419,7 +440,7 @@ func createMCPClient(logger *logging.Logger, serverConf config.ServerConfig, _ *
 				fmt.Sprintf("Failed to create MCP client for command '%s'", serverConf.Command))
 
 			// Add additional context data
-			domainErr = domainErr.WithData("mode", mode)
+			domainErr = domainErr.WithData("transport", transport)
 			domainErr = domainErr.WithData("command", serverConf.Command)
 			return nil, domainErr
 		}
@@ -482,7 +503,7 @@ func applyCommandLineOverrides(logger *logging.Logger, cfg *config.Config) error
 // logLLMSettings logs the current LLM configuration
 func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 	// Log the primary provider being used
-	logger.Info("Primary LLM Provider Selected: %s", cfg.LLMProvider)
+	logger.Info("Primary LLM Provider Selected: %s", cfg.LLM.Provider)
 
 	// Check if the provider was set via environment variable
 	llmProviderEnv := os.Getenv("LLM_PROVIDER")
@@ -491,20 +512,12 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 	}
 
 	// Log details for the selected provider if available
-	if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
-		// Be careful logging sensitive info like API keys
-		loggableConfig := make(map[string]interface{})
-		for k, v := range providerConfig {
-			if k != "api_key" && k != "apiKey" { // Avoid logging keys
-				loggableConfig[k] = v
-			}
-		}
-
+	if providerConfig, ok := cfg.LLM.Providers[cfg.LLM.Provider]; ok {
 		// Log that we're using LangChain as the gateway
-		logger.Info("Using LangChain as gateway for provider: %s", cfg.LLMProvider)
-		logger.Info("Configuration for %s: %v", cfg.LLMProvider, loggableConfig)
+		logger.Info("Using LangChain as gateway for provider: %s", cfg.LLM.Provider)
+		logger.Info("Configuration for %s: model=%s, temperature=%f", cfg.LLM.Provider, providerConfig.Model, providerConfig.Temperature)
 	} else {
-		logger.Warn("No specific configuration found for selected provider: %s", cfg.LLMProvider)
+		logger.Warn("No specific configuration found for selected provider: %s", cfg.LLM.Provider)
 	}
 }
 
@@ -513,129 +526,82 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
-	// Check if RAG is enabled in LLM provider config
-	ragEnabled := false
-	ragDatabase := "./knowledge.json"
+	// Initialize RAG client if enabled and add tools to discoveredTools
+	// The actual RAG client will be created in the Slack client where it gets added to the bridge
+	if cfg.RAG.Enabled {
+		logger.InfoKV("RAG enabled, preparing tools for bridge integration", "provider", cfg.RAG.Provider)
 
-	if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
-		if enabled, exists := providerConfig["rag_enabled"]; exists {
-			if enabledBool, ok := enabled.(bool); ok {
-				ragEnabled = enabledBool
-			}
-		}
-		if dbPath, exists := providerConfig["rag_database"]; exists {
-			if dbPathStr, ok := dbPath.(string); ok {
-				ragDatabase = dbPathStr
-			}
-		}
-	}
-
-	// Initialize RAG tool if enabled
-	if ragEnabled {
-		logger.Info("Initializing RAG tool")
-
-		// Determine RAG provider and create configuration
-		ragProviderType := "simple" // Default
-		ragConfig := make(map[string]interface{})
-
-		// Check for RAG provider configuration in LLM provider config
-		if providerConfig, ok := cfg.LLMProviders[cfg.LLMProvider]; ok {
-			if provider, exists := providerConfig["rag_provider"]; exists {
-				if providerStr, ok := provider.(string); ok {
-					ragProviderType = providerStr
-				}
-			}
-
-			// Extract RAG config from LLM provider config
-			ragConfig = rag.ExtractRAGConfig(providerConfig)
-			if ragConfig == nil {
-				ragConfig = make(map[string]interface{})
-				ragConfig["provider"] = ragProviderType
-			}
-
-			// Add custom prompt from main config if available
-			if string(cfg.CustomPrompt) != "" {
-				ragConfig["custom_prompt"] = string(cfg.CustomPrompt)
-			}
+		// Add RAG tools to discoveredTools for bridge integration
+		if discoveredTools == nil {
+			discoveredTools = make(map[string]mcp.ToolInfo)
 		}
 
-		// Only set database_path for providers that need it
-		if ragProviderType == "simple" {
-			if ragConfig["database_path"] == nil {
-				ragConfig["database_path"] = ragDatabase
-			}
-		}
-
-		logger.Info("Using RAG provider: %s", ragProviderType)
-
-		ragClient, err := rag.NewClientWithProvider(ragProviderType, ragConfig)
-		if err != nil {
-			logger.Error("Failed to create RAG client: %v", err)
-			logger.Info("RAG will be disabled")
-		} else {
-			// Create tool info using the RAG client
-			ragToolInfo := mcp.ToolInfo{
-				ServerName:      "rag_search",
-				ToolName:        "rag_search",
-				ToolDescription: "Search knowledge base for relevant context",
-				InputSchema: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"query": map[string]interface{}{
-							"type":        "string",
-							"description": "Search query for knowledge base",
-						},
-						"limit": map[string]interface{}{
-							"type":        "number",
-							"description": "Maximum number of results to return (default: 3, max: 20)",
-							"default":     3,
-							"minimum":     1,
-							"maximum":     20,
-						},
+		// Manually add RAG tools since we'll create the client in the Slack package
+		discoveredTools["rag_search"] = mcp.ToolInfo{
+			ToolName:        "rag_search",
+			ToolDescription: "Search the RAG knowledge base for relevant information",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"query": map[string]interface{}{
+						"type":        "string",
+						"description": "The search query to find relevant information",
 					},
-					"required": []string{"query"},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum number of results to return (default: 5, max: 20)",
+						"minimum":     1,
+						"maximum":     20,
+					},
 				},
-			}
-
-			// Add RAG tool to discovered tools (integrates with existing bridge)
-			discoveredTools["rag_search"] = ragToolInfo
-
-			// Store RAG client in the config for the slack client to pick up
-			// This is a bit of a hack, but avoids changing the slack client interface
-			if cfg.LLMProviders[cfg.LLMProvider] == nil {
-				cfg.LLMProviders[cfg.LLMProvider] = make(map[string]interface{})
-			}
-			cfg.LLMProviders[cfg.LLMProvider]["_rag_client"] = ragClient
-
-			logger.Info("RAG tool registered and available for LLM to use")
-
-			// Get document count with proper context handling
-			ctx := context.Background()
-			stats, err := ragClient.GetProvider().GetStats(ctx)
-			if err != nil {
-				logger.Warn("Could not get document count: %v", err)
-			} else {
-				logger.Info("Knowledge base contains %d files, %d chunks", stats.TotalFiles, stats.TotalChunks)
-			}
+				"required": []string{"query"},
+			},
+			ServerName: "rag", // Internal RAG server identifier
 		}
+		discoveredTools["rag_ingest"] = mcp.ToolInfo{
+			ToolName:        "rag_ingest",
+			ToolDescription: "Ingest a file into the RAG knowledge base",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"file_path": map[string]interface{}{
+						"type":        "string",
+						"description": "Path to the file to ingest",
+					},
+					"metadata": map[string]interface{}{
+						"type":        "object",
+						"description": "Optional metadata for the file",
+					},
+				},
+				"required": []string{"file_path"},
+			},
+			ServerName: "rag", // Internal RAG server identifier
+		}
+		discoveredTools["rag_stats"] = mcp.ToolInfo{
+			ToolName:        "rag_stats",
+			ToolDescription: "Get statistics about the RAG knowledge base",
+			InputSchema: map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+			ServerName: "rag", // Internal RAG server identifier
+		}
+
+		logger.InfoKV("Added RAG tools to available tools", "tool_count", 3)
 	} else {
-		logger.Info("RAG is disabled. To enable, set 'rag_enabled': true in your LLM provider config")
+		logger.Info("RAG integration disabled in configuration")
 	}
 
 	var err error
 
 	var userFrontend slackbot.UserFrontend
-	if cfg.UseStdIOClient != nil && *cfg.UseStdIOClient {
-		userFrontend = slackbot.NewStdioClient(logger)
-	} else {
-		userFrontend, err = slackbot.GetSlackClient(
-			cfg.SlackBotToken,
-			cfg.SlackAppToken,
-			logger,
-		)
-		if err != nil {
-			logger.Fatal("Failed to initialize Slack client: %v", err)
-		}
+	userFrontend, err = slackbot.GetSlackClient(
+		cfg.Slack.BotToken,
+		cfg.Slack.AppToken,
+		logger,
+	)
+	if err != nil {
+		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
 	// Use the structured logger for the Slack client
@@ -929,4 +895,72 @@ func getRAGConfig(provider string) map[string]interface{} {
 	}
 
 	return config
+}
+
+// handleConfigMigration handles the configuration migration from legacy format
+func handleConfigMigration(inputFile string) {
+	fmt.Printf("Migrating configuration from legacy format...\n")
+
+	// Determine input and output files
+	if inputFile == "" {
+		inputFile = "mcp-servers.json"
+	}
+	outputFile := "config.json"
+
+	// Check if input file exists
+	if _, err := os.Stat(inputFile); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "Error: Input file '%s' not found\n", inputFile)
+		fmt.Fprintf(os.Stderr, "Usage: slack-mcp-client --migrate-config [--config input-file]\n")
+		os.Exit(1)
+	}
+
+	// Check if output file already exists
+	if _, err := os.Stat(outputFile); err == nil {
+		fmt.Fprintf(os.Stderr, "Error: Output file '%s' already exists\n", outputFile)
+		fmt.Fprintf(os.Stderr, "Please move or rename the existing file before migration\n")
+		os.Exit(1)
+	}
+
+	// Execute the migration script
+	if err := executeMigrationScript(inputFile, outputFile); err != nil {
+		fmt.Fprintf(os.Stderr, "Migration failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Migration completed successfully!\n")
+	fmt.Printf("  Input:  %s\n", inputFile)
+	fmt.Printf("  Output: %s\n", outputFile)
+	fmt.Printf("\nNext steps:\n")
+	fmt.Printf("1. Review the generated %s file\n", outputFile)
+	fmt.Printf("2. Test with: slack-mcp-client --config %s --config-validate\n", outputFile)
+	fmt.Printf("3. Update your deployment scripts to use --config %s\n", outputFile)
+}
+
+// executeMigrationScript runs the migration script to convert legacy config
+func executeMigrationScript(inputFile, outputFile string) error {
+	// Look for the migration script in common locations
+	scriptPaths := []string{
+		"scripts/migrate-config.sh",
+		"./migrate-config.sh",
+		"/usr/local/bin/migrate-config.sh",
+	}
+
+	var scriptPath string
+	for _, path := range scriptPaths {
+		if _, err := os.Stat(path); err == nil {
+			scriptPath = path
+			break
+		}
+	}
+
+	if scriptPath == "" {
+		return fmt.Errorf("migration script not found in any of the expected locations: %v", scriptPaths)
+	}
+
+	// Execute the script with input and output files
+	cmd := exec.Command("bash", scriptPath, inputFile, outputFile)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
 }
