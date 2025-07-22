@@ -902,6 +902,52 @@ All configuration is now managed through a single `config.json` file with compre
 
 For detailed configuration options and migration guides, see the [Configuration Guide](docs/configuration.md).
 
+## Automatic Reload Feature
+
+The client supports automatic reloading to handle MCP server restarts without downtime - perfect for Kubernetes deployments where MCP servers may restart independently.
+
+### Configuration
+
+Add reload settings to your `config.json`:
+
+```json
+{
+  "version": "2.0",
+  "reload": {
+    "enabled": true,
+    "interval": "30m"
+  }
+}
+```
+
+### Usage
+
+**Automatic Reload**: The application automatically reloads every 30 minutes (or your configured interval) to reconnect to MCP servers and refresh tool discovery.
+
+**Manual Reload**: Trigger an immediate reload using signals:
+```bash
+# In Kubernetes
+kubectl exec -it <pod-name> -- kill -USR1 1
+
+# Local process
+kill -USR1 <process-id>
+```
+
+### Benefits
+
+- **Zero Downtime**: Application stays running during reload
+- **Kubernetes-Friendly**: Pod continues running while application components restart
+- **Flexible**: Both automatic (periodic) and manual (signal) triggers
+- **Safe**: Minimum interval validation prevents excessive reloading
+
+The reload feature automatically:
+- Reconnects to all configured MCP servers
+- Rediscovers available tools
+- Refreshes configuration settings
+- Maintains Slack connection throughout the process
+
+Perfect for production environments where MCP servers may restart due to updates, scaling, or maintenance.
+
 ## Slack-Formatted Output
 
 The client includes a comprehensive Slack-formatted output system that enhances message display in Slack:
