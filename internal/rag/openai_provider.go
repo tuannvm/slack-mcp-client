@@ -110,7 +110,7 @@ func (o *OpenAIProvider) Initialize(ctx context.Context) error {
 		o.vectorStoreID = vectorStore.ID
 		fmt.Printf("[RAG] OpenAI: Using existing vector store '%s' with ID: %s\n", vectorStore.Name, o.vectorStoreID)
 	} else {
-		if o.config.VectorStoreName != "" && o.config.VectorStoreNameRegex != "" {
+		if o.config.VectorStoreName != "" {
 			// Search for existing vector store by name first
 			existingVectorStore, err := o.findVectorStoreByName(ctx, o.config.VectorStoreName)
 			if err != nil {
@@ -272,15 +272,15 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 			}
 			for _, vs := range vectorStores.Data {
 				if re.MatchString(vs.Name) {
-					o.vectorStoreID = vs.ID
-					fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, o.vectorStoreID)
 					if o.config.VectorStoreMetadataKey != "" && o.config.VectorStoreMetadataValue != "" {
 						if vs.Metadata[o.config.VectorStoreMetadataKey] == o.config.VectorStoreMetadataValue {
 							o.vectorStoreID = vs.ID
-							fmt.Printf("[RAG] OpenAI: vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, o.vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
+							fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s and metadata '%s' = '%s'\n", vs.Name, o.vectorStoreID, o.config.VectorStoreMetadataKey, o.config.VectorStoreMetadataValue)
 							break
 						}
 					} else {
+						o.vectorStoreID = vs.ID
+						fmt.Printf("[RAG] OpenAI: Found vector store '%s' with ID: %s\n", vs.Name, o.vectorStoreID)
 						break
 					}
 				}
