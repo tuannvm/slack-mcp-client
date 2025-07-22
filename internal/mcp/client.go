@@ -175,8 +175,9 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	prefix := c.serverName + "_"
 	c.logger.DebugKV("Tool name prefix", "prefix", prefix)
 	if strings.HasPrefix(toolName, prefix) {
+		originalToolName := toolName
 		toolName = strings.TrimPrefix(toolName, prefix)
-		c.logger.DebugKV("Stripped prefix from tool name", "original", toolName, "stripped", toolName)
+		c.logger.DebugKV("Stripped prefix from tool name", "original", originalToolName, "stripped", toolName)
 	}
 
 	// Create a proper CallToolRequest
