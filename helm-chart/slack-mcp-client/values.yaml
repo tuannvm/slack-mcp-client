@@ -77,3 +77,8 @@ configMap:
   #        }
   #      }
   #    }
+
+# If you want to use outside secret for the environment variables, you can use the following:
+secret:
+  enabled: false
+  name: ""
