@@ -42,6 +42,11 @@ spec:
             - secretRef:
                 name: {{ include "slack-mcp-client.fullname" . }}
                 optional: false
+            {{- if .Values.secret.enabled }}
+            - secretRef:
+                name: {{ .Values.secret.name }}
+                optional: false
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           {{- if or .Values.configMap.create .Values.configMap.name }}
