@@ -13,6 +13,10 @@ on:
             - minor
             - patch
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build-and-push:
     name: Build and Push Docker Image
