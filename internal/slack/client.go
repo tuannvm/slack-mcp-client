@@ -347,22 +347,26 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, profil
 		c.logger.ErrorKV("Failed to fetch thread replies", "channel", channelID, "thread_ts", threadTS, "error", err)
 	} else {
 		c.logger.DebugKV("Fetched thread replies", "channel", channelID, "thread_ts", threadTS, "count", len(replies))
+		existingMessages := make(map[string]bool)
+		history := c.messageHistory[historyKey(channelID, threadTS)]
+		for _, msg := range history {
+			key := fmt.Sprintf("%s:%s", msg.UserID, msg.Content)
+			existingMessages[key] = true
+		}
 		for _, reply := range replies {
-			exists := false
-			history := c.messageHistory[historyKey(channelID, threadTS)]
-			for _, msg := range history {
-				if msg.Role == "user" && msg.Content == reply.Text {
-					exists = true
-					break
-				}
-			}
-			if !exists {
+			replyKey := fmt.Sprintf("%s:%s", reply.User, reply.Text)
+			if !existingMessages[replyKey] {
 				role := "user"
 				if reply.BotID != "" {
 					role = "assistant"
 				}
-				replyProfile, _ := c.userFrontend.GetUserInfo(reply.User)
+				replyProfile, err := c.userFrontend.GetUserInfo(reply.User)
+				if err != nil {
+					c.logger.WarnKV("Failed to get user info", "user", reply.User, "error", err)
+					replyProfile = &UserProfile{userId: reply.User, realName: "Unknown", email: ""}
+				}
 				c.addToHistory(channelID, threadTS, role, reply.Text, replyProfile.userId, replyProfile.realName, replyProfile.email)
+				existingMessages[replyKey] = true
 			}
 		}
 	}
