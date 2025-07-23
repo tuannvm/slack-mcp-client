@@ -617,22 +617,16 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
-	// Load security configuration and determine which client to use
-	securityCfg, err := config.LoadConfigWithSecurity(*configFile, logger)
-	if err != nil {
-		logger.Fatal("Failed to load security configuration: %v", err)
-	}
-
 	// Use security-enabled client if security is enabled, otherwise use regular client
 	var slackClient interface{ Run() error }
-	if securityCfg.Security.Enabled {
+	if cfg.Security.Enabled {
 		logger.Info("Security is enabled - using secure Slack client")
 		secureClient, err := slackbot.NewSecureClient(
 			userFrontend,
 			logger,          // Pass the structured logger
 			mcpClients,      // Pass the map of initialized clients
 			discoveredTools, // Pass the map of tool information
-			securityCfg,     // Pass the security-enabled config
+			cfg,             // Pass the unified config
 		)
 		if err != nil {
 			logger.Fatal("Failed to initialize secure Slack client: %v", err)

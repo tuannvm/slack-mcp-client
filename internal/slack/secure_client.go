@@ -20,16 +20,16 @@ type SecureClient struct {
 
 // NewSecureClient creates a new security-enabled Slack client instance
 func NewSecureClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients map[string]*mcp.Client,
-	discoveredTools map[string]mcp.ToolInfo, cfg *config.ConfigWithSecurity) (*SecureClient, error) {
+	discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) (*SecureClient, error) {
 
-	// Create the base client using the embedded Config
-	baseClient, err := NewClient(userFrontend, stdLogger, mcpClients, discoveredTools, cfg.Config)
+	// Create the base client using the unified config
+	baseClient, err := NewClient(userFrontend, stdLogger, mcpClients, discoveredTools, cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create access controller with security configuration
-	accessController := security.NewAccessController(cfg.Security, baseClient.logger.WithName("security"))
+	accessController := security.NewAccessController(cfg.GetSecurityConfig(), baseClient.logger.WithName("security"))
 
 	return &SecureClient{
 		Client:           baseClient,
