@@ -29,7 +29,7 @@ type Client struct {
 	logger      *logging.Logger
 	client      client.MCPClient
 	serverAddr  string
-	serverName string
+	serverName  string
 	initialized bool // Track if the client has been successfully initialized
 
 	closeOnce sync.Once  // Ensures close logic runs only once

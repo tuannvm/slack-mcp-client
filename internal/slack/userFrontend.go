@@ -126,7 +126,7 @@ func (slackClient *SlackClient) GetThreadReplies(channelID, threadTS string) ([]
 	}
 	replies, _, _, err := slackClient.GetConversationReplies(&slack.GetConversationRepliesParameters{
 		ChannelID: channelID,
-		Timestamp:  threadTS,
+		Timestamp: threadTS,
 	})
 	if err != nil {
 		return nil, customErrors.WrapSlackError(err, "fetch_thread_replies_failed", "Failed to fetch thread replies")
@@ -148,7 +148,7 @@ func (slackClient *SlackClient) GetUserInfo(userID string) (*UserProfile, error)
 		return nil, customErrors.WrapSlackError(err, "fetch_user_profile_failed", "Failed to fetch user profile")
 	}
 	profile := &UserProfile{
-		userId:  userID,
+		userId:   userID,
 		realName: slackProfile.RealName,
 		email:    slackProfile.Email,
 	}

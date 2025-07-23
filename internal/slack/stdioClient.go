@@ -90,7 +90,7 @@ func (client StdioClient) IsBotUser(userID string) bool {
 }
 
 func (client StdioClient) GetThreadReplies(channelID, threadTS string) ([]slack.Message, error) {
-    return []slack.Message{}, nil
+	return []slack.Message{}, nil
 }
 
 func (client StdioClient) GetUserInfo(userID string) (*UserProfile, error) {

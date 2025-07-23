@@ -445,7 +445,7 @@ func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, 
 
 		// Create the MCP client
 		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env)
-		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverName,  serverConf.Args, env, logger)
+		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverName, serverConf.Args, env, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client: %v", createErr)
 			// Create a domain-specific error with additional context

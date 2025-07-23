@@ -379,7 +379,6 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, profil
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, thinkingMessage)
 
-
 	if !c.llmMCPBridge.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
 		var finalPrompt string
@@ -496,7 +495,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 
 		// Add history
 		c.addToHistory(channelID, threadTS, "assistant", llmResponse.Content, "", "", "") // Original LLM response (tool call JSON)
-		c.addToHistory(channelID, threadTS, "tool", finalResponse, "", "", "")    // Tool execution result
+		c.addToHistory(channelID, threadTS, "tool", finalResponse, "", "", "")            // Tool execution result
 
 		c.logger.DebugKV("Re-prompting LLM", "prompt", rePrompt)
 
