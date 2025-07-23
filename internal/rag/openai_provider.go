@@ -128,6 +128,16 @@ func (o *OpenAIProvider) Initialize(ctx context.Context) error {
 
 // IngestFile uploads a file to the OpenAI vector store
 func (o *OpenAIProvider) IngestFile(ctx context.Context, filePath string, metadata map[string]string) (string, error) {
+	// Check if vector store ID is empty
+	if o.vectorStoreID == "" {
+		// Use dynamic vector store
+		fmt.Printf("[RAG] OpenAI: Using dynamic vector store\n")
+		vectorStoreID, err := o.searchVectorStore(ctx, o.config.VectorStoreNameRegex)
+		if err != nil {
+			return "", fmt.Errorf("failed to search vector store: %w", err)
+		}
+		o.vectorStoreID = vectorStoreID
+	}
 	// Open the file for upload
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -199,6 +209,15 @@ func (o *OpenAIProvider) IngestFiles(ctx context.Context, filePaths []string, me
 
 // DeleteFile removes a file from the vector store
 func (o *OpenAIProvider) DeleteFile(ctx context.Context, fileID string) error {
+	if o.vectorStoreID == "" {
+		// Use dynamic vector store
+		fmt.Printf("[RAG] OpenAI: Using dynamic vector store\n")
+		vectorStoreID, err := o.searchVectorStore(ctx, o.config.VectorStoreNameRegex)
+		if err != nil {
+			return fmt.Errorf("failed to search vector store: %w", err)
+		}
+		o.vectorStoreID = vectorStoreID
+	}
 	// Remove from vector store first
 	_, err := o.client.VectorStores.Files.Delete(ctx, o.vectorStoreID, fileID)
 	if err != nil {
@@ -217,6 +236,15 @@ func (o *OpenAIProvider) DeleteFile(ctx context.Context, fileID string) error {
 
 // ListFiles lists all files in the vector store
 func (o *OpenAIProvider) ListFiles(ctx context.Context, limit int) ([]FileInfo, error) {
+	if o.vectorStoreID == "" {
+		// Use dynamic vector store
+		fmt.Printf("[RAG] OpenAI: Using dynamic vector store\n")
+		vectorStoreID, err := o.searchVectorStore(ctx, o.config.VectorStoreNameRegex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to search vector store: %w", err)
+		}
+		o.vectorStoreID = vectorStoreID
+	}
 	// List vector store files
 	vsFiles, err := o.client.VectorStores.Files.List(ctx, o.vectorStoreID, openai.VectorStoreFileListParams{
 		Limit: openai.Int(int64(limit)),
@@ -340,6 +368,15 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 
 // GetStats returns statistics about the vector store
 func (o *OpenAIProvider) GetStats(ctx context.Context) (*VectorStoreStats, error) {
+	if o.vectorStoreID == "" {
+		// Use dynamic vector store
+		fmt.Printf("[RAG] OpenAI: Using dynamic vector store\n")
+		vectorStoreID, err := o.searchVectorStore(ctx, o.config.VectorStoreNameRegex)
+		if err != nil {
+			return nil, fmt.Errorf("failed to search vector store: %w", err)
+		}
+		o.vectorStoreID = vectorStoreID
+	}
 	// Get vector store details
 	vs, err := o.client.VectorStores.Get(ctx, o.vectorStoreID)
 	if err != nil {
