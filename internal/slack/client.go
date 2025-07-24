@@ -23,7 +23,6 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
 )
 
-
 // Client represents the Slack client application.
 type Client struct {
 	logger          *logging.Logger // Structured logger
@@ -160,7 +159,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 
 	// Determine custom prompt settings
 	customPrompt := cfg.LLM.CustomPrompt
-	
+
 	// Load custom prompt from file if specified
 	if cfg.LLM.CustomPromptFile != "" && customPrompt == "" {
 		content, err := os.ReadFile(cfg.LLM.CustomPromptFile)
@@ -171,7 +170,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		customPrompt = string(content)
 		clientLogger.InfoKV("Loaded custom prompt from file", "file", cfg.LLM.CustomPromptFile)
 	}
-	
+
 	replaceToolPrompt := cfg.LLM.ReplaceToolPrompt
 
 	// Pass the raw map to the bridge with the configured log level

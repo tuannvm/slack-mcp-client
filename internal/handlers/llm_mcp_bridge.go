@@ -26,12 +26,12 @@ import (
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
 // It detects when an LLM response should trigger a tool call and executes it.
 type LLMMCPBridge struct {
-	mcpClients        map[string]mcp.MCPClientInterface // Map of MCP clients keyed by server name
-	logger            *logging.Logger
-	stdLogger         *log.Logger             // Standard logger for backward compatibility
-	availableTools    map[string]mcp.ToolInfo // Map of tool names to info about the tool
-	llmRegistry       *llm.ProviderRegistry   // LLM provider registry
-	useNativeTools    bool                    // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
+	mcpClients         map[string]mcp.MCPClientInterface // Map of MCP clients keyed by server name
+	logger             *logging.Logger
+	stdLogger          *log.Logger             // Standard logger for backward compatibility
+	availableTools     map[string]mcp.ToolInfo // Map of tool names to info about the tool
+	llmRegistry        *llm.ProviderRegistry   // LLM provider registry
+	useNativeTools     bool                    // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
 	customPrompt       string                  // Custom system prompt
 	replaceToolPrompt  bool                    // Whether to replace tool prompt completely
 	UseAgent           bool                    // Flag to indicate if the agent should be used instead of chat
