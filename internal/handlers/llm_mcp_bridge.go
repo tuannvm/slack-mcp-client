@@ -32,9 +32,10 @@ type LLMMCPBridge struct {
 	availableTools    map[string]mcp.ToolInfo // Map of tool names to info about the tool
 	llmRegistry       *llm.ProviderRegistry   // LLM provider registry
 	useNativeTools    bool                    // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
-	customPrompt      string                  // Custom system prompt
-	replaceToolPrompt bool                    // Whether to replace tool prompt completely
-	UseAgent          bool                    // Flag to indicate if the agent should be used instead of chat
+	customPrompt       string                  // Custom system prompt
+	replaceToolPrompt  bool                    // Whether to replace tool prompt completely
+	UseAgent           bool                    // Flag to indicate if the agent should be used instead of chat
+	maxAgentIterations int                     // Maximum agent iterations
 }
 
 // generateToolPrompt generates the prompt string for available tools
@@ -118,13 +119,13 @@ func NewLLMMCPBridge(mcpClients map[string]mcp.MCPClientInterface, stdLogger *lo
 	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
 	// Create a structured logger from the standard logger with INFO level by default
 	// If debug logging is needed, use NewLLMMCPBridgeWithLogLevel instead
-	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt)
+	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, 20)
 }
 
 // NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
 func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger,
 	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
-	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
+	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -143,15 +144,16 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, s
 	}
 
 	return &LLMMCPBridge{
-		mcpClients:        mcpClients,
-		logger:            structLogger,
-		stdLogger:         stdLogger,
-		availableTools:    connectedTools,
-		useNativeTools:    useNativeTools,
-		llmRegistry:       llmRegistry,
-		UseAgent:          useAgent,
-		customPrompt:      customPrompt,
-		replaceToolPrompt: replaceToolPrompt,
+		mcpClients:         mcpClients,
+		logger:             structLogger,
+		stdLogger:          stdLogger,
+		availableTools:     connectedTools,
+		useNativeTools:     useNativeTools,
+		llmRegistry:        llmRegistry,
+		UseAgent:           useAgent,
+		customPrompt:       customPrompt,
+		replaceToolPrompt:  replaceToolPrompt,
+		maxAgentIterations: maxAgentIterations,
 	}
 }
 
@@ -170,14 +172,14 @@ func getClientNames(clients map[string]mcp.MCPClientInterface) []string {
 func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
 	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
 	// If debug logging is needed, use NewLLMMCPBridgeFromClientsWithLogLevel instead
-	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt)
+	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, 20)
 }
 
 // NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
 // This is a convenience function that wraps the concrete clients in the interface
 func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger,
 	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
-	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
+	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -227,7 +229,7 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 		}
 	}
 
-	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt)
+	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, maxAgentIterations)
 }
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
@@ -559,7 +561,7 @@ func (b *LLMMCPBridge) CallLLMAgent(providerName, userDisplayName, systemPrompt,
 	// --- Use the specified provider via the registry ---
 	b.logger.InfoKV("Attempting to use LLM provider for chat completion", "provider", providerName)
 
-	completion, err := b.llmRegistry.GenerateAgentCompletion(ctx, providerName, userDisplayName, systemPrompt, prompt, history, toolArr, callbackHandler)
+	completion, err := b.llmRegistry.GenerateAgentCompletion(ctx, providerName, userDisplayName, systemPrompt, prompt, history, toolArr, callbackHandler, b.maxAgentIterations)
 	if err != nil {
 		// Error already logged by registry method potentially, but log here too for context
 		b.logger.ErrorKV("GenerateAgentCompletion failed", "provider", providerName, "error", err)
