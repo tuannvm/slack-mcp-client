@@ -12,7 +12,7 @@
     "useNativeTools": true,
     "useAgent": true,
     "customPrompt": "You are an AI assistant with access to a comprehensive knowledge base. Always search the knowledge base first before answering questions. Provide detailed, well-sourced responses.",
-    "maxAgentIterations": 25,
+    "maxAgentIterations": 20,
     "providers": {
       "openai": {
         "model": "gpt-4o",
