@@ -174,7 +174,7 @@ func (p *LangChainProvider) GenerateAgentCompletion(ctx context.Context,
 	history []RequestMessage,
 	llmTools []tools.Tool,
 	callbackHandler callbacks.Handler,
-	maxAgentsIterations int,
+	maxAgentIterations int,
 ) (string, error) {
 	if p.llm == nil {
 		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")
@@ -244,7 +244,7 @@ Thought:{{.agent_scratchpad}}
 `, historyBuilder.String())),
 	)
 
-	e := agents.NewExecutor(ag, agents.WithMaxIterations(maxAgentsIterations))
+	e := agents.NewExecutor(ag, agents.WithMaxIterations(maxAgentIterations))
 
 	call, err := e.Call(ctx, map[string]any{
 		"input": prompt,
