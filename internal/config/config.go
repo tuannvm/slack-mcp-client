@@ -155,14 +155,31 @@ type ReloadConfig struct {
 
 // ApplyDefaults applies default values to the configuration
 func (c *Config) ApplyDefaults() {
-	// Set version if not specified
+	c.applyVersionDefaults()
+	c.applyLLMDefaults()
+	c.applyRAGDefaults()
+	c.applySlackDefaults()
+	c.applyTimeoutDefaults()
+	c.applyRetryDefaults()
+	c.applyMonitoringDefaults()
+	c.applyMCPDefaults()
+}
+
+// applyVersionDefaults sets default version if not specified
+func (c *Config) applyVersionDefaults() {
 	if c.Version == "" {
 		c.Version = "2.0"
 	}
+}
 
-	// LLM defaults
+// applyLLMDefaults sets default LLM provider and configurations
+func (c *Config) applyLLMDefaults() {
 	if c.LLM.Provider == "" {
 		c.LLM.Provider = ProviderOpenAI
+	}
+
+	if c.LLM.MaxAgentIterations == 0 {
+		c.LLM.MaxAgentIterations = 20
 	}
 
 	// Ensure providers map exists
@@ -192,8 +209,10 @@ func (c *Config) ApplyDefaults() {
 			Temperature: 0.7,
 		}
 	}
+}
 
-	// RAG defaults
+// applyRAGDefaults sets default RAG provider and configurations
+func (c *Config) applyRAGDefaults() {
 	if c.RAG.Provider == "" {
 		c.RAG.Provider = "simple"
 	}
@@ -214,21 +233,20 @@ func (c *Config) ApplyDefaults() {
 			Dimensions: 1536,
 		}
 	}
+}
 
-	// Slack defaults
+// applySlackDefaults sets default Slack configuration
+func (c *Config) applySlackDefaults() {
 	if c.Slack.MessageHistory == 0 {
 		c.Slack.MessageHistory = 50
 	}
 	if c.Slack.ThinkingMessage == "" {
 		c.Slack.ThinkingMessage = "Thinking..."
 	}
+}
 
-	// LLM defaults
-	if c.LLM.MaxAgentIterations == 0 {
-		c.LLM.MaxAgentIterations = 20
-	}
-
-	// Timeout defaults
+// applyTimeoutDefaults sets default timeout values
+func (c *Config) applyTimeoutDefaults() {
 	if c.Timeouts.HTTPRequestTimeout == "" {
 		c.Timeouts.HTTPRequestTimeout = "30s"
 	}
@@ -247,8 +265,10 @@ func (c *Config) ApplyDefaults() {
 	if c.Timeouts.ResponseProcessing == "" {
 		c.Timeouts.ResponseProcessing = "1m"
 	}
+}
 
-	// Retry defaults
+// applyRetryDefaults sets default retry configuration
+func (c *Config) applyRetryDefaults() {
 	if c.Retry.MaxAttempts == 0 {
 		c.Retry.MaxAttempts = 3
 	}
@@ -264,7 +284,10 @@ func (c *Config) ApplyDefaults() {
 	if c.Retry.MCPReconnectBackoff == "" {
 		c.Retry.MCPReconnectBackoff = "1s"
 	}
-	// Monitoring defaults
+}
+
+// applyMonitoringDefaults sets default monitoring configuration
+func (c *Config) applyMonitoringDefaults() {
 	c.Monitoring.Enabled = true // Default to enabled
 	if c.Monitoring.MetricsPort == 0 {
 		c.Monitoring.MetricsPort = 8080
@@ -272,8 +295,10 @@ func (c *Config) ApplyDefaults() {
 	if c.Monitoring.LoggingLevel == "" {
 		c.Monitoring.LoggingLevel = "info"
 	}
+}
 
-	// Ensure MCP servers map exists
+// applyMCPDefaults initializes MCP servers map if nil
+func (c *Config) applyMCPDefaults() {
 	if c.MCPServers == nil {
 		c.MCPServers = make(map[string]MCPServerConfig)
 	}
