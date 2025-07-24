@@ -173,6 +173,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		registry,
 		string(customPrompt),
 		replaceToolPrompt,
+		cfg,
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
 
