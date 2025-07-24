@@ -211,7 +211,7 @@ func (r *ProviderRegistry) GenerateChatCompletion(ctx context.Context, providerN
 
 // GenerateAgentCompletion generates a chat completion using an agent using the specified provider (or primary if empty).
 // It checks for provider availability before making the call.
-func (r *ProviderRegistry) GenerateAgentCompletion(ctx context.Context, providerName string, userDisplayName, systemPrompt string, prompt string, history []RequestMessage, llmTools []tools.Tool, callbackHandler callbacks.Handler, maxIterations int) (string, error) {
+func (r *ProviderRegistry) GenerateAgentCompletion(ctx context.Context, providerName string, userDisplayName, systemPrompt string, prompt string, history []RequestMessage, llmTools []tools.Tool, callbackHandler callbacks.Handler, maxAgentsIterations int) (string, error) {
 	provider, err := r.GetProviderWithAvailabilityCheck(providerName) // Use the availability check method
 	if err != nil {
 		return "", err
@@ -219,5 +219,5 @@ func (r *ProviderRegistry) GenerateAgentCompletion(ctx context.Context, provider
 
 	info := provider.GetInfo()
 	r.logger.DebugKV("Using provider for chat completion", "name", info.Name)
-	return provider.GenerateAgentCompletion(ctx, userDisplayName, systemPrompt, prompt, history, llmTools, callbackHandler, maxIterations)
+	return provider.GenerateAgentCompletion(ctx, userDisplayName, systemPrompt, prompt, history, llmTools, callbackHandler, maxAgentsIterations)
 }
