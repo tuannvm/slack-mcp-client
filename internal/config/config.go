@@ -178,7 +178,7 @@ func (c *Config) applyLLMDefaults() {
 		c.LLM.Provider = ProviderOpenAI
 	}
 
-	if c.LLM.MaxAgentIterations == 0 {
+	if c.LLM.MaxAgentIterations <= 0 || c.LLM.MaxAgentIterations > 100 {
 		c.LLM.MaxAgentIterations = 20
 	}
 
