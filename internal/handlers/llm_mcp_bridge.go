@@ -116,10 +116,10 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 // NewLLMMCPBridge creates a new LLMMCPBridge with the given MCP clients and tools
 // Uses INFO as the default log level
 func NewLLMMCPBridge(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
-	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
+	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
 	// Create a structured logger from the standard logger with INFO level by default
 	// If debug logging is needed, use NewLLMMCPBridgeWithLogLevel instead
-	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, 20)
+	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, maxAgentIterations)
 }
 
 // NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
@@ -170,9 +170,9 @@ func getClientNames(clients map[string]mcp.MCPClientInterface) []string {
 // This is a convenience function that wraps the concrete clients in the interface
 // Uses INFO as the default log level
 func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
-	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool) *LLMMCPBridge {
+	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
 	// If debug logging is needed, use NewLLMMCPBridgeFromClientsWithLogLevel instead
-	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, 20)
+	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, maxAgentIterations)
 }
 
 // NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
