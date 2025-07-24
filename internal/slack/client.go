@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	// "github.com/json-iterator/go/extra"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
@@ -257,13 +256,12 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
-				// Add to message history
 				profile, err := c.userFrontend.GetUserInfo(ev.User)
 				if err != nil {
 					c.logger.WarnKV("Failed to get user info", "user", ev.User, "error", err)
 					profile = &UserProfile{userId: ev.User, realName: "Unknown", email: ""}
 				}
-				// c.addToHistory(ev.Channel, ev.ThreadTimeStamp, "user", ev.Text, profile.userId, profile.realName, profile.email)
+
 				parentTS := ev.ThreadTimeStamp
 				if parentTS == "" {
 					parentTS = ev.TimeStamp // Use the original message timestamp if no thread
