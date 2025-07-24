@@ -20,17 +20,17 @@ type AccessController struct {
 }
 
 // NewAccessController creates a new AccessController instance
-func NewAccessController(config *SecurityConfig, logger *logging.Logger) *AccessController {
+func NewAccessController(config *SecurityConfig, logger *logging.Logger) (*AccessController, error) {
 	if config == nil {
-		panic("security config cannot be nil")
+		return nil, fmt.Errorf("security config cannot be nil")
 	}
 	if logger == nil {
-		panic("logger cannot be nil")
+		return nil, fmt.Errorf("logger cannot be nil")
 	}
 	return &AccessController{
 		config: config,
 		logger: logger,
-	}
+	}, nil
 }
 
 // CheckAccess determines if a user has access to interact in a specific channel

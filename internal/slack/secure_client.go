@@ -2,6 +2,7 @@
 package slackbot
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/slack-go/slack/slackevents"
@@ -29,7 +30,10 @@ func NewSecureClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpCl
 	}
 
 	// Create access controller with security configuration
-	accessController := security.NewAccessController(cfg.GetSecurityConfig(), baseClient.logger.WithName("security"))
+	accessController, err := security.NewAccessController(cfg.GetSecurityConfig(), baseClient.logger.WithName("security"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create access controller: %w", err)
+	}
 
 	return &SecureClient{
 		Client:           baseClient,
