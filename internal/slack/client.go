@@ -113,6 +113,21 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 				if providerSettings.MaxResults > 0 {
 					ragConfig["max_results"] = providerSettings.MaxResults
 				}
+				if providerSettings.ScoreThreshold > 0 {
+					ragConfig["score_threshold"] = providerSettings.ScoreThreshold
+				}
+				if providerSettings.RewriteQuery {
+					ragConfig["rewrite_query"] = providerSettings.RewriteQuery
+				}
+				if providerSettings.VectorStoreNameRegex != "" {
+					ragConfig["vector_store_name_regex"] = providerSettings.VectorStoreNameRegex
+				}
+				if providerSettings.VectorStoreMetadataKey != "" {
+					ragConfig["vs_metadata_key"] = providerSettings.VectorStoreMetadataKey
+				}
+				if providerSettings.VectorStoreMetadataValue != "" {
+					ragConfig["vs_metadata_value"] = providerSettings.VectorStoreMetadataValue
+				}
 				// Add OpenAI API key from LLM config or environment
 				if openaiConfig, exists := cfg.LLM.Providers["openai"]; exists && openaiConfig.APIKey != "" {
 					ragConfig["api_key"] = openaiConfig.APIKey
