@@ -78,10 +78,12 @@ func (mcp *MCPServerConfig) GetTransport() string {
 	}
 	if mcp.Command != "" {
 		return "stdio" // Default: if command is specified, use stdio
+
 	}
 	if mcp.URL != "" {
 		return "sse" // Default: if URL is specified, use sse
 	}
+
 	return "stdio" // Fallback default
 }
 
@@ -108,13 +110,19 @@ type RAGConfig struct {
 }
 
 // RAGProviderConfig contains RAG provider-specific settings
+// TODO: Refactor this to use a common interface for all RAG providers, can use environment variables to configure the different providers
 type RAGProviderConfig struct {
-	DatabasePath     string `json:"databasePath,omitempty"`     // Simple provider: path to JSON database
-	IndexName        string `json:"indexName,omitempty"`        // OpenAI provider: vector store name
-	VectorStoreID    string `json:"vectorStoreId,omitempty"`    // OpenAI provider: existing vector store ID
-	Dimensions       int    `json:"dimensions,omitempty"`       // OpenAI provider: embedding dimensions
-	SimilarityMetric string `json:"similarityMetric,omitempty"` // OpenAI provider: similarity metric
-	MaxResults       int    `json:"maxResults,omitempty"`       // OpenAI provider: maximum search results
+	DatabasePath             string  `json:"databasePath,omitempty"`             // Simple provider: path to JSON database
+	IndexName                string  `json:"indexName,omitempty"`                // OpenAI provider: vector store name
+	VectorStoreID            string  `json:"vectorStoreId,omitempty"`            // OpenAI provider: existing vector store ID
+	Dimensions               int     `json:"dimensions,omitempty"`               // OpenAI provider: embedding dimensions
+	SimilarityMetric         string  `json:"similarityMetric,omitempty"`         // OpenAI provider: similarity metric
+	MaxResults               int     `json:"maxResults,omitempty"`               // OpenAI provider: maximum search results
+	ScoreThreshold           float64 `json:"scoreThreshold,omitempty"`           // OpenAI provider: score threshold
+	RewriteQuery             bool    `json:"rewriteQuery,omitempty"`             // OpenAI provider: rewrite query
+	VectorStoreNameRegex     string  `json:"vectorStoreNameRegex,omitempty"`     // OpenAI provider: vector store name regex
+	VectorStoreMetadataKey   string  `json:"vectorStoreMetadataKey,omitempty"`   // OpenAI provider: vector store metadata key
+	VectorStoreMetadataValue string  `json:"vectorStoreMetadataValue,omitempty"` // OpenAI provider: vector store metadata value
 }
 
 // MonitoringConfig contains monitoring and observability settings
@@ -143,7 +151,7 @@ type RetryConfig struct {
 	MCPReconnectBackoff  string `json:"mcpReconnectBackoff,omitempty"`  // MCP reconnection backoff (default: "1s")
 }
 
-// ReloadConfig contains settings for periodic application reload
+// ReloadConfig contains signal-based reload configuration
 type ReloadConfig struct {
 	Enabled  bool   `json:"enabled,omitempty"`  // Enable periodic reload (default: false)
 	Interval string `json:"interval,omitempty"` // Reload interval (default: "30m")
@@ -271,12 +279,6 @@ func (c *Config) ApplyDefaults() {
 	if c.Retry.MCPReconnectBackoff == "" {
 		c.Retry.MCPReconnectBackoff = "1s"
 	}
-
-	// Reload defaults
-	if c.Reload.Interval == "" {
-		c.Reload.Interval = "30m"
-	}
-
 	// Monitoring defaults
 	c.Monitoring.Enabled = true // Default to enabled
 	if c.Monitoring.MetricsPort == 0 {
