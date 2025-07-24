@@ -902,6 +902,59 @@ All configuration is now managed through a single `config.json` file with compre
 
 For detailed configuration options and migration guides, see the [Configuration Guide](docs/configuration.md).
 
+## Automatic Reload Feature
+
+The client supports optional automatic reloading to handle MCP server restarts without downtime - perfect for Kubernetes deployments where MCP servers may restart independently.
+
+> **Note**: The reload feature is **disabled by default** and must be explicitly enabled in your configuration file.
+
+### Configuration
+
+To enable reload functionality, add reload settings to your `config.json`:
+
+```json
+{
+  "version": "2.0",
+  "reload": {
+    "enabled": true,
+    "interval": "30m"
+  }
+}
+```
+
+**Configuration Options**:
+- `enabled`: Must be set to `true` to activate reload functionality (default: `false`)
+- `interval`: Time between automatic reloads (default: `"30m"`, minimum: `"10s"`)
+
+### Usage
+
+**Automatic Reload**: When enabled, the application automatically reloads at the configured interval to reconnect to MCP servers and refresh tool discovery.
+
+**Manual Reload**: Even with automatic reload disabled, you can trigger manual reloads using signals:
+```bash
+# In Kubernetes
+kubectl exec -it <pod-name> -- kill -USR1 1
+
+# Local process
+kill -USR1 <process-id>
+```
+
+### Benefits
+
+- **Zero Downtime**: Application stays running during reload
+- **Kubernetes-Friendly**: Pod continues running while application components restart
+- **Opt-in**: Disabled by default, only enabled when explicitly configured
+- **Flexible**: Both automatic (periodic) and manual (signal) triggers
+- **Safe**: Minimum interval validation prevents excessive reloading
+
+When enabled, the reload feature automatically:
+- Reconnects to all configured MCP servers
+- Rediscovers available tools
+- Refreshes configuration settings
+- Maintains Slack connection throughout the process
+
+Perfect for production environments where MCP servers may restart due to updates, scaling, or maintenance.
+
 ## Slack-Formatted Output
 
 The client includes a comprehensive Slack-formatted output system that enhances message display in Slack:
