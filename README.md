@@ -460,7 +460,7 @@ Enable Agent Mode in your configuration file:
     "useNativeTools": true,
     "useAgent": true,
     "customPrompt": "You are a DevOps expert specializing in Kubernetes and cloud infrastructure. Always think through problems step by step.",
-    "maxAgentIterations": 25,
+    "maxAgentIterations": 20,
     "providers": {
       "openai": {
         "model": "gpt-4o",

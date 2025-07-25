@@ -18,8 +18,6 @@ import (
 
 const (
 	langchainProviderName = "langchain"
-
-	maxAgentIterations = 20
 )
 
 // LangChainProvider implements the LLMProvider interface using LangChainGo
@@ -176,6 +174,7 @@ func (p *LangChainProvider) GenerateAgentCompletion(ctx context.Context,
 	history []RequestMessage,
 	llmTools []tools.Tool,
 	callbackHandler callbacks.Handler,
+	maxAgentIterations int,
 ) (string, error) {
 	if p.llm == nil {
 		return "", errors.NewLLMError("client_not_initialized", "LangChainGo client not initialized")

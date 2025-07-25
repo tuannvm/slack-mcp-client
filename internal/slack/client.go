@@ -5,6 +5,7 @@ package slackbot
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -21,8 +22,6 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
 )
-
-const thinkingMessage = "Thinking..."
 
 // Client represents the Slack client application.
 type Client struct {
@@ -160,6 +159,18 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 
 	// Determine custom prompt settings
 	customPrompt := cfg.LLM.CustomPrompt
+
+	// Load custom prompt from file if specified
+	if cfg.LLM.CustomPromptFile != "" && customPrompt == "" {
+		content, err := os.ReadFile(cfg.LLM.CustomPromptFile)
+		if err != nil {
+			clientLogger.ErrorKV("Failed to read custom prompt file", "file", cfg.LLM.CustomPromptFile, "error", err)
+			return nil, customErrors.WrapConfigError(err, "custom_prompt_file_read_failed", "Failed to read custom prompt file")
+		}
+		customPrompt = string(content)
+		clientLogger.InfoKV("Loaded custom prompt from file", "file", cfg.LLM.CustomPromptFile)
+	}
+
 	replaceToolPrompt := cfg.LLM.ReplaceToolPrompt
 
 	// Pass the raw map to the bridge with the configured log level
@@ -173,7 +184,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		registry,
 		string(customPrompt),
 		replaceToolPrompt,
-		cfg,
+		cfg.LLM.MaxAgentIterations,
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
 
@@ -186,7 +197,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		llmRegistry:     registry,
 		cfg:             cfg,
 		messageHistory:  make(map[string][]Message),
-		historyLimit:    50, // Store up to 50 messages per channel
+		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
 		discoveredTools: discoveredTools,
 	}, nil
 }
@@ -340,7 +351,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
 	// Show a temporary "typing" indicator
-	c.userFrontend.SendMessage(channelID, threadTS, thinkingMessage)
+	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
 
 	if !c.llmMCPBridge.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction

@@ -36,7 +36,7 @@ func getLogLevel(stdLogger *logging.Logger) logging.LogLevel {
 	return logLevel
 }
 
-func GetSlackClient(botToken, appToken string, stdLogger *logging.Logger) (*SlackClient, error) {
+func GetSlackClient(botToken, appToken string, stdLogger *logging.Logger, thinkingMessage string) (*SlackClient, error) {
 	if botToken == "" {
 		return nil, fmt.Errorf("SLACK_BOT_TOKEN must be set")
 	}
@@ -77,18 +77,20 @@ func GetSlackClient(botToken, appToken string, stdLogger *logging.Logger) (*Slac
 	)
 
 	return &SlackClient{
-		client,
-		mentionRegex,
-		authTest.UserID,
-		slackLogger,
+		Client:          client,
+		botMentionRgx:   mentionRegex,
+		botUserID:       authTest.UserID,
+		logger:          slackLogger,
+		thinkingMessage: thinkingMessage,
 	}, nil
 }
 
 type SlackClient struct {
 	*socketmode.Client
-	botMentionRgx *regexp.Regexp
-	botUserID     string
-	logger        *logging.Logger
+	botMentionRgx   *regexp.Regexp
+	botUserID       string
+	logger          *logging.Logger
+	thinkingMessage string
 }
 
 func (slackClient *SlackClient) GetEventChannel() chan socketmode.Event {
@@ -134,7 +136,7 @@ func (slackClient *SlackClient) SendMessage(channelID, threadTS, text string) {
 	})
 	if err == nil && history != nil {
 		for _, msg := range history.Messages {
-			if slackClient.IsBotUser(msg.User) && msg.Text == thinkingMessage {
+			if slackClient.IsBotUser(msg.User) && msg.Text == slackClient.thinkingMessage {
 				_, _, err := slackClient.DeleteMessage(channelID, msg.Timestamp)
 				if err != nil {
 					slackClient.logger.ErrorKV("Error deleting typing indicator message", "error", err)
