@@ -157,21 +157,16 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	}
 	clientLogger.Info("LLM provider registry initialized successfully")
 
-	// Determine custom prompt settings
-	customPrompt := cfg.LLM.CustomPrompt
-
-	// Load custom prompt from file if specified
-	if cfg.LLM.CustomPromptFile != "" && customPrompt == "" {
+	// Load custom prompt from file if specified and customPrompt is empty
+	if cfg.LLM.CustomPromptFile != "" && cfg.LLM.CustomPrompt == "" {
 		content, err := os.ReadFile(cfg.LLM.CustomPromptFile)
 		if err != nil {
 			clientLogger.ErrorKV("Failed to read custom prompt file", "file", cfg.LLM.CustomPromptFile, "error", err)
 			return nil, customErrors.WrapConfigError(err, "custom_prompt_file_read_failed", "Failed to read custom prompt file")
 		}
-		customPrompt = string(content)
+		cfg.LLM.CustomPrompt = string(content)
 		clientLogger.InfoKV("Loaded custom prompt from file", "file", cfg.LLM.CustomPromptFile)
 	}
-
-	replaceToolPrompt := cfg.LLM.ReplaceToolPrompt
 
 	// Pass the raw map to the bridge with the configured log level
 	llmMCPBridge := handlers.NewLLMMCPBridgeFromClientsWithLogLevel(
@@ -179,12 +174,8 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		clientLogger.StdLogger(),
 		discoveredTools,
 		logLevel,
-		cfg.LLM.UseNativeTools,
-		cfg.LLM.UseAgent,
 		registry,
-		string(customPrompt),
-		replaceToolPrompt,
-		cfg.LLM.MaxAgentIterations,
+		cfg,
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
 
@@ -340,9 +331,7 @@ func (c *Client) getContextFromHistory(channelID string) string {
 
 // handleUserPrompt sends the user's text to the configured LLM provider.
 func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayName string) {
-	// Determine the provider to use from config
-	providerName := c.cfg.LLM.Provider // Get the primary provider name from config
-	c.logger.DebugKV("Routing prompt via configured provider", "provider", providerName)
+	c.logger.DebugKV("Routing prompt via configured provider", "provider", c.cfg.LLM.Provider)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
 	// Get context from history
@@ -353,7 +342,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 	// Show a temporary "typing" indicator
 	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
 
-	if !c.llmMCPBridge.UseAgent {
+	if !c.cfg.LLM.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
 		var finalPrompt string
 		customPrompt := c.cfg.LLM.CustomPrompt
@@ -367,10 +356,10 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		}
 
 		// Call LLM using the integrated logic with system instruction
-		llmResponse, err := c.llmMCPBridge.CallLLM(providerName, finalPrompt, contextHistory)
+		llmResponse, err := c.llmMCPBridge.CallLLM(finalPrompt, contextHistory)
 		if err != nil {
-			c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
-			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
+			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
+			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
 			return
 		}
 
@@ -385,7 +374,6 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		}
 
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
-			providerName,
 			userDisplayName,
 			c.cfg.LLM.CustomPrompt,
 			userPrompt,
@@ -395,11 +383,11 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 				sendMsg,
 			})
 		if err != nil {
-			c.logger.ErrorKV("Error from LLM provider", "provider", providerName, "error", err)
-			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", providerName, err))
+			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
+			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
 			return
 		}
-		c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse))
+		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse))
 		// Send the final response back to Slack
 		if llmResponse == "" {
 			c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
@@ -471,9 +459,6 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 
 		// Re-prompt using the LLM client with custom prompt as system instruction
 		var repromptErr error
-		// Get the provider name from config again for the re-prompt
-		providerName := c.cfg.LLM.Provider
-
 		// Prepare the re-prompt with custom prompt as system instruction
 		var finalRePrompt string
 		customPrompt := c.cfg.LLM.CustomPrompt
@@ -485,7 +470,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 			finalRePrompt = rePrompt
 		}
 
-		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(providerName, finalRePrompt, c.getContextFromHistory(channelID))
+		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(finalRePrompt, c.getContextFromHistory(channelID))
 		if repromptErr != nil {
 			c.logger.ErrorKV("Error during LLM re-prompt", "error", repromptErr)
 			// Fallback: Show the tool result and the error
