@@ -21,21 +21,18 @@ import (
 
 	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/internal/config"
 )
 
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.
 // It detects when an LLM response should trigger a tool call and executes it.
 type LLMMCPBridge struct {
-	mcpClients         map[string]mcp.MCPClientInterface // Map of MCP clients keyed by server name
-	logger             *logging.Logger
-	stdLogger          *log.Logger             // Standard logger for backward compatibility
-	availableTools     map[string]mcp.ToolInfo // Map of tool names to info about the tool
-	llmRegistry        *llm.ProviderRegistry   // LLM provider registry
-	useNativeTools     bool                    // Flag to indicate if native tools should be used. If false, tools are provided through the system prompt.
-	customPrompt       string                  // Custom system prompt
-	replaceToolPrompt  bool                    // Whether to replace tool prompt completely
-	UseAgent           bool                    // Flag to indicate if the agent should be used instead of chat
-	maxAgentIterations int                     // Maximum agent iterations
+	mcpClients     map[string]mcp.MCPClientInterface // Map of MCP clients keyed by server name
+	logger         *logging.Logger
+	stdLogger      *log.Logger             // Standard logger for backward compatibility
+	availableTools map[string]mcp.ToolInfo // Map of tool names to info about the tool
+	llmRegistry    *llm.ProviderRegistry   // LLM provider registry
+	cfg            *config.Config          // Configuration
 }
 
 // generateToolPrompt generates the prompt string for available tools
@@ -43,20 +40,20 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 	var promptBuilder strings.Builder
 
 	// Add custom prompt first if provided
-	if b.customPrompt != "" {
-		promptBuilder.WriteString(b.customPrompt)
+	if b.cfg.LLM.CustomPrompt != "" {
+		promptBuilder.WriteString(b.cfg.LLM.CustomPrompt)
 		promptBuilder.WriteString("\n\n")
 
 		// If we're replacing the tool prompt completely, return just the custom prompt
-		if b.replaceToolPrompt {
+		if b.cfg.LLM.ReplaceToolPrompt {
 			return promptBuilder.String()
 		}
 	}
 
 	if len(b.availableTools) == 0 {
 		// If no tools but we have custom prompt, return custom prompt only
-		if b.customPrompt != "" {
-			return b.customPrompt
+		if b.cfg.LLM.CustomPrompt != "" {
+			return b.cfg.LLM.CustomPrompt
 		}
 		return "" // No tools available and no custom prompt
 	}
@@ -116,16 +113,16 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 // NewLLMMCPBridge creates a new LLMMCPBridge with the given MCP clients and tools
 // Uses INFO as the default log level
 func NewLLMMCPBridge(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
-	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
+	llmRegistry *llm.ProviderRegistry, cfg *config.Config) *LLMMCPBridge {
 	// Create a structured logger from the standard logger with INFO level by default
 	// If debug logging is needed, use NewLLMMCPBridgeWithLogLevel instead
-	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, maxAgentIterations)
+	return NewLLMMCPBridgeWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, llmRegistry, cfg)
 }
 
 // NewLLMMCPBridgeWithLogLevel creates a new LLMMCPBridge with the given MCP clients, tools, and log level
 func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, stdLogger *log.Logger,
-	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
-	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
+	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, llmRegistry *llm.ProviderRegistry, cfg *config.Config) *LLMMCPBridge {
+
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -144,16 +141,12 @@ func NewLLMMCPBridgeWithLogLevel(mcpClients map[string]mcp.MCPClientInterface, s
 	}
 
 	return &LLMMCPBridge{
-		mcpClients:         mcpClients,
-		logger:             structLogger,
-		stdLogger:          stdLogger,
-		availableTools:     connectedTools,
-		useNativeTools:     useNativeTools,
-		llmRegistry:        llmRegistry,
-		UseAgent:           useAgent,
-		customPrompt:       customPrompt,
-		replaceToolPrompt:  replaceToolPrompt,
-		maxAgentIterations: maxAgentIterations,
+		mcpClients:     mcpClients,
+		logger:         structLogger,
+		stdLogger:      stdLogger,
+		availableTools: connectedTools,
+		llmRegistry:    llmRegistry,
+		cfg:            cfg,
 	}
 }
 
@@ -170,16 +163,15 @@ func getClientNames(clients map[string]mcp.MCPClientInterface) []string {
 // This is a convenience function that wraps the concrete clients in the interface
 // Uses INFO as the default log level
 func NewLLMMCPBridgeFromClients(mcpClients interface{}, stdLogger *log.Logger, discoveredTools map[string]mcp.ToolInfo,
-	useNativeTools bool, useAgent bool, llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
+	llmRegistry *llm.ProviderRegistry, cfg *config.Config) *LLMMCPBridge {
 	// If debug logging is needed, use NewLLMMCPBridgeFromClientsWithLogLevel instead
-	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, maxAgentIterations)
+	return NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients, stdLogger, discoveredTools, logging.LevelInfo, llmRegistry, cfg)
 }
 
 // NewLLMMCPBridgeFromClientsWithLogLevel creates a new LLMMCPBridge with the given MCP Client objects and log level
 // This is a convenience function that wraps the concrete clients in the interface
 func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *log.Logger,
-	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, useNativeTools bool, useAgent bool,
-	llmRegistry *llm.ProviderRegistry, customPrompt string, replaceToolPrompt bool, maxAgentIterations int) *LLMMCPBridge {
+	discoveredTools map[string]mcp.ToolInfo, logLevel logging.LogLevel, llmRegistry *llm.ProviderRegistry, cfg *config.Config) *LLMMCPBridge {
 	// Create a structured logger with the specified log level
 	structLogger := logging.New("llm-mcp-bridge", logLevel)
 
@@ -229,7 +221,7 @@ func NewLLMMCPBridgeFromClientsWithLogLevel(mcpClients interface{}, stdLogger *l
 		}
 	}
 
-	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, useNativeTools, useAgent, llmRegistry, customPrompt, replaceToolPrompt, maxAgentIterations)
+	return NewLLMMCPBridgeWithLogLevel(interfaceClients, stdLogger, discoveredTools, logLevel, llmRegistry, cfg)
 }
 
 // ProcessLLMResponse processes an LLM response, expecting a specific JSON tool call format.
@@ -537,7 +529,7 @@ func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]inter
 	return result, len(result) > 0
 }
 
-func (b *LLMMCPBridge) CallLLMAgent(providerName, userDisplayName, systemPrompt, prompt, contextHistory string, callbackHandler callbacks.Handler) (string, error) {
+func (b *LLMMCPBridge) CallLLMAgent(userDisplayName, systemPrompt, prompt, contextHistory string, callbackHandler callbacks.Handler) (string, error) {
 	// Create a context with an appropriate timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -559,9 +551,10 @@ func (b *LLMMCPBridge) CallLLMAgent(providerName, userDisplayName, systemPrompt,
 	}
 
 	// --- Use the specified provider via the registry ---
+	providerName := b.cfg.LLM.Provider
 	b.logger.InfoKV("Attempting to use LLM provider for chat completion", "provider", providerName)
 
-	completion, err := b.llmRegistry.GenerateAgentCompletion(ctx, providerName, userDisplayName, systemPrompt, prompt, history, toolArr, callbackHandler, b.maxAgentIterations)
+	completion, err := b.llmRegistry.GenerateAgentCompletion(ctx, providerName, userDisplayName, systemPrompt, prompt, history, toolArr, callbackHandler, b.cfg.LLM.MaxAgentIterations)
 	if err != nil {
 		// Error already logged by registry method potentially, but log here too for context
 		b.logger.ErrorKV("GenerateAgentCompletion failed", "provider", providerName, "error", err)
@@ -572,23 +565,29 @@ func (b *LLMMCPBridge) CallLLMAgent(providerName, userDisplayName, systemPrompt,
 }
 
 // CallLLM generates a text completion using the specified provider from the registry.
-func (b *LLMMCPBridge) CallLLM(providerName, prompt, contextHistory string) (*llms.ContentChoice, error) {
+func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoice, error) {
 	// Create a context with appropriate timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
+
+	// Get the provider name from config
+	providerName := b.cfg.LLM.Provider
 
 	// Prepare messages with system prompt and context history
 	messages := []llm.RequestMessage{}
 	// Build options based on the config (provider might override or use these)
 	// Note: TargetProvider is removed as it's handled by config/factory
-	options := llm.ProviderOptions{
-		// Model: Let the provider use its configured default or handle overrides if needed.
-		// Model: c.cfg.OpenAIModelName, // Example: If you still want a global default hint
-		Temperature: 0.4,   // Consider making configurable
-		MaxTokens:   10240, // Consider making configurable
+	options := llm.ProviderOptions{}
+
+	// Safely access configuration if available
+	if b.cfg != nil && b.cfg.LLM.Providers != nil {
+		if providerConfig, exists := b.cfg.LLM.Providers[providerName]; exists {
+			options.Temperature = providerConfig.Temperature
+			options.MaxTokens = providerConfig.MaxTokens
+		}
 	}
 
-	if !b.useNativeTools {
+	if !b.cfg.LLM.UseNativeTools {
 		// Generate the system prompt with tool information
 		systemPrompt := b.generateToolPrompt()
 
