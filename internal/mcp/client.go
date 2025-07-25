@@ -29,6 +29,7 @@ type Client struct {
 	logger      *logging.Logger
 	client      client.MCPClient
 	serverAddr  string
+	serverName  string
 	initialized bool // Track if the client has been successfully initialized
 
 	closeOnce sync.Once  // Ensures close logic runs only once
@@ -36,9 +37,9 @@ type Client struct {
 }
 
 // NewClient creates a new MCP client handler.
-// For stdio transport, addressOrCommand should be the command path, and args should be provided.
-// For http/sse transports, addressOrCommand is the URL, and args is ignored.
-func NewClient(transport, addressOrCommand string, args []string, env map[string]string, stdLogger *logging.Logger) (*Client, error) {
+// For stdio mode, addressOrCommand should be the command path, and args should be provided.
+// For http/sse modes, addressOrCommand is the URL, and args is ignored.
+func NewClient(transport, addressOrCommand string, serverName string, args []string, env map[string]string, stdLogger *logging.Logger) (*Client, error) {
 	// Determine log level from environment variable
 	logLevel := logging.LevelInfo // Default to INFO
 	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
@@ -106,6 +107,7 @@ func NewClient(transport, addressOrCommand string, args []string, env map[string
 		logger:      mcpLogger,
 		client:      mcpClient,
 		serverAddr:  addressOrCommand,
+		serverName:  serverName,
 		initialized: false,
 	}
 
@@ -170,6 +172,13 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 	}
 
 	c.logger.InfoKV("Calling tool", "tool", toolName, "server", c.serverAddr)
+	prefix := c.serverName + "_"
+	c.logger.DebugKV("Tool name prefix", "prefix", prefix)
+	if strings.HasPrefix(toolName, prefix) {
+		originalToolName := toolName
+		toolName = strings.TrimPrefix(toolName, prefix)
+		c.logger.DebugKV("Stripped prefix from tool name", "original", originalToolName, "stripped", toolName)
+	}
 
 	// Create a proper CallToolRequest
 	req := mcp.CallToolRequest{}

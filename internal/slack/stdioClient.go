@@ -89,6 +89,22 @@ func (client StdioClient) IsBotUser(userID string) bool {
 	return false
 }
 
+func (client StdioClient) GetThreadReplies(channelID, threadTS string) ([]slack.Message, error) {
+	return []slack.Message{}, nil
+}
+
+func (client StdioClient) GetUserInfo(userID string) (*UserProfile, error) {
+	currentUser, err := user.Current()
+	if err != nil {
+		return nil, fmt.Errorf("while getting current user: %w", err)
+	}
+	return &UserProfile{
+		userId:   userID,
+		realName: currentUser.Name,
+		email:    "",
+	}, nil
+}
+
 func (client StdioClient) SendMessage(channelID, threadTS, text string) {
 	messages := []string{
 		"----- SEND MESSAGE -----\n",
@@ -101,26 +117,4 @@ func (client StdioClient) SendMessage(channelID, threadTS, text string) {
 			client.logger.ErrorKV("While writing message to output", "error", err)
 		}
 	}
-}
-
-func (client StdioClient) GetUserInfo(userID string) (*slack.User, error) {
-	currentUser, err := user.Current()
-	if err != nil {
-		return nil, fmt.Errorf("while getting current user: %w", err)
-	}
-
-	return &slack.User{
-		ID:       "xxx",
-		TeamID:   "",
-		Name:     currentUser.Username,
-		Deleted:  false,
-		Color:    "",
-		RealName: "",
-		TZ:       "",
-		TZLabel:  "",
-		TZOffset: 0,
-		Profile: slack.UserProfile{
-			DisplayName: currentUser.Name,
-		},
-	}, nil
 }
