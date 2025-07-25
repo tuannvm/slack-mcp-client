@@ -606,6 +606,7 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		cfg.Slack.BotToken,
 		cfg.Slack.AppToken,
 		logger,
+		cfg.Slack.ThinkingMessage,
 	)
 	if err != nil {
 		logger.Fatal("Failed to initialize Slack client: %v", err)
