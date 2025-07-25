@@ -363,7 +363,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 			return
 		}
 
-		c.logger.InfoKV("Received response from LLM", "provider", providerName, "length", len(llmResponse.Content))
+		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse.Content))
 
 		// Process the LLM response through the MCP pipeline
 		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
