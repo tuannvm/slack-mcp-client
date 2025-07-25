@@ -38,13 +38,13 @@ type Client struct {
 
 // Message represents a message in the conversation history
 type Message struct {
-	Role            string    // "user", "assistant", or "tool"
-	Content         string    // The message content
-	Timestamp       time.Time // When the message was sent/received
-	SlackTimestamp  string    // Slack's timestamp format (string)
-	UserID          string
-	RealName        string
-	Email           string
+	Role           string    // "user", "assistant", or "tool"
+	Content        string    // The message content
+	Timestamp      time.Time // When the message was sent/received
+	SlackTimestamp string    // Slack's timestamp format (string)
+	UserID         string
+	RealName       string
+	Email          string
 }
 
 // NewClient creates a new Slack client instance.
@@ -295,13 +295,13 @@ func (c *Client) addToHistory(channelID, threadTS, timestamp, role, content, use
 
 	// Add the new message
 	message := Message{
-		Role:      role,
-		Content:   content,
-		Timestamp: time.Now(),
+		Role:           role,
+		Content:        content,
+		Timestamp:      time.Now(),
 		SlackTimestamp: timestamp,
-		UserID:    userID,
-		RealName:  realName,
-		Email:     email,
+		UserID:         userID,
+		RealName:       realName,
+		Email:          email,
 	}
 	history = append(history, message)
 
