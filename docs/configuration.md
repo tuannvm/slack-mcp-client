@@ -65,7 +65,7 @@ Below is the complete configuration schema showing all available options. Fields
     "customPrompt": "You are a helpful assistant.",   // 🔧 Optional
     "customPromptFile": "custom-prompt.txt",          // 🔧 Optional
     "replaceToolPrompt": false,                       // ⚙️ Default: false
-    "maxAgentIterations": 20,                         // ⚙️ Default: 20 iterations
+    "maxAgentIterations": 20,                         // ⚙️ Default: 20 (maximum reasoning steps for agent mode)
     "providers": {
       "openai": {
         "model": "gpt-4o",                            // ⚙️ Default: "gpt-4o"

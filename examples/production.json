@@ -9,6 +9,7 @@
     "provider": "openai",
     "useNativeTools": true,
     "useAgent": true,
+    "maxAgentIterations": 20,
     "customPrompt": "You are a production DevOps assistant. Focus on operational excellence, security, and reliability.",
     "providers": {
       "openai": {
