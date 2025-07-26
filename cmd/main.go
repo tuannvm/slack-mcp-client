@@ -612,34 +612,10 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
-	// Use security-enabled client if security is enabled, otherwise use regular client
-	var slackClient interface{ Run() error }
-	if cfg.Security.Enabled {
-		logger.Info("Security is enabled - using secure Slack client")
-		secureClient, err := slackbot.NewSecureClient(
-			userFrontend,
-			logger,          // Pass the structured logger
-			mcpClients,      // Pass the map of initialized clients
-			discoveredTools, // Pass the map of tool information
-			cfg,             // Pass the unified config
-		)
-		if err != nil {
-			logger.Fatal("Failed to initialize secure Slack client: %v", err)
-		}
-		slackClient = secureClient
-	} else {
-		logger.Info("Security is disabled - using regular Slack client")
-		regularClient, err := slackbot.NewClient(
-			userFrontend,
-			logger,          // Pass the structured logger
-			mcpClients,      // Pass the map of initialized clients
-			discoveredTools, // Pass the map of tool information
-			cfg,             // Pass the whole config object
-		)
-		if err != nil {
-			logger.Fatal("Failed to initialize Slack client: %v", err)
-		}
-		slackClient = regularClient
+	// Create Slack client based on security configuration
+	slackClient, err := createSlackClient(userFrontend, logger, mcpClients, discoveredTools, cfg)
+	if err != nil {
+		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
 	// Start listening for Slack events in a separate goroutine
@@ -988,4 +964,31 @@ func executeMigrationScript(inputFile, outputFile string) error {
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
+}
+
+// createSlackClient creates the appropriate Slack client based on security configuration
+// This factory function improves type safety and reduces coupling in startSlackClient
+func createSlackClient(userFrontend slackbot.UserFrontend, logger *logging.Logger,
+	mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo,
+	cfg *config.Config) (slackbot.SlackRunner, error) {
+
+	if cfg.Security.Enabled {
+		logger.Info("Security is enabled - using secure Slack client")
+		return slackbot.NewSecureClient(
+			userFrontend,
+			logger,          // Pass the structured logger
+			mcpClients,      // Pass the map of initialized clients
+			discoveredTools, // Pass the map of tool information
+			cfg,             // Pass the unified config
+		)
+	}
+
+	logger.Info("Security is disabled - using regular Slack client")
+	return slackbot.NewClient(
+		userFrontend,
+		logger,          // Pass the structured logger
+		mcpClients,      // Pass the map of initialized clients
+		discoveredTools, // Pass the map of tool information
+		cfg,             // Pass the whole config object
+	)
 }

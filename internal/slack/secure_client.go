@@ -75,8 +75,14 @@ func (sc *SecureClient) handleEventMessage(event slackevents.EventsAPIEvent) {
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				sc.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
 
+				// Use ThreadTimeStamp if available, otherwise fall back to TimeStamp
+				threadTS := ev.ThreadTimeStamp
+				if threadTS == "" {
+					threadTS = ev.TimeStamp
+				}
+
 				// Security check for direct messages
-				if !sc.checkAccess(ev.User, ev.Channel, ev.ThreadTimeStamp) {
+				if !sc.checkAccess(ev.User, ev.Channel, threadTS) {
 					return
 				}
 
@@ -86,7 +92,7 @@ func (sc *SecureClient) handleEventMessage(event slackevents.EventsAPIEvent) {
 					return
 				}
 
-				go sc.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName)
+				go sc.handleUserPrompt(ev.Text, ev.Channel, threadTS, userInfo.Profile.DisplayName)
 			}
 
 		default:

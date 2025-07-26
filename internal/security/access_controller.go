@@ -3,6 +3,7 @@ package security
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
@@ -17,6 +18,7 @@ type AccessDecision struct {
 type AccessController struct {
 	config *SecurityConfig
 	logger *logging.Logger
+	mu     sync.RWMutex
 }
 
 // NewAccessController creates a new AccessController instance
@@ -35,6 +37,8 @@ func NewAccessController(config *SecurityConfig, logger *logging.Logger) (*Acces
 
 // CheckAccess determines if a user has access to interact in a specific channel
 func (ac *AccessController) CheckAccess(userID, channelID string) *AccessDecision {
+	ac.mu.RLock()
+	defer ac.mu.RUnlock()
 	// If security is disabled, allow all access
 	if !ac.config.Enabled {
 		return &AccessDecision{
@@ -156,6 +160,8 @@ func (ac *AccessController) GetRejectionMessage() string {
 
 // UpdateConfig updates the security configuration
 func (ac *AccessController) UpdateConfig(config *SecurityConfig) {
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
 	ac.config = config
 	ac.logger.InfoKV("Security configuration updated",
 		"enabled", config.Enabled,
