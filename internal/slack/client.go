@@ -21,6 +21,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
+	"github.com/tuannvm/slack-mcp-client/internal/security"
 )
 
 // Client represents the Slack client application.
@@ -251,14 +252,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			isNotEdited := ev.SubType != "message_changed"
 			isBot := ev.BotID != "" || ev.SubType == "bot_message"
 
-			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
-			if err != nil {
-				c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
-				return
-			}
-
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
+
+				userInfo, err := c.userFrontend.GetUserInfo(ev.User)
+				if err != nil {
+					c.logger.ErrorKV("Failed to get user info", "user", ev.User, "error", err)
+					return
+				}
 
 				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}
@@ -489,4 +490,24 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 	} else {
 		c.userFrontend.SendMessage(channelID, threadTS, finalResponse)
 	}
+}
+
+// UpdateSecurityConfig provides a stub implementation for the SlackRunner interface
+// Regular Client doesn't support security, so this is a no-op
+func (c *Client) UpdateSecurityConfig(securityConfig *security.SecurityConfig) {
+	c.logger.WarnKV("Security configuration update ignored", "reason", "Regular client does not support security features")
+}
+
+// GetSecurityConfig provides a stub implementation for the SlackRunner interface
+// Regular Client doesn't support security, so this returns a disabled config
+func (c *Client) GetSecurityConfig() security.SecurityConfig {
+	return security.SecurityConfig{
+		Enabled: false,
+	}
+}
+
+// IsSecurityEnabled provides a stub implementation for the SlackRunner interface
+// Regular Client doesn't support security, so this always returns false
+func (c *Client) IsSecurityEnabled() bool {
+	return false
 }

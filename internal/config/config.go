@@ -4,6 +4,9 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
+
+	"github.com/tuannvm/slack-mcp-client/internal/security"
 )
 
 // Constants for provider types
@@ -24,6 +27,7 @@ type Config struct {
 	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry      RetryConfig                `json:"retry,omitempty"`
 	Reload     ReloadConfig               `json:"reload,omitempty"`
+	Security   SecurityConfig             `json:"security,omitempty"`
 }
 
 // SlackConfig contains Slack-specific configuration
@@ -153,6 +157,17 @@ type ReloadConfig struct {
 	Interval string `json:"interval,omitempty"` // Reload interval (default: "30m")
 }
 
+// SecurityConfig contains security and access control settings
+type SecurityConfig struct {
+	Enabled          bool     `json:"enabled,omitempty"`          // Enable security features (default: false)
+	StrictMode       bool     `json:"strictMode,omitempty"`       // Strict mode: deny by default (default: false)
+	AllowedUsers     []string `json:"allowedUsers,omitempty"`     // List of allowed user IDs
+	AllowedChannels  []string `json:"allowedChannels,omitempty"`  // List of allowed channel IDs
+	AdminUsers       []string `json:"adminUsers,omitempty"`       // List of admin user IDs (bypass all restrictions)
+	RejectionMessage string   `json:"rejectionMessage,omitempty"` // Custom message for rejected requests
+	LogUnauthorized  bool     `json:"logUnauthorized,omitempty"`  // Log unauthorized access attempts (default: true)
+}
+
 // ApplyDefaults applies default values to the configuration
 func (c *Config) ApplyDefaults() {
 	c.applyVersionDefaults()
@@ -163,6 +178,7 @@ func (c *Config) ApplyDefaults() {
 	c.applyRetryDefaults()
 	c.applyMonitoringDefaults()
 	c.applyMCPDefaults()
+	c.applySecurityDefaults()
 }
 
 // applyVersionDefaults sets default version if not specified
@@ -286,6 +302,13 @@ func (c *Config) applyRetryDefaults() {
 	}
 }
 
+// applyMCPDefaults initializes MCP servers map if nil
+func (c *Config) applyMCPDefaults() {
+	if c.MCPServers == nil {
+		c.MCPServers = make(map[string]MCPServerConfig)
+	}
+}
+
 // applyMonitoringDefaults sets default monitoring configuration
 func (c *Config) applyMonitoringDefaults() {
 	c.Monitoring.Enabled = true // Default to enabled
@@ -297,10 +320,15 @@ func (c *Config) applyMonitoringDefaults() {
 	}
 }
 
-// applyMCPDefaults initializes MCP servers map if nil
-func (c *Config) applyMCPDefaults() {
-	if c.MCPServers == nil {
-		c.MCPServers = make(map[string]MCPServerConfig)
+// applySecurityDefaults sets default security configuration
+func (c *Config) applySecurityDefaults() {
+	// Security defaults
+	if c.Security.RejectionMessage == "" {
+		c.Security.RejectionMessage = "I'm sorry, but I don't have permission to respond in this context. Please contact your administrator if you believe this is an error."
+	}
+	// LogUnauthorized defaults to true if not explicitly set to false
+	if !c.Security.Enabled {
+		c.Security.LogUnauthorized = true
 	}
 }
 
@@ -328,6 +356,35 @@ func (c *Config) ApplyEnvironmentVariables() {
 	if enabled := os.Getenv("MONITORING_ENABLED"); enabled != "" {
 		if val, err := strconv.ParseBool(enabled); err == nil {
 			c.Monitoring.Enabled = val
+		}
+	}
+
+	// Security environment overrides
+	if enabled := os.Getenv("SECURITY_ENABLED"); enabled != "" {
+		if val, err := strconv.ParseBool(enabled); err == nil {
+			c.Security.Enabled = val
+		}
+	}
+	if strictMode := os.Getenv("SECURITY_STRICT_MODE"); strictMode != "" {
+		if val, err := strconv.ParseBool(strictMode); err == nil {
+			c.Security.StrictMode = val
+		}
+	}
+	if allowedUsers := os.Getenv("SECURITY_ALLOWED_USERS"); allowedUsers != "" {
+		c.Security.AllowedUsers = parseCommaSeparated(allowedUsers)
+	}
+	if allowedChannels := os.Getenv("SECURITY_ALLOWED_CHANNELS"); allowedChannels != "" {
+		c.Security.AllowedChannels = parseCommaSeparated(allowedChannels)
+	}
+	if adminUsers := os.Getenv("SECURITY_ADMIN_USERS"); adminUsers != "" {
+		c.Security.AdminUsers = parseCommaSeparated(adminUsers)
+	}
+	if rejectionMessage := os.Getenv("SECURITY_REJECTION_MESSAGE"); rejectionMessage != "" {
+		c.Security.RejectionMessage = rejectionMessage
+	}
+	if logUnauthorized := os.Getenv("SECURITY_LOG_UNAUTHORIZED"); logUnauthorized != "" {
+		if val, err := strconv.ParseBool(logUnauthorized); err == nil {
+			c.Security.LogUnauthorized = val
 		}
 	}
 
@@ -367,5 +424,34 @@ func (c *Config) ApplyEnvironmentVariables() {
 			ollamaConfig.Model = model
 		}
 		c.LLM.Providers[ProviderOllama] = ollamaConfig
+	}
+}
+
+// parseCommaSeparated parses a comma-separated string into a slice of trimmed strings
+func parseCommaSeparated(input string) []string {
+	if input == "" {
+		return []string{}
+	}
+	parts := strings.Split(input, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+// GetSecurityConfig returns the security configuration as the expected type
+func (c *Config) GetSecurityConfig() *security.SecurityConfig {
+	return &security.SecurityConfig{
+		Enabled:          c.Security.Enabled,
+		StrictMode:       c.Security.StrictMode,
+		AllowedUsers:     c.Security.AllowedUsers,
+		AllowedChannels:  c.Security.AllowedChannels,
+		AdminUsers:       c.Security.AdminUsers,
+		RejectionMessage: c.Security.RejectionMessage,
+		LogUnauthorized:  c.Security.LogUnauthorized,
 	}
 }

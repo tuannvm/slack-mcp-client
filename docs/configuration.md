@@ -138,6 +138,15 @@ Below is the complete configuration schema showing all available options. Fields
     "enabled": true,                                  // ⚙️ Default: true
     "metricsPort": 8080,                              // ⚙️ Default: 8080
     "loggingLevel": "info"                            // ⚙️ Default: "info"
+  },
+  "security": {
+    "enabled": false,                                 // ⚙️ Default: false
+    "strictMode": false,                              // ⚙️ Default: false
+    "allowedUsers": ["U1234567890"],                  // 🔧 Optional: list of allowed user IDs
+    "allowedChannels": ["C1234567890"],               // 🔧 Optional: list of allowed channel IDs
+    "adminUsers": ["U0987654321"],                    // 🔧 Optional: list of admin user IDs (bypass restrictions)
+    "rejectionMessage": "Access denied.",             // ⚙️ Default: standard rejection message
+    "logUnauthorized": true                           // ⚙️ Default: true
   }
 }
 ```
@@ -209,6 +218,15 @@ Below is the complete configuration schema showing all available options. Fields
     "enabled": true,
     "metricsPort": 8080,
     "loggingLevel": "info"
+  },
+  "security": {
+    "enabled": true,
+    "strictMode": false,
+    "allowedUsers": ["U1234567890", "U0987654321"],
+    "allowedChannels": ["C1234567890"],
+    "adminUsers": ["U0987654321"],
+    "rejectionMessage": "Sorry, you don't have permission to use this bot. Please contact your administrator.",
+    "logUnauthorized": true
   }
 }
 ```
@@ -310,6 +328,15 @@ OLLAMA_BASE_URL=http://localhost:11434
 LLM_PROVIDER=anthropic
 MONITORING_ENABLED=true
 CUSTOM_PROMPT="You are a DevOps assistant."
+
+# Security configuration overrides
+SECURITY_ENABLED=true
+SECURITY_STRICT_MODE=false
+SECURITY_ALLOWED_USERS="U1234567890,U0987654321"
+SECURITY_ALLOWED_CHANNELS="C1234567890,C0987654321"
+SECURITY_ADMIN_USERS="U0987654321"
+SECURITY_REJECTION_MESSAGE="Access denied. Please contact your administrator."
+SECURITY_LOG_UNAUTHORIZED=true
 ```
 
 ## Slack App Setup
