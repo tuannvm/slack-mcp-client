@@ -124,3 +124,13 @@ func (client StdioClient) GetUserInfo(userID string) (*slack.User, error) {
 		},
 	}, nil
 }
+
+func (client StdioClient) AddReaction(channelID, timestamp, reaction string) error {
+	fmt.Printf("ADD REACTION: %s to %s:%s\n", reaction, channelID, timestamp)
+	return nil
+}
+
+func (client StdioClient) RemoveReaction(channelID, timestamp, reaction string) error {
+	fmt.Printf("REMOVE REACTION: %s from %s:%s\n", reaction, channelID, timestamp)
+	return nil
+}

@@ -24,6 +24,8 @@ type UserFrontend interface {
 	GetLogger() *logging.Logger
 	SendMessage(channelID, threadTS, text string)
 	GetUserInfo(userID string) (*slack.User, error)
+	AddReaction(channelID, timestamp, reaction string) error
+	RemoveReaction(channelID, timestamp, reaction string) error
 }
 
 func getLogLevel(stdLogger *logging.Logger) logging.LogLevel {
@@ -121,6 +123,28 @@ func (slackClient *SlackClient) GetUserInfo(userID string) (*slack.User, error) 
 	return user, nil
 }
 
+// AddReaction adds an emoji reaction to a message
+func (slackClient *SlackClient) AddReaction(channelID, timestamp, reaction string) error {
+	err := slackClient.AddReactionContext(context.Background(), reaction, slack.NewRefToMessage(channelID, timestamp))
+	if err != nil {
+		slackClient.logger.ErrorKV("Failed to add reaction", "channel", channelID, "timestamp", timestamp, "reaction", reaction, "error", err)
+		return fmt.Errorf("failed to add reaction: %w", err)
+	}
+	slackClient.logger.DebugKV("Added reaction", "channel", channelID, "timestamp", timestamp, "reaction", reaction)
+	return nil
+}
+
+// RemoveReaction removes an emoji reaction from a message
+func (slackClient *SlackClient) RemoveReaction(channelID, timestamp, reaction string) error {
+	err := slackClient.RemoveReactionContext(context.Background(), reaction, slack.NewRefToMessage(channelID, timestamp))
+	if err != nil {
+		slackClient.logger.ErrorKV("Failed to remove reaction", "channel", channelID, "timestamp", timestamp, "reaction", reaction, "error", err)
+		return fmt.Errorf("failed to remove reaction: %w", err)
+	}
+	slackClient.logger.DebugKV("Removed reaction", "channel", channelID, "timestamp", timestamp, "reaction", reaction)
+	return nil
+}
+
 // SendMessage sends a message back to Slack, replying in a thread if threadTS is provided.
 func (slackClient *SlackClient) SendMessage(channelID, threadTS, text string) {
 	if text == "" {
@@ -128,23 +152,6 @@ func (slackClient *SlackClient) SendMessage(channelID, threadTS, text string) {
 		return
 	}
 
-	// Delete "typing" indicator messages if any
-	// This is a simplistic approach - more sophisticated approaches might track message IDs
-	history, err := slackClient.GetConversationHistory(&slack.GetConversationHistoryParameters{
-		ChannelID: channelID,
-		Limit:     10,
-	})
-	if err == nil && history != nil {
-		for _, msg := range history.Messages {
-			if slackClient.IsBotUser(msg.User) && msg.Text == slackClient.thinkingMessage {
-				_, _, err := slackClient.DeleteMessage(channelID, msg.Timestamp)
-				if err != nil {
-					slackClient.logger.ErrorKV("Error deleting typing indicator message", "error", err)
-				}
-				break // Just delete the most recent one
-			}
-		}
-	}
 
 	// Detect message type and format accordingly
 	messageType := formatter.DetectMessageType(text)
@@ -177,7 +184,7 @@ func (slackClient *SlackClient) SendMessage(channelID, threadTS, text string) {
 	}
 
 	// Send the message
-	_, _, err = slackClient.PostMessage(channelID, msgOptions...)
+	_, _, err := slackClient.PostMessage(channelID, msgOptions...)
 	if err != nil {
 		slackClient.logger.ErrorKV("Error posting message to channel", "channel", channelID, "error", err, "messageType", messageType)
 
