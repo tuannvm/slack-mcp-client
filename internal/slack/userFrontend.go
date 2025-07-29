@@ -176,11 +176,21 @@ func (slackClient *SlackClient) SendMessage(channelID, threadTS, text string) {
 		msgOptions = formatter.FormatMessage(formattedText, options)
 
 	case formatter.MarkdownText, formatter.PlainText:
-		// Apply Markdown formatting and use default text formatting
-		formattedText := formatter.FormatMarkdown(text)
-		options := formatter.DefaultOptions()
-		options.ThreadTS = threadTS
-		msgOptions = formatter.FormatMessage(formattedText, options)
+		// Check if the text contains markdown images
+		if formatter.HasMarkdownImages(text) {
+			// Convert to Block Kit format with image blocks
+			formattedText := formatter.ConvertMarkdownWithImages(text)
+			options := formatter.DefaultOptions()
+			options.Format = formatter.BlockFormat
+			options.ThreadTS = threadTS
+			msgOptions = formatter.FormatMessage(formattedText, options)
+		} else {
+			// Apply Markdown formatting and use default text formatting
+			formattedText := formatter.FormatMarkdown(text)
+			options := formatter.DefaultOptions()
+			options.ThreadTS = threadTS
+			msgOptions = formatter.FormatMessage(formattedText, options)
+		}
 	}
 
 	// Send the message
