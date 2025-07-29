@@ -26,7 +26,10 @@ func (handler *agentCallbackHandler) HandleChainEnd(_ context.Context, outputs m
 			}
 			// Format based on showThoughts setting for display
 			formattedText := formatPlainAgentOutputWithVisibility(textStr, handler.showThoughts)
-			handler.sendMessage(formattedText)
+			// Only send non-empty messages
+			if formattedText != "" {
+				handler.sendMessage(formattedText)
+			}
 		}
 	}
 }
@@ -387,9 +390,9 @@ func formatPlainAgentOutputWithVisibility(text string, showThoughts bool) string
 		}
 	}
 	
-	// If result is empty, return a default message
+	// If result is empty, return empty string to avoid showing unnecessary messages
 	if len(result) == 0 {
-		return "(Response processed)"
+		return ""
 	}
 	
 	return strings.Join(result, "\n")
