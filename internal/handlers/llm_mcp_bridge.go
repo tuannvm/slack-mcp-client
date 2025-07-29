@@ -71,6 +71,32 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 	promptBuilder.WriteString("4. If any required arguments are missing, do NOT generate the JSON. Instead, ask the user for the missing information.\n")
 	promptBuilder.WriteString("5. If no tool is needed, respond naturally to the user's request.\n\n")
 
+	// Add canvas-specific instructions if canvas tools are available
+	if _, hasCreateCanvas := b.availableTools["canvas_create"]; hasCreateCanvas {
+		promptBuilder.WriteString("\nCANVAS USAGE INSTRUCTIONS:\n")
+		promptBuilder.WriteString("Slack Canvases are collaborative documents that support markdown formatting.\n\n")
+		promptBuilder.WriteString("CREATING CANVASES:\n")
+		promptBuilder.WriteString("- Use canvas_create to create new canvases with markdown content\n")
+		promptBuilder.WriteString("- IMPORTANT: When creating a canvas in a channel, you MUST include the channel_id parameter\n")
+		promptBuilder.WriteString("- The channel_id is provided in the context as SLACK_CHANNEL_ID\n\n")
+		promptBuilder.WriteString("EDITING CANVASES:\n")
+		promptBuilder.WriteString("- CRITICAL: Always use the exact canvas_id from canvas_create (e.g., 'F0982B35MGS'), NOT placeholders\n")
+		promptBuilder.WriteString("- LIMITATION: Canvas content CANNOT be read via API - you're editing blind\n")
+		promptBuilder.WriteString("- To avoid overwriting content, ALWAYS use insert_at_end or insert_at_start instead of replace\n")
+		promptBuilder.WriteString("- For targeted edits, first use canvas_sections_lookup to find section IDs\n")
+		promptBuilder.WriteString("- Edit operations:\n")
+		promptBuilder.WriteString("  * insert_at_end/insert_at_start: PREFERRED - Add content without overwriting\n")
+		promptBuilder.WriteString("  * replace: AVOID - Replaces entire canvas unless section_id provided\n")
+		promptBuilder.WriteString("  * insert_after/insert_before: Insert relative to a section (REQUIRES section_id)\n\n")
+		promptBuilder.WriteString("SECTION-BASED EDITING WORKFLOW:\n")
+		promptBuilder.WriteString("1. Use canvas_sections_lookup to find sections (by header type or text content)\n")
+		promptBuilder.WriteString("2. Extract the section_id from the response (e.g., 'temp:C:abc123...')\n")
+		promptBuilder.WriteString("3. Use canvas_edit with the section_id for targeted operations\n\n")
+		promptBuilder.WriteString("FORMATTING:\n")
+		promptBuilder.WriteString("- Canvas content uses standard markdown\n")
+		promptBuilder.WriteString("- When responding about canvas operations, use Slack formatting: *bold*, _italic_, `code`\n\n")
+	}
+
 	promptBuilder.WriteString("Available Tools:\n")
 
 	for name, toolInfo := range b.availableTools {

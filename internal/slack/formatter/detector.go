@@ -250,3 +250,117 @@ func FormatStructuredData(content string) string {
 
 	return blockMessage
 }
+
+// ImageInfo represents information about a markdown image
+type ImageInfo struct {
+	AltText string
+	URL     string
+}
+
+// ExtractMarkdownImages extracts markdown image links from text
+func ExtractMarkdownImages(text string) []ImageInfo {
+	// Pattern to match markdown images: ![alt text](url)
+	// This pattern handles URLs that might contain parentheses
+	imagePattern := regexp.MustCompile(`!\[([^\]]*)\]\((https?://[^\s]+)\)`)
+	matches := imagePattern.FindAllStringSubmatch(text, -1)
+	
+	var images []ImageInfo
+	for _, match := range matches {
+		if len(match) == 3 {
+			url := match[2]
+			// Clean up URL if it appears to be truncated or has extra characters
+			url = strings.TrimSpace(url)
+			
+			// If URL ends with a parenthesis that's likely part of the markdown, remove it
+			if strings.HasSuffix(url, ")") && strings.Count(url, "(") < strings.Count(url, ")") {
+				url = url[:len(url)-1]
+			}
+			
+			images = append(images, ImageInfo{
+				AltText: match[1],
+				URL:     url,
+			})
+		}
+	}
+	return images
+}
+
+// HasMarkdownImages checks if text contains markdown image links
+func HasMarkdownImages(text string) bool {
+	imagePattern := regexp.MustCompile(`!\[([^\]]*)\]\((https?://[^\s]+)\)`)
+	return imagePattern.MatchString(text)
+}
+
+// ConvertMarkdownWithImages converts text with markdown images to Block Kit format
+func ConvertMarkdownWithImages(text string) string {
+	images := ExtractMarkdownImages(text)
+	if len(images) == 0 {
+		return text
+	}
+
+	// Remove image markdown from text
+	imagePattern := regexp.MustCompile(`!\[([^\]]*)\]\((https?://[^\s]+)\)`)
+	textWithoutImages := imagePattern.ReplaceAllString(text, "")
+	
+	// Apply markdown formatting to the remaining text
+	formattedText := FormatMarkdown(textWithoutImages)
+	
+	// Create blocks
+	blocks := []map[string]interface{}{}
+	
+	// Add text content if not empty
+	trimmedText := strings.TrimSpace(formattedText)
+	if trimmedText != "" {
+		blocks = append(blocks, map[string]interface{}{
+			"type": "section",
+			"text": map[string]interface{}{
+				"type": "mrkdwn",
+				"text": trimmedText,
+			},
+		})
+	}
+	
+	// Add image blocks
+	for _, img := range images {
+		// Validate URL starts with http:// or https://
+		if !strings.HasPrefix(img.URL, "http://") && !strings.HasPrefix(img.URL, "https://") {
+			// Skip invalid URLs
+			continue
+		}
+		
+		imageBlock := map[string]interface{}{
+			"type":      "image",
+			"image_url": img.URL,
+			"alt_text":  img.AltText,
+		}
+		
+		// Add title if alt text is provided and not empty
+		if img.AltText != "" {
+			imageBlock["title"] = map[string]interface{}{
+				"type": "plain_text",
+				"text": img.AltText,
+			}
+		}
+		
+		blocks = append(blocks, imageBlock)
+	}
+	
+	// If we have no valid image blocks after validation, return original text
+	if len(blocks) == 0 || (len(blocks) == 1 && blocks[0]["type"] == "section") {
+		return text
+	}
+	
+	// Create the final message
+	message := map[string]interface{}{
+		"text":   text, // Fallback text
+		"blocks": blocks,
+	}
+	
+	// Convert to JSON
+	jsonBytes, err := json.Marshal(message)
+	if err != nil {
+		return text // Fallback to original text if JSON marshaling fails
+	}
+	
+	return string(jsonBytes)
+}

@@ -60,6 +60,11 @@
           "default": false,
           "description": "Replace default tool prompt entirely instead of prepending"
         },
+        "showThoughts": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show agent thoughts/reasoning in Slack output (thoughts are always kept in LLM history)"
+        },
         "providers": {
           "type": "object",
           "properties": {
@@ -120,6 +125,17 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "canvas": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Slack Canvas integration for creating and editing canvases"
         }
       },
       "additionalProperties": false

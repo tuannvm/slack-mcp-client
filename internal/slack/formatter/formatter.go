@@ -117,6 +117,11 @@ func FormatMessage(text string, options FormatOptions) []slack.MsgOption {
 					if err := json.Unmarshal(blockJSON, &context); err == nil {
 						slackBlock = context
 					}
+				case "image":
+					var image slack.ImageBlock
+					if err := json.Unmarshal(blockJSON, &image); err == nil {
+						slackBlock = image
+					}
 					// Add more block types as needed
 				}
 
