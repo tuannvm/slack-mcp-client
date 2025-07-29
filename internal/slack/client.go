@@ -243,7 +243,7 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			}
 
 			// Use handleUserPrompt for app mentions too, for consistency
-			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp, userInfo.Profile.DisplayName)
+			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp, ev.TimeStamp, userInfo.Profile.DisplayName)
 
 		case *slackevents.MessageEvent:
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
@@ -260,7 +260,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			if isDirectMessage && isValidUser && isNotEdited && !isBot {
 				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
 
-				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
+				// For thread replies, we need the original message timestamp for reactions
+				messageTS := ev.TimeStamp
+				if ev.ThreadTimeStamp == "" {
+					// This is a new message, use its timestamp for reactions
+					messageTS = ev.TimeStamp
+				}
+				
+				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, messageTS, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}
 
 		default:
@@ -330,7 +337,7 @@ func (c *Client) getContextFromHistory(channelID string) string {
 }
 
 // handleUserPrompt sends the user's text to the configured LLM provider.
-func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayName string) {
+func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, messageTS, userDisplayName string) {
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", c.cfg.LLM.Provider)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
@@ -339,8 +346,11 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 
 	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
 
-	// Show a temporary "typing" indicator
-	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
+	// Add thinking emoji reaction
+	err := c.userFrontend.AddReaction(channelID, messageTS, "thinking_face")
+	if err != nil {
+		c.logger.ErrorKV("Failed to add thinking reaction", "error", err)
+	}
 
 	if !c.cfg.LLM.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
@@ -359,6 +369,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		llmResponse, err := c.llmMCPBridge.CallLLM(finalPrompt, contextHistory)
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
+			// Remove thinking reaction on error
+			c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
 			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
 			return
 		}
@@ -366,7 +378,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse.Content))
 
 		// Process the LLM response through the MCP pipeline
-		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
+		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS, messageTS)
 	} else {
 		sendMsg := func(msg string) {
 			c.addToHistory(channelID, "assistant", msg) // Original LLM response (tool call JSON)
@@ -384,6 +396,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 			})
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
+			// Remove thinking reaction on error
+			c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
 			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
 			return
 		}
@@ -392,12 +406,14 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		if llmResponse == "" {
 			c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
 		}
+		// Remove thinking reaction after response
+		c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
 	}
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 // Incorporates logic previously in LLMClient.ProcessToolResponse.
-func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
+func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS, messageTS string) {
 	// Log the raw LLM response for debugging
 	c.logger.DebugKV("Raw LLM response", "response", logging.TruncateForLog(fmt.Sprintf("%v", llmResponse), 500))
 
@@ -489,4 +505,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 	} else {
 		c.userFrontend.SendMessage(channelID, threadTS, finalResponse)
 	}
+	
+	// Remove thinking reaction after response
+	c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
 }
