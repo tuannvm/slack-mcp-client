@@ -20,6 +20,7 @@ type Config struct {
 	LLM        LLMConfig                  `json:"llm"`
 	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
 	RAG        RAGConfig                  `json:"rag,omitempty"`
+	Canvas     CanvasConfig               `json:"canvas,omitempty"`
 	Monitoring MonitoringConfig           `json:"monitoring,omitempty"`
 	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry      RetryConfig                `json:"retry,omitempty"`
@@ -32,6 +33,11 @@ type SlackConfig struct {
 	AppToken        string `json:"appToken"`
 	MessageHistory  int    `json:"messageHistory,omitempty"`  // Max messages to keep in history per channel (default: 50)
 	ThinkingMessage string `json:"thinkingMessage,omitempty"` // Custom "thinking" message (default: "Thinking...")
+}
+
+// CanvasConfig contains Slack Canvas feature configuration
+type CanvasConfig struct {
+	Enabled bool `json:"enabled,omitempty"` // Enable Slack Canvas integration (default: false)
 }
 
 // LLMConfig contains LLM provider configuration
@@ -160,6 +166,7 @@ func (c *Config) ApplyDefaults() {
 	c.applyLLMDefaults()
 	c.applyRAGDefaults()
 	c.applySlackDefaults()
+	c.applyCanvasDefaults()
 	c.applyTimeoutDefaults()
 	c.applyRetryDefaults()
 	c.applyMonitoringDefaults()
@@ -244,6 +251,12 @@ func (c *Config) applySlackDefaults() {
 	if c.Slack.ThinkingMessage == "" {
 		c.Slack.ThinkingMessage = ":thinking_face: _Thinking..._"
 	}
+}
+
+// applyCanvasDefaults sets default Canvas configuration
+func (c *Config) applyCanvasDefaults() {
+	// Canvas is disabled by default
+	// No need to set c.Canvas.Enabled = false as the zero value is already false
 }
 
 // applyTimeoutDefaults sets default timeout values

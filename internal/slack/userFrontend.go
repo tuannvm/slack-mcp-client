@@ -80,6 +80,7 @@ func GetSlackClient(botToken, appToken string, stdLogger *logging.Logger, thinki
 
 	return &SlackClient{
 		Client:          client,
+		api:             api,
 		botMentionRgx:   mentionRegex,
 		botUserID:       authTest.UserID,
 		logger:          slackLogger,
@@ -89,6 +90,7 @@ func GetSlackClient(botToken, appToken string, stdLogger *logging.Logger, thinki
 
 type SlackClient struct {
 	*socketmode.Client
+	api             *slack.Client
 	botMentionRgx   *regexp.Regexp
 	botUserID       string
 	logger          *logging.Logger

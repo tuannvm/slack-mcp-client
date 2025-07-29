@@ -67,14 +67,37 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		clientLogger.Printf("- %s", name)
 	}
 
+	// Create a map of raw clients to pass to the bridge
+	rawClientMap := make(map[string]interface{})
+
+	// Add canvas tools if enabled
+	var canvasTool *CanvasTool
+	if cfg.Canvas.Enabled {
+		// Get Slack client from userFrontend (assuming it's a *SlackClient)
+		if slackClient, ok := userFrontend.(*SlackClient); ok {
+			canvasTool = NewCanvasTool(slackClient.api, clientLogger)
+			
+			// Add canvas tools to discoveredTools
+			createTool := canvasTool.CreateCanvasToolInfo()
+			editTool := canvasTool.EditCanvasToolInfo()
+			
+			discoveredTools["canvas_create"] = createTool
+			discoveredTools["canvas_edit"] = editTool
+			
+			// Add canvas tool to raw client map
+			rawClientMap["slack-native"] = canvasTool
+			
+			clientLogger.InfoKV("Canvas tools enabled", "tools", []string{"canvas_create", "canvas_edit"})
+		}
+	}
+
 	clientLogger.Printf("Available tools (%d):", len(discoveredTools))
 	for toolName, toolInfo := range discoveredTools {
 		clientLogger.Printf("- %s (Desc: %s, Schema: %v, Server: %s)",
 			toolName, toolInfo.ToolDescription, toolInfo.InputSchema, toolInfo.ServerName)
 	}
 
-	// Create a map of raw clients to pass to the bridge
-	rawClientMap := make(map[string]interface{})
+	// rawClientMap was already created above
 	for name, client := range mcpClients {
 		rawClientMap[name] = client
 		clientLogger.DebugKV("Adding MCP client to raw map for bridge", "name", name)
@@ -436,10 +459,20 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, messageTS, us
 
 		if customPrompt != "" {
 			// Use custom prompt as system instruction, then add user prompt
-			finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, userPrompt)
+			// Include channel ID if canvas is enabled
+			if c.cfg.Canvas.Enabled && channelID != "" {
+				finalPrompt = fmt.Sprintf("System instructions: %s\n\n[SLACK_CHANNEL_ID: %s]\nUser: %s", customPrompt, channelID, userPrompt)
+			} else {
+				finalPrompt = fmt.Sprintf("System instructions: %s\n\nUser: %s", customPrompt, userPrompt)
+			}
 			c.logger.DebugKV("Using custom prompt as system instruction", "custom_prompt_length", len(customPrompt))
 		} else {
-			finalPrompt = userPrompt
+			// Include channel ID if canvas is enabled
+			if c.cfg.Canvas.Enabled && channelID != "" {
+				finalPrompt = fmt.Sprintf("[SLACK_CHANNEL_ID: %s]\n%s", channelID, userPrompt)
+			} else {
+				finalPrompt = userPrompt
+			}
 		}
 
 		// Call LLM using the integrated logic with system instruction
@@ -457,10 +490,16 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, messageTS, us
 		// Process the LLM response through the MCP pipeline
 		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS, messageTS)
 	} else {
+		// Include channel ID in the prompt if canvas is enabled
+		agentPrompt := userPrompt
+		if c.cfg.Canvas.Enabled && channelID != "" {
+			agentPrompt = fmt.Sprintf("[SLACK_CHANNEL_ID: %s]\n%s", channelID, userPrompt)
+		}
+		
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
 			userDisplayName,
 			c.cfg.LLM.CustomPrompt,
-			userPrompt,
+			agentPrompt,
 			contextHistory,
 			&agentCallbackHandler{
 				SimpleHandler: callbacks.SimpleHandler{},

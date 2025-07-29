@@ -71,6 +71,18 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 	promptBuilder.WriteString("4. If any required arguments are missing, do NOT generate the JSON. Instead, ask the user for the missing information.\n")
 	promptBuilder.WriteString("5. If no tool is needed, respond naturally to the user's request.\n\n")
 
+	// Add canvas-specific instructions if canvas tools are available
+	if _, hasCreateCanvas := b.availableTools["canvas_create"]; hasCreateCanvas {
+		promptBuilder.WriteString("\nCANVAS USAGE INSTRUCTIONS:\n")
+		promptBuilder.WriteString("Slack Canvases are collaborative documents that support markdown formatting.\n")
+		promptBuilder.WriteString("- Use canvas_create to create new canvases with markdown content\n")
+		promptBuilder.WriteString("- IMPORTANT: When creating a canvas in a channel, you MUST include the channel_id parameter\n")
+		promptBuilder.WriteString("- The channel_id is provided in the context as SLACK_CHANNEL_ID\n")
+		promptBuilder.WriteString("- Use canvas_edit to modify existing canvases (replace, append, or prepend content)\n")
+		promptBuilder.WriteString("- Canvases are ideal for documentation, guides, meeting notes, and structured content\n")
+		promptBuilder.WriteString("- Always use proper markdown formatting for better readability\n\n")
+	}
+
 	promptBuilder.WriteString("Available Tools:\n")
 
 	for name, toolInfo := range b.availableTools {

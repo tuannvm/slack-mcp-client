@@ -129,6 +129,17 @@
       },
       "additionalProperties": false
     },
+    "canvas": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Slack Canvas integration for creating and editing canvases"
+        }
+      },
+      "additionalProperties": false
+    },
     "monitoring": {
       "type": "object",
       "properties": {
