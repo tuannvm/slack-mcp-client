@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
@@ -35,6 +36,7 @@ type Client struct {
 	historyLimit       int
 	discoveredTools    map[string]mcp.ToolInfo
 	participatedThreads map[string]bool // Track threads where bot has responded (key: "channel:threadTS")
+	showThoughts       map[string]bool // Track showThoughts preference per channel/thread (key: "channel:threadTS")
 }
 
 // Message represents a message in the conversation history
@@ -192,6 +194,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		historyLimit:        cfg.Slack.MessageHistory, // Store configured number of messages per channel
 		discoveredTools:     discoveredTools,
 		participatedThreads: make(map[string]bool),
+		showThoughts:        make(map[string]bool),
 	}, nil
 }
 
@@ -221,6 +224,15 @@ func (c *Client) handleEvents() {
 			c.userFrontend.Ack(*evt.Request)
 			c.logger.InfoKV("Received EventsAPI event", "type", eventsAPIEvent.Type)
 			c.handleEventMessage(eventsAPIEvent)
+		case socketmode.EventTypeSlashCommand:
+			cmd, ok := evt.Data.(slack.SlashCommand)
+			if !ok {
+				c.logger.WarnKV("Ignored unexpected SlashCommand event type", "type", fmt.Sprintf("%T", evt.Data))
+				continue
+			}
+			c.userFrontend.Ack(*evt.Request)
+			c.logger.InfoKV("Received slash command", "command", cmd.Command, "user", cmd.UserID)
+			c.handleSlashCommandEvent(cmd)
 		default:
 			c.logger.DebugKV("Ignored event type", "type", evt.Type)
 		}
@@ -387,6 +399,25 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, messageTS, us
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", c.cfg.LLM.Provider)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
+	// Handle commands (both slash-style and text commands)
+	trimmedPrompt := strings.TrimSpace(userPrompt)
+	lowerPrompt := strings.ToLower(trimmedPrompt)
+	
+	// Check for thinking mode commands (text or slash style)
+	if lowerPrompt == "think silent" || lowerPrompt == "think quietly" || 
+	   lowerPrompt == "/think_silent" || lowerPrompt == "/think_quietly" ||
+	   lowerPrompt == "!think_silent" || lowerPrompt == "!think_quietly" {
+		c.setThinkingMode(false, channelID, threadTS)
+		return
+	}
+	
+	if lowerPrompt == "think aloud" || lowerPrompt == "think loud" ||
+	   lowerPrompt == "/think_aloud" || lowerPrompt == "/think_loud" ||
+	   lowerPrompt == "!think_aloud" || lowerPrompt == "!think_loud" {
+		c.setThinkingMode(true, channelID, threadTS)
+		return
+	}
+
 	// Get context from history
 	contextHistory := c.getContextFromHistory(channelID, threadTS)
 
@@ -426,19 +457,20 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, messageTS, us
 		// Process the LLM response through the MCP pipeline
 		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS, messageTS)
 	} else {
-		sendMsg := func(msg string) {
-			c.addToHistory(channelID, threadTS, "assistant", msg) // Original LLM response (tool call JSON)
-			c.userFrontend.SendMessage(channelID, threadTS, msg)
-		}
-
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
 			userDisplayName,
 			c.cfg.LLM.CustomPrompt,
 			userPrompt,
 			contextHistory,
 			&agentCallbackHandler{
-				callbacks.SimpleHandler{},
-				sendMsg,
+				SimpleHandler: callbacks.SimpleHandler{},
+				sendMessage: func(msg string) {
+					c.userFrontend.SendMessage(channelID, threadTS, msg)
+				},
+				showThoughts: c.getShowThoughts(channelID, threadTS),
+				storeFullMessage: func(msg string) {
+					c.addToHistory(channelID, threadTS, "assistant", msg)
+				},
 			})
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
@@ -559,4 +591,90 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 	
 	// Track that we've participated in this thread
 	c.trackThreadParticipation(channelID, threadTS)
+}
+
+// handleSlashCommandEvent processes Slack slash command events
+func (c *Client) handleSlashCommandEvent(cmd slack.SlashCommand) {
+	// Get thread key for per-conversation settings
+	channelID := cmd.ChannelID
+	threadKey := channelID
+	
+	switch cmd.Command {
+	case "/think_aloud":
+		c.showThoughts[threadKey] = true
+		c.userFrontend.SendMessage(channelID, "", ":brain: Thinking aloud mode enabled. I'll show my reasoning process.")
+		c.logger.InfoKV("Enabled thinking aloud via slash command", "channel", channelID, "user", cmd.UserID)
+
+	case "/think_silent":
+		c.showThoughts[threadKey] = false
+		c.userFrontend.SendMessage(channelID, "", ":shushing_face: Silent thinking mode enabled. I'll keep my thoughts to myself.")
+		c.logger.InfoKV("Enabled silent thinking via slash command", "channel", channelID, "user", cmd.UserID)
+
+	default:
+		c.userFrontend.SendMessage(channelID, "", fmt.Sprintf("Unknown command: %s", cmd.Command))
+	}
+}
+
+// handleSlashCommand processes slash commands like /think_aloud and /think_silent
+func (c *Client) handleSlashCommand(command, channelID, threadTS, messageTS string) {
+	// Get thread key for per-conversation settings
+	threadKey := channelID
+	if threadTS != "" {
+		threadKey = fmt.Sprintf("%s:%s", channelID, threadTS)
+	}
+
+	switch command {
+	case "/think_aloud":
+		c.showThoughts[threadKey] = true
+		c.userFrontend.SendMessage(channelID, threadTS, ":brain: Thinking aloud mode enabled. I'll show my reasoning process.")
+		c.logger.InfoKV("Enabled thinking aloud", "channel", channelID, "thread", threadTS)
+
+	case "/think_silent", "/think_quietly":
+		c.showThoughts[threadKey] = false
+		c.userFrontend.SendMessage(channelID, threadTS, ":shushing_face: Silent thinking mode enabled. I'll keep my thoughts to myself.")
+		c.logger.InfoKV("Enabled silent thinking", "channel", channelID, "thread", threadTS)
+
+	default:
+		c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Unknown command: %s\nAvailable commands:\n• `/think_aloud` - Show my reasoning process\n• `/think_silent` - Hide my reasoning process", command))
+	}
+}
+
+// setThinkingMode sets the thinking mode for a channel/thread
+func (c *Client) setThinkingMode(showThoughts bool, channelID, threadTS string) {
+	// Get thread key for per-conversation settings
+	threadKey := channelID
+	if threadTS != "" {
+		threadKey = fmt.Sprintf("%s:%s", channelID, threadTS)
+	}
+
+	c.showThoughts[threadKey] = showThoughts
+	
+	if showThoughts {
+		c.userFrontend.SendMessage(channelID, threadTS, ":brain: Thinking aloud mode enabled. I'll show my reasoning process.")
+		c.logger.InfoKV("Enabled thinking aloud", "channel", channelID, "thread", threadTS)
+	} else {
+		c.userFrontend.SendMessage(channelID, threadTS, ":shushing_face: Silent thinking mode enabled. I'll keep my thoughts to myself.")
+		c.logger.InfoKV("Enabled silent thinking", "channel", channelID, "thread", threadTS)
+	}
+}
+
+// getShowThoughts returns whether to show thoughts for a given channel/thread
+func (c *Client) getShowThoughts(channelID, threadTS string) bool {
+	// Check thread-specific setting first
+	threadKey := channelID
+	if threadTS != "" {
+		threadKey = fmt.Sprintf("%s:%s", channelID, threadTS)
+	}
+
+	if showThoughts, exists := c.showThoughts[threadKey]; exists {
+		return showThoughts
+	}
+
+	// Fall back to config default
+	if c.cfg.LLM.ShowThoughts != nil {
+		return *c.cfg.LLM.ShowThoughts
+	}
+
+	// Default to true if not configured
+	return true
 }

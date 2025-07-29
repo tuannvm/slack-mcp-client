@@ -13,13 +13,19 @@ type sendMessageFunc func(message string)
 type agentCallbackHandler struct {
 	callbacks.SimpleHandler
 	sendMessage sendMessageFunc
+	showThoughts bool
+	storeFullMessage func(message string) // Callback to store full message in history
 }
 
 func (handler *agentCallbackHandler) HandleChainEnd(_ context.Context, outputs map[string]any) {
 	if text, ok := outputs["text"]; ok {
 		if textStr, ok := text.(string); ok {
-			// For now, use plain formatting - Block Kit will be handled by the SendMessage function
-			formattedText := formatPlainAgentOutput(textStr)
+			// Store full message in history if callback provided
+			if handler.storeFullMessage != nil {
+				handler.storeFullMessage(textStr)
+			}
+			// Format based on showThoughts setting for display
+			formattedText := formatPlainAgentOutputWithVisibility(textStr, handler.showThoughts)
 			handler.sendMessage(formattedText)
 		}
 	}
@@ -318,6 +324,72 @@ func formatPlainAgentOutput(text string) string {
 	// If we ended while still in metadata (no AI: response), add the metadata
 	if inMetadata && len(metadataLines) > 0 {
 		result = append(result, metadataLines...)
+	}
+	
+	return strings.Join(result, "\n")
+}
+
+// formatPlainAgentOutputWithVisibility formats agent output based on visibility settings
+func formatPlainAgentOutputWithVisibility(text string, showThoughts bool) string {
+	if showThoughts {
+		// Use existing formatting that shows thoughts
+		return formatPlainAgentOutput(text)
+	}
+
+	// Hide thoughts but keep the actual response
+	lines := strings.Split(text, "\n")
+	var result []string
+	inThoughts := false
+	
+	for _, line := range lines {
+		trimmedLine := strings.TrimSpace(line)
+		
+		// Check if we're in the thoughts/metadata section
+		if strings.HasPrefix(trimmedLine, "Thought:") || strings.HasPrefix(trimmedLine, "> Thought:") ||
+		   strings.HasPrefix(trimmedLine, "Justification:") || strings.HasPrefix(trimmedLine, "Action:") ||
+		   strings.HasPrefix(trimmedLine, "Action Input:") || strings.HasPrefix(trimmedLine, "Observation:") {
+			inThoughts = true
+			continue
+		}
+		
+		// Check if we've reached the actual response
+		if strings.HasPrefix(trimmedLine, "AI:") {
+			inThoughts = false
+			// Process AI response
+			content := strings.TrimSpace(strings.TrimPrefix(trimmedLine, "AI:"))
+			if content != "" {
+				// Convert markdown headers to bold
+				if strings.HasPrefix(content, "## ") {
+					content = "*" + strings.TrimPrefix(content, "## ") + "*"
+				} else if strings.HasPrefix(content, "# ") {
+					content = "*" + strings.TrimPrefix(content, "# ") + "*"
+				}
+				result = append(result, content)
+			}
+			continue
+		}
+		
+		// If we're not in thoughts section, include the line
+		if !inThoughts {
+			// Regular content processing
+			if strings.HasPrefix(trimmedLine, "## ") {
+				result = append(result, "*"+strings.TrimPrefix(trimmedLine, "## ")+"*")
+			} else if strings.HasPrefix(trimmedLine, "# ") {
+				result = append(result, "*"+strings.TrimPrefix(trimmedLine, "# ")+"*")
+			} else if strings.HasPrefix(trimmedLine, "### ") {
+				result = append(result, "*"+strings.TrimPrefix(trimmedLine, "### ")+"*")
+			} else {
+				// Keep line as-is
+				if line != "" || len(result) > 0 {
+					result = append(result, line)
+				}
+			}
+		}
+	}
+	
+	// If result is empty, return a default message
+	if len(result) == 0 {
+		return "(Response processed)"
 	}
 	
 	return strings.Join(result, "\n")

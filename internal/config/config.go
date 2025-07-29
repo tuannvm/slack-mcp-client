@@ -43,6 +43,7 @@ type LLMConfig struct {
 	CustomPromptFile   string                       `json:"customPromptFile,omitempty"`
 	ReplaceToolPrompt  bool                         `json:"replaceToolPrompt,omitempty"`
 	MaxAgentIterations int                          `json:"maxAgentIterations,omitempty"` // Maximum agent iterations (default: 20)
+	ShowThoughts       *bool                        `json:"showThoughts,omitempty"`       // Show agent thoughts in output (default: true)
 	Providers          map[string]LLMProviderConfig `json:"providers"`
 }
 
