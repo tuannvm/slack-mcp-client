@@ -209,17 +209,17 @@ Assistant has access to the following tools:
 		agents.WithPromptFormatInstructions(`To use a tool, please use the following format:
 
 Observation: [The result of the previous tool call. Only include this field if you just received a tool result.]
-Thought: Do I need to use a tool? Yes
+> Thought: Do I need to use a tool? Yes
 Justification: [Why you think you should invoke the tool that you are invoking]
 Action: [the action to take, should be one of [{{.tool_names}}]]
-Action Input: [the input to the action. This should always be a single line JSON object. This should be raw json, no extra quotes or backticks. This field is mutually exclusive with the "AI:" field. There should be no text after this field.]
+Action Input: [the input to the action. This should always be a single line JSON object. This should be raw json, no extra quotes or backticks. There should be no text after this field.]
 
 Only call one tool at a time, send your response, and wait for the result to be provided in the next message.
 IMPORTANT: Return ONLY the tool format with no explanations or formatting when using a tool.
 
 When you have a response to say to the Human, or if you do not need to use a tool, you MUST use the format:
 
-Thought: Do I need to use a tool? No
+> Thought: Do I need to use a tool? No
 AI: [your response here] This field is mutually exclusive with the "Action Input:" field. You must not return both fields in a response.
 `),
 		// When testing with Gemini, it would often not actually invoke the tool, so we need this to make sure it actually does it
