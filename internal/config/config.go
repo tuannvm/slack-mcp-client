@@ -241,7 +241,7 @@ func (c *Config) applySlackDefaults() {
 		c.Slack.MessageHistory = 50
 	}
 	if c.Slack.ThinkingMessage == "" {
-		c.Slack.ThinkingMessage = "Thinking..."
+		c.Slack.ThinkingMessage = ":thinking_face: _Thinking..._"
 	}
 }
 

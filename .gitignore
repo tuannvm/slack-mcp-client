@@ -32,3 +32,13 @@ Thumbs.db
 
 mcp-servers.json
 config.json
+
+# Build artifacts
+bin/
+
+# Python files
+*.py
+requirements.txt
+
+# System files
+system.prompt
