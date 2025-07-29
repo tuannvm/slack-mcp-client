@@ -30,13 +30,13 @@ func (ct *CanvasTool) CreateCanvasToolInfo() mcp.ToolInfo {
 	return mcp.ToolInfo{
 		ServerName:      "slack-native",
 		ToolName:        "canvas_create",
-		ToolDescription: "Create a new Slack canvas with markdown content",
+		ToolDescription: "Create a new Slack canvas with markdown content. In public channels, creates a channel canvas. In DMs, creates a standalone canvas with a shareable link.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"title": map[string]interface{}{
 					"type":        "string",
-					"description": "Title of the canvas",
+					"description": "Title of the canvas (used for standalone canvases)",
 				},
 				"content": map[string]interface{}{
 					"type":        "string",
@@ -44,7 +44,7 @@ func (ct *CanvasTool) CreateCanvasToolInfo() mcp.ToolInfo {
 				},
 				"channel_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Channel ID where the canvas will be created (optional)",
+					"description": "Channel ID where the canvas will be created (automatically provided via SLACK_CHANNEL_ID context)",
 				},
 			},
 			"required": []string{"content"},
@@ -116,9 +116,16 @@ func (ct *CanvasTool) createCanvas(ctx context.Context, args map[string]interfac
 
 	var canvasID string
 	var err error
+	var isDM bool
 
-	// If channel ID is provided, create a channel canvas
-	if channelID != "" {
+	// Check if this is a DM channel (starts with D)
+	if channelID != "" && strings.HasPrefix(channelID, "D") {
+		isDM = true
+		ct.logger.InfoKV("Detected DM channel, will create standalone canvas", "channel_id", channelID)
+	}
+
+	// If channel ID is provided and it's not a DM, create a channel canvas
+	if channelID != "" && !isDM {
 		// Create canvas directly in the channel
 		canvasID, err = ct.client.CreateChannelCanvasContext(ctx, channelID, docContent)
 		if err != nil {
@@ -127,13 +134,30 @@ func (ct *CanvasTool) createCanvas(ctx context.Context, args map[string]interfac
 		}
 		ct.logger.InfoKV("Channel canvas created", "canvas_id", canvasID, "channel_id", channelID)
 	} else {
-		// Create standalone canvas
+		// Create standalone canvas (for DMs or when no channel specified)
 		canvasID, err = ct.client.CreateCanvasContext(ctx, title, docContent)
 		if err != nil {
 			ct.logger.ErrorKV("Failed to create canvas", "error", err)
 			return "", fmt.Errorf("failed to create canvas: %w", err)
 		}
 		ct.logger.InfoKV("Standalone canvas created", "canvas_id", canvasID, "title", title)
+	}
+
+	// Try to get file info to retrieve permalink
+	var canvasURL string
+	file, _, _, err := ct.client.GetFileInfoContext(ctx, canvasID, 0, 0)
+	if err != nil {
+		ct.logger.ErrorKV("Failed to get canvas file info", "error", err, "canvas_id", canvasID)
+		// Construct URL manually if we can't get file info
+		// Format: https://[workspace].slack.com/docs/[team_id]/[file_id]
+		// We'll need to provide instructions since we can't get the exact URL
+	} else if file != nil {
+		if file.Permalink != "" {
+			canvasURL = file.Permalink
+		} else if file.URLPrivate != "" {
+			canvasURL = file.URLPrivate
+		}
+		ct.logger.InfoKV("Got canvas info", "permalink", file.Permalink, "url_private", file.URLPrivate)
 	}
 
 	result := map[string]interface{}{
@@ -145,11 +169,25 @@ func (ct *CanvasTool) createCanvas(ctx context.Context, args map[string]interfac
 		result["title"] = title
 	}
 	
-	if channelID != "" {
+	if canvasURL != "" {
+		result["url"] = canvasURL
+	}
+	
+	if isDM {
+		result["message"] = fmt.Sprintf("Canvas created! View it here: %s\n\nNote: This canvas was created in a DM. To share it with a channel, you can:\n1. Open the canvas\n2. Click the '...' menu\n3. Select 'Add to channel'", canvasURL)
+	} else if channelID != "" {
 		result["channel_id"] = channelID
-		result["message"] = fmt.Sprintf("Canvas created successfully in channel %s! The canvas will appear in the channel.", channelID)
+		if canvasURL != "" {
+			result["message"] = fmt.Sprintf("Canvas created in channel! View it here: %s", canvasURL)
+		} else {
+			result["message"] = "Canvas created successfully in the channel!"
+		}
 	} else {
-		result["message"] = fmt.Sprintf("Canvas created with ID: %s. You can find it in your Slack workspace.", canvasID)
+		if canvasURL != "" {
+			result["message"] = fmt.Sprintf("Canvas created! View it here: %s", canvasURL)
+		} else {
+			result["message"] = fmt.Sprintf("Canvas created with ID: %s. You can find it in your Slack workspace files.", canvasID)
+		}
 	}
 
 	resultJSON, _ := json.Marshal(result)

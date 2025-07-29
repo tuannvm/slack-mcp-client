@@ -80,7 +80,8 @@ func (b *LLMMCPBridge) generateToolPrompt() string {
 		promptBuilder.WriteString("- The channel_id is provided in the context as SLACK_CHANNEL_ID\n")
 		promptBuilder.WriteString("- Use canvas_edit to modify existing canvases (replace, append, or prepend content)\n")
 		promptBuilder.WriteString("- Canvases are ideal for documentation, guides, meeting notes, and structured content\n")
-		promptBuilder.WriteString("- Always use proper markdown formatting for better readability\n\n")
+		promptBuilder.WriteString("- Canvas content should use proper markdown formatting\n")
+		promptBuilder.WriteString("- When responding about canvas operations, use Slack formatting: *bold*, _italic_, `code`, NOT markdown **bold** or __italic__\n\n")
 	}
 
 	promptBuilder.WriteString("Available Tools:\n")
