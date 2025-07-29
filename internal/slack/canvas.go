@@ -30,7 +30,7 @@ func (ct *CanvasTool) CreateCanvasToolInfo() mcp.ToolInfo {
 	return mcp.ToolInfo{
 		ServerName:      "slack-native",
 		ToolName:        "canvas_create",
-		ToolDescription: "Create a new Slack canvas with markdown content. In public channels, creates a channel canvas. In DMs, creates a standalone canvas with a shareable link.",
+		ToolDescription: "Create a new Slack canvas with markdown content. Returns canvas_id, url, and metadata. In channels, creates a channel canvas. In DMs, creates a standalone canvas that can be shared later.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -173,21 +173,18 @@ func (ct *CanvasTool) createCanvas(ctx context.Context, args map[string]interfac
 		result["url"] = canvasURL
 	}
 	
-	if isDM {
-		result["message"] = fmt.Sprintf("Canvas created! View it here: %s\n\nNote: This canvas was created in a DM. To share it with a channel, you can:\n1. Open the canvas\n2. Click the '...' menu\n3. Select 'Add to channel'", canvasURL)
-	} else if channelID != "" {
+	if channelID != "" {
 		result["channel_id"] = channelID
-		if canvasURL != "" {
-			result["message"] = fmt.Sprintf("Canvas created in channel! View it here: %s", canvasURL)
-		} else {
-			result["message"] = "Canvas created successfully in the channel!"
-		}
+	}
+	
+	// Add metadata about canvas type for LLM to understand
+	if isDM {
+		result["canvas_type"] = "standalone"
+		result["created_in_dm"] = true
+	} else if channelID != "" {
+		result["canvas_type"] = "channel"
 	} else {
-		if canvasURL != "" {
-			result["message"] = fmt.Sprintf("Canvas created! View it here: %s", canvasURL)
-		} else {
-			result["message"] = fmt.Sprintf("Canvas created with ID: %s. You can find it in your Slack workspace files.", canvasID)
-		}
+		result["canvas_type"] = "standalone"
 	}
 
 	resultJSON, _ := json.Marshal(result)
