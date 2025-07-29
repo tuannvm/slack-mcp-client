@@ -118,6 +118,7 @@ func (ct *CanvasTool) SectionsLookupToolInfo() mcp.ToolInfo {
 	}
 }
 
+
 // CallTool implements the MCPClientInterface for canvas operations
 func (ct *CanvasTool) CallTool(ctx context.Context, toolName string, args map[string]interface{}) (string, error) {
 	switch toolName {
@@ -370,6 +371,7 @@ func (ct *CanvasTool) lookupSections(ctx context.Context, args map[string]interf
 	resultJSON, _ := json.Marshal(result)
 	return string(resultJSON), nil
 }
+
 
 // formatMarkdownForCanvas ensures the content is properly formatted for Slack canvas
 func (ct *CanvasTool) formatMarkdownForCanvas(content string) string {
