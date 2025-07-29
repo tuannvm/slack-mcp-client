@@ -68,19 +68,51 @@ func (ct *CanvasTool) EditCanvasToolInfo() mcp.ToolInfo {
 				},
 				"operation": map[string]interface{}{
 					"type":        "string",
-					"description": "Edit operation: 'replace' (replace entire content), 'insert_at_end' (append content), 'insert_at_start' (prepend content)",
-					"enum":        []string{"replace", "insert_at_end", "insert_at_start"},
+					"description": "Edit operation: 'replace' (replace entire content or section), 'insert_at_end' (append content), 'insert_at_start' (prepend content), 'insert_after' (insert after section), 'insert_before' (insert before section)",
+					"enum":        []string{"replace", "insert_at_end", "insert_at_start", "insert_after", "insert_before"},
 				},
 				"content": map[string]interface{}{
 					"type":        "string",
 					"description": "New markdown content",
 				},
-				"old_content": map[string]interface{}{
+				"section_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Old content to replace (only for 'replace' operation when replacing specific text)",
+					"description": "Section ID for targeted operations (required for insert_after, insert_before, optional for replace)",
 				},
 			},
 			"required": []string{"canvas_id", "operation", "content"},
+		},
+		Client: ct,
+	}
+}
+
+// SectionsLookupToolInfo returns the tool info for canvas sections lookup
+func (ct *CanvasTool) SectionsLookupToolInfo() mcp.ToolInfo {
+	return mcp.ToolInfo{
+		ServerName:      "slack-native",
+		ToolName:        "canvas_sections_lookup",
+		ToolDescription: "Find sections in a canvas matching specified criteria (headers, text content)",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"canvas_id": map[string]interface{}{
+					"type":        "string",
+					"description": "ID of the canvas to search",
+				},
+				"section_types": map[string]interface{}{
+					"type":        "array",
+					"description": "Types of sections to find: 'h1', 'h2', 'h3', 'any_header'",
+					"items": map[string]interface{}{
+						"type": "string",
+						"enum": []string{"h1", "h2", "h3", "any_header"},
+					},
+				},
+				"contains_text": map[string]interface{}{
+					"type":        "string",
+					"description": "Find sections containing this text",
+				},
+			},
+			"required": []string{"canvas_id"},
 		},
 		Client: ct,
 	}
@@ -93,6 +125,8 @@ func (ct *CanvasTool) CallTool(ctx context.Context, toolName string, args map[st
 		return ct.createCanvas(ctx, args)
 	case "canvas_edit":
 		return ct.editCanvas(ctx, args)
+	case "canvas_sections_lookup":
+		return ct.lookupSections(ctx, args)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", toolName)
 	}
@@ -208,6 +242,9 @@ func (ct *CanvasTool) editCanvas(ctx context.Context, args map[string]interface{
 		return "", fmt.Errorf("content is required and must be a string")
 	}
 
+	// Get optional section_id
+	sectionID, _ := args["section_id"].(string)
+
 	// Build the changes array based on operation
 	var changes []slack.CanvasChange
 	formattedContent := ct.formatMarkdownForCanvas(content)
@@ -218,29 +255,32 @@ func (ct *CanvasTool) editCanvas(ctx context.Context, args map[string]interface{
 		Markdown: formattedContent,
 	}
 
+	// Create the change object
+	change := slack.CanvasChange{
+		Operation:       operation,
+		DocumentContent: docContent,
+	}
+
+	// Add section_id if provided and required
 	switch operation {
 	case "replace":
-		// Replace entire canvas content
-		// The Slack Canvas API typically uses operations at section level
-		// For replacing entire content, we would need to know the section IDs
-		// This is a simplified implementation
-		changes = append(changes, slack.CanvasChange{
-			Operation:       "replace",
-			DocumentContent: docContent,
-		})
-	case "insert_at_end":
-		changes = append(changes, slack.CanvasChange{
-			Operation:       "insert_at_end",
-			DocumentContent: docContent,
-		})
-	case "insert_at_start":
-		changes = append(changes, slack.CanvasChange{
-			Operation:       "insert_at_start",
-			DocumentContent: docContent,
-		})
+		// Section ID is optional for replace - if provided, replaces that section only
+		if sectionID != "" {
+			change.SectionID = sectionID
+		}
+	case "insert_at_end", "insert_at_start":
+		// These operations don't need section_id
+	case "insert_after", "insert_before":
+		// These operations require section_id
+		if sectionID == "" {
+			return "", fmt.Errorf("%s operation requires section_id parameter", operation)
+		}
+		change.SectionID = sectionID
 	default:
 		return "", fmt.Errorf("unsupported operation: %s", operation)
 	}
+
+	changes = append(changes, change)
 
 	// Edit canvas using Slack API
 	params := slack.EditCanvasParams{
@@ -258,6 +298,73 @@ func (ct *CanvasTool) editCanvas(ctx context.Context, args map[string]interface{
 		"canvas_id": canvasID,
 		"status":    "edited",
 		"operation": operation,
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	return string(resultJSON), nil
+}
+
+// lookupSections handles canvas sections lookup
+func (ct *CanvasTool) lookupSections(ctx context.Context, args map[string]interface{}) (string, error) {
+	canvasID, ok := args["canvas_id"].(string)
+	if !ok {
+		return "", fmt.Errorf("canvas_id is required and must be a string")
+	}
+
+	// Build criteria for sections lookup
+	criteria := make(map[string]interface{})
+
+	// Handle section_types array
+	if sectionTypes, ok := args["section_types"].([]interface{}); ok {
+		types := make([]string, len(sectionTypes))
+		for i, t := range sectionTypes {
+			if str, ok := t.(string); ok {
+				types[i] = str
+			}
+		}
+		if len(types) > 0 {
+			criteria["section_types"] = types
+		}
+	}
+
+	// Handle contains_text
+	if containsText, ok := args["contains_text"].(string); ok && containsText != "" {
+		criteria["contains_text"] = containsText
+	}
+
+	// If no criteria specified, return error
+	if len(criteria) == 0 {
+		return "", fmt.Errorf("at least one search criteria (section_types or contains_text) must be provided")
+	}
+
+	// Build LookupCanvasSectionsParams
+	lookupCriteria := slack.LookupCanvasSectionsCriteria{}
+	
+	if sectionTypes, ok := criteria["section_types"].([]string); ok {
+		lookupCriteria.SectionTypes = sectionTypes
+	}
+	
+	if containsText, ok := criteria["contains_text"].(string); ok {
+		lookupCriteria.ContainsText = containsText
+	}
+	
+	params := slack.LookupCanvasSectionsParams{
+		CanvasID: canvasID,
+		Criteria: lookupCriteria,
+	}
+	
+	// Call Slack API to lookup sections
+	sections, err := ct.client.LookupCanvasSectionsContext(ctx, params)
+	if err != nil {
+		ct.logger.ErrorKV("Failed to lookup canvas sections", "error", err, "canvas_id", canvasID)
+		return "", fmt.Errorf("failed to lookup canvas sections: %w", err)
+	}
+
+	// Build result
+	result := map[string]interface{}{
+		"canvas_id": canvasID,
+		"sections":  sections,
+		"count":     len(sections),
 	}
 
 	resultJSON, _ := json.Marshal(result)

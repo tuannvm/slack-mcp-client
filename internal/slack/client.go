@@ -80,14 +80,16 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 			// Add canvas tools to discoveredTools
 			createTool := canvasTool.CreateCanvasToolInfo()
 			editTool := canvasTool.EditCanvasToolInfo()
+			lookupTool := canvasTool.SectionsLookupToolInfo()
 			
 			discoveredTools["canvas_create"] = createTool
 			discoveredTools["canvas_edit"] = editTool
+			discoveredTools["canvas_sections_lookup"] = lookupTool
 			
 			// Add canvas tool to raw client map
 			rawClientMap["slack-native"] = canvasTool
 			
-			clientLogger.InfoKV("Canvas tools enabled", "tools", []string{"canvas_create", "canvas_edit"})
+			clientLogger.InfoKV("Canvas tools enabled", "tools", []string{"canvas_create", "canvas_edit", "canvas_sections_lookup"})
 		}
 	}
 
