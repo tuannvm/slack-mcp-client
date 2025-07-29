@@ -25,15 +25,16 @@ import (
 
 // Client represents the Slack client application.
 type Client struct {
-	logger          *logging.Logger // Structured logger
-	userFrontend    UserFrontend
-	mcpClients      map[string]*mcp.Client
-	llmMCPBridge    *handlers.LLMMCPBridge
-	llmRegistry     *llm.ProviderRegistry // LLM provider registry
-	cfg             *config.Config        // Holds the application configuration
-	messageHistory  map[string][]Message
-	historyLimit    int
-	discoveredTools map[string]mcp.ToolInfo
+	logger             *logging.Logger // Structured logger
+	userFrontend       UserFrontend
+	mcpClients         map[string]*mcp.Client
+	llmMCPBridge       *handlers.LLMMCPBridge
+	llmRegistry        *llm.ProviderRegistry // LLM provider registry
+	cfg                *config.Config        // Holds the application configuration
+	messageHistory     map[string][]Message
+	historyLimit       int
+	discoveredTools    map[string]mcp.ToolInfo
+	participatedThreads map[string]bool // Track threads where bot has responded (key: "channel:threadTS")
 }
 
 // Message represents a message in the conversation history
@@ -181,15 +182,16 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 
 	// --- Create and return Client instance ---
 	return &Client{
-		logger:          clientLogger,
-		userFrontend:    userFrontend,
-		mcpClients:      mcpClients,
-		llmMCPBridge:    llmMCPBridge,
-		llmRegistry:     registry,
-		cfg:             cfg,
-		messageHistory:  make(map[string][]Message),
-		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
-		discoveredTools: discoveredTools,
+		logger:              clientLogger,
+		userFrontend:        userFrontend,
+		mcpClients:          mcpClients,
+		llmMCPBridge:        llmMCPBridge,
+		llmRegistry:         registry,
+		cfg:                 cfg,
+		messageHistory:      make(map[string][]Message),
+		historyLimit:        cfg.Slack.MessageHistory, // Store configured number of messages per channel
+		discoveredTools:     discoveredTools,
+		participatedThreads: make(map[string]bool),
 	}, nil
 }
 
@@ -243,13 +245,14 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			}
 
 			// Use handleUserPrompt for app mentions too, for consistency
-			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp, userInfo.Profile.DisplayName)
+			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, ev.TimeStamp, ev.TimeStamp, userInfo.Profile.DisplayName)
 
 		case *slackevents.MessageEvent:
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
 			isValidUser := c.userFrontend.IsValidUser(ev.User)
 			isNotEdited := ev.SubType != "message_changed"
 			isBot := ev.BotID != "" || ev.SubType == "bot_message"
+			isInParticipatedThread := c.hasParticipatedInThread(ev.Channel, ev.ThreadTimeStamp)
 
 			userInfo, err := c.userFrontend.GetUserInfo(ev.User)
 			if err != nil {
@@ -257,10 +260,29 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 				return
 			}
 
-			if isDirectMessage && isValidUser && isNotEdited && !isBot {
-				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text)
+			// Process message if:
+			// 1. It's a direct message, OR
+			// 2. It's in a thread where the bot has participated
+			if (isDirectMessage || isInParticipatedThread) && isValidUser && isNotEdited && !isBot {
+				c.logger.InfoKV("Received message", "channel", ev.Channel, "user", ev.User, "text", ev.Text, 
+					"isDM", isDirectMessage, "isThread", isInParticipatedThread, "threadTS", ev.ThreadTimeStamp)
 
-				go c.handleUserPrompt(ev.Text, ev.Channel, ev.ThreadTimeStamp, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
+				// For thread messages, use the thread timestamp; for channel messages, start a new thread
+				threadTS := ev.ThreadTimeStamp
+				if threadTS == "" && !isDirectMessage {
+					// If it's not a DM and not in a thread, this shouldn't happen based on our logic
+					// but if it does, use the message timestamp as thread start
+					threadTS = ev.TimeStamp
+				}
+
+				// For thread replies, we need the original message timestamp for reactions
+				messageTS := ev.TimeStamp
+				if threadTS == "" {
+					// This is a new message, use its timestamp for reactions
+					messageTS = ev.TimeStamp
+				}
+				
+				go c.handleUserPrompt(ev.Text, ev.Channel, threadTS, messageTS, userInfo.Profile.DisplayName) // Use goroutine to avoid blocking event loop
 			}
 
 		default:
@@ -271,9 +293,15 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 	}
 }
 
-// addToHistory adds a message to the channel history
-func (c *Client) addToHistory(channelID, role, content string) {
-	history, exists := c.messageHistory[channelID]
+// addToHistory adds a message to the channel/thread history
+func (c *Client) addToHistory(channelID, threadTS, role, content string) {
+	// Use thread-aware key: for threads use "channel:threadTS", for non-threads just use channelID
+	historyKey := channelID
+	if threadTS != "" {
+		historyKey = fmt.Sprintf("%s:%s", channelID, threadTS)
+	}
+	
+	history, exists := c.messageHistory[historyKey]
 	if !exists {
 		history = []Message{}
 	}
@@ -291,14 +319,39 @@ func (c *Client) addToHistory(channelID, role, content string) {
 		history = history[len(history)-c.historyLimit:]
 	}
 
-	c.messageHistory[channelID] = history
+	c.messageHistory[historyKey] = history
+	c.logger.DebugKV("Added to history", "key", historyKey, "role", role, "contentLength", len(content))
+}
+
+// trackThreadParticipation marks a thread as participated by the bot
+func (c *Client) trackThreadParticipation(channelID, threadTS string) {
+	if threadTS != "" {
+		threadKey := fmt.Sprintf("%s:%s", channelID, threadTS)
+		c.participatedThreads[threadKey] = true
+		c.logger.DebugKV("Tracked thread participation", "channel", channelID, "thread", threadTS)
+	}
+}
+
+// hasParticipatedInThread checks if the bot has participated in a thread
+func (c *Client) hasParticipatedInThread(channelID, threadTS string) bool {
+	if threadTS == "" {
+		return false
+	}
+	threadKey := fmt.Sprintf("%s:%s", channelID, threadTS)
+	return c.participatedThreads[threadKey]
 }
 
 // getContextFromHistory builds a context string from message history
 //
 //nolint:unused // Reserved for future use
-func (c *Client) getContextFromHistory(channelID string) string {
-	history, exists := c.messageHistory[channelID]
+func (c *Client) getContextFromHistory(channelID, threadTS string) string {
+	// Use thread-aware key: for threads use "channel:threadTS", for non-threads just use channelID
+	historyKey := channelID
+	if threadTS != "" {
+		historyKey = fmt.Sprintf("%s:%s", channelID, threadTS)
+	}
+	
+	history, exists := c.messageHistory[historyKey]
 	if !exists || len(history) == 0 {
 		return ""
 	}
@@ -325,22 +378,25 @@ func (c *Client) getContextFromHistory(channelID string) string {
 	contextBuilder.WriteString("---\n") // Clearer end marker
 
 	contextString := contextBuilder.String()
-	c.logger.DebugKV("Built conversation context", "channel", channelID, "context", contextString) // Log the built context
+	c.logger.DebugKV("Built conversation context", "key", historyKey, "messages", len(history)) // Log the built context
 	return contextString
 }
 
 // handleUserPrompt sends the user's text to the configured LLM provider.
-func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayName string) {
+func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, messageTS, userDisplayName string) {
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", c.cfg.LLM.Provider)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
 	// Get context from history
-	contextHistory := c.getContextFromHistory(channelID)
+	contextHistory := c.getContextFromHistory(channelID, threadTS)
 
-	c.addToHistory(channelID, "user", userPrompt) // Add user message to history
+	c.addToHistory(channelID, threadTS, "user", userPrompt) // Add user message to history
 
-	// Show a temporary "typing" indicator
-	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
+	// Add thinking emoji reaction
+	err := c.userFrontend.AddReaction(channelID, messageTS, "thinking_face")
+	if err != nil {
+		c.logger.ErrorKV("Failed to add thinking reaction", "error", err)
+	}
 
 	if !c.cfg.LLM.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction
@@ -359,6 +415,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		llmResponse, err := c.llmMCPBridge.CallLLM(finalPrompt, contextHistory)
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
+			// Remove thinking reaction on error
+			c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
 			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
 			return
 		}
@@ -366,10 +424,10 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse.Content))
 
 		// Process the LLM response through the MCP pipeline
-		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
+		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS, messageTS)
 	} else {
 		sendMsg := func(msg string) {
-			c.addToHistory(channelID, "assistant", msg) // Original LLM response (tool call JSON)
+			c.addToHistory(channelID, threadTS, "assistant", msg) // Original LLM response (tool call JSON)
 			c.userFrontend.SendMessage(channelID, threadTS, msg)
 		}
 
@@ -384,6 +442,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 			})
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
+			// Remove thinking reaction on error
+			c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
 			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
 			return
 		}
@@ -392,12 +452,16 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS, userDisplayNa
 		if llmResponse == "" {
 			c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
 		}
+		// Remove thinking reaction after response
+		c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
+		// Track that we've participated in this thread
+		c.trackThreadParticipation(channelID, threadTS)
 	}
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 // Incorporates logic previously in LLMClient.ProcessToolResponse.
-func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
+func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS, messageTS string) {
 	// Log the raw LLM response for debugging
 	c.logger.DebugKV("Raw LLM response", "response", logging.TruncateForLog(fmt.Sprintf("%v", llmResponse), 500))
 
@@ -452,8 +516,8 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
 		// Add history for non-comprehensive results
-		c.addToHistory(channelID, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
-		c.addToHistory(channelID, "tool", finalResponse)            // Tool execution result
+		c.addToHistory(channelID, threadTS, "assistant", llmResponse.Content) // Original LLM response (tool call JSON)
+		c.addToHistory(channelID, threadTS, "tool", finalResponse)            // Tool execution result
 
 		c.logger.DebugKV("Re-prompting LLM", "prompt", rePrompt)
 
@@ -470,7 +534,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 			finalRePrompt = rePrompt
 		}
 
-		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(finalRePrompt, c.getContextFromHistory(channelID))
+		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(finalRePrompt, c.getContextFromHistory(channelID, threadTS))
 		if repromptErr != nil {
 			c.logger.ErrorKV("Error during LLM re-prompt", "error", repromptErr)
 			// Fallback: Show the tool result and the error
@@ -480,7 +544,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		}
 	} else {
 		// No tool was executed, add assistant response to history
-		c.addToHistory(channelID, "assistant", finalResponse)
+		c.addToHistory(channelID, threadTS, "assistant", finalResponse)
 	}
 
 	// Send the final response back to Slack
@@ -489,4 +553,10 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 	} else {
 		c.userFrontend.SendMessage(channelID, threadTS, finalResponse)
 	}
+	
+	// Remove thinking reaction after response
+	c.userFrontend.RemoveReaction(channelID, messageTS, "thinking_face")
+	
+	// Track that we've participated in this thread
+	c.trackThreadParticipation(channelID, threadTS)
 }
