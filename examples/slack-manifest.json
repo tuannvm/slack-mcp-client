@@ -1,0 +1,49 @@
+{
+  "display_information": {
+    "name": "MCP Bot",
+    "description": "A Model Context Protocol (MCP) bridge that enables LLMs to interact with various tools and services through Slack",
+    "background_color": "#2c2d30",
+    "long_description": "This bot serves as a bridge between Slack and multiple MCP (Model Context Protocol) servers, allowing LLM models to interact with various tools and services. It supports OpenAI, Anthropic, and Ollama providers, includes RAG capabilities, and provides agent-based conversational interactions with comprehensive tool orchestration."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "MCP Bot",
+      "always_online": true
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "im:history",
+        "im:read",
+        "im:write",
+        "users:read",
+        "users.profile:read",
+        "channels:history",
+        "groups:history",
+        "mpim:history"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_mention",
+        "message.im"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": false
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": true,
+    "token_rotation_enabled": false
+  }
+}
