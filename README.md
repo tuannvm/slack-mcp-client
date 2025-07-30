@@ -19,6 +19,9 @@ This client enables AI models (OpenAI, Anthropic, Ollama) to interact with real 
 - **Multi-Provider LLM Support** - OpenAI GPT-4o, Anthropic Claude, Ollama local models
 - **Agent Mode** - Multi-step reasoning with LangChain for complex workflows
 - **RAG Integration** - Knowledge base with semantic search capabilities
+- **Thread-Aware Context** - Maintains separate conversation history per Slack thread
+- **User Context Integration** - Personalized responses with cached user information
+- **Unique Tool Naming** - Server-prefixed tool names prevent conflicts across MCP servers
 - **Production Ready** - Comprehensive configuration, monitoring, and security
 
 ## Use Cases
@@ -127,6 +130,8 @@ flowchart LR
   - Uses Socket Mode for secure, firewall-friendly communication
   - Works with both channels and direct messages
   - Rich message formatting with Markdown and Block Kit
+  - Thread-aware conversation tracking with separate context per thread
+  - User context caching for personalized interactions
   - Customizable bot behavior and message history
 - ✅ **Multi-Provider LLM Support**:
   - OpenAI (GPT-4, GPT-4o, etc.)
@@ -152,6 +157,7 @@ flowchart LR
   - Environment variable substitution and overrides
   - All underlying package options exposed
   - Smart defaults with full customization capability
+  - Server-prefixed tool names to prevent naming conflicts
 - ✅ **Production Ready**:
   - Docker container support with GHCR publishing
   - Kubernetes Helm charts with OCI registry
@@ -441,7 +447,8 @@ Agent Mode uses LangChain's conversational agent framework to provide:
 2. **Strategic Tool Usage**: Agents decide when and how to use available tools
 3. **Multi-Step Reasoning**: Can break down complex problems into manageable steps
 4. **Streaming Responses**: Provides real-time updates during processing
-5. **User Context Integration**: Incorporates user information for personalized responses
+5. **User Context Integration**: Incorporates cached user information for personalized responses
+6. **Thread Context Awareness**: Maintains separate conversation history per Slack thread
 
 #### Agent Mode Configuration
 
