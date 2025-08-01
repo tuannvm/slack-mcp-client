@@ -277,7 +277,7 @@ func processSingleMCPServer(
 
 	// Create client instance (assuming HTTP/SSE based on simplified config)
 	// Use mcp.NewClient from the internal package
-	mcpClient, err := createMCPClient(serverLogger, serverConf, mcpLoggerStd)
+	mcpClient, err := createMCPClient(serverLogger, serverConf, serverName, mcpLoggerStd)
 	if err != nil {
 		*failedServers = append(*failedServers, serverName+fmt.Sprintf("(create: %s)", err))
 		return
@@ -352,7 +352,7 @@ func processSingleMCPServer(
 			serverLogger.Debug("    Tool '%s' is not in allow list, skipping", toolDef.Name)
 			continue
 		}
-		toolName := toolDef.Name
+		toolName := fmt.Sprintf("%s_%s", serverName, toolDef.Name)
 		if _, exists := discoveredTools[toolName]; !exists {
 			var inputSchemaMap map[string]interface{}
 			// Marshal the ToolInputSchema struct to JSON bytes
@@ -394,7 +394,7 @@ func processSingleMCPServer(
 
 // createMCPClient creates an MCP client based on configuration
 // Use mcp.Client and mcp.NewClient from the internal mcp package
-func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, _ *log.Logger) (*mcp.Client, error) {
+func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, serverName string, _ *log.Logger) (*mcp.Client, error) {
 	// Check if this is a URL-based (HTTP/SSE) configuration
 	if serverConf.URL != "" {
 		// Assume "sse" transport by default for HTTP-based connections
@@ -405,7 +405,7 @@ func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, 
 		logger.InfoKV("Creating MCP client", "transport", transport, "address", serverConf.URL)
 
 		// Use the imported mcp.NewClient from internal/mcp/client.go with structured logger
-		mcpClient, createErr := mcp.NewClient(transport, serverConf.URL, nil, nil, logger)
+		mcpClient, createErr := mcp.NewClient(transport, serverConf.URL, serverName, nil, nil, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client for URL %s: %v", serverConf.URL, createErr)
 			// Create a domain-specific error with additional context
@@ -445,7 +445,7 @@ func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, 
 
 		// Create the MCP client
 		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env)
-		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverConf.Args, env, logger)
+		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverName, serverConf.Args, env, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client: %v", createErr)
 			// Create a domain-specific error with additional context
@@ -612,15 +612,21 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
-	// Create Slack client based on security configuration
-	slackClient, err := createSlackClient(userFrontend, logger, mcpClients, discoveredTools, cfg)
+	// Use the structured logger for the Slack client
+	client, err := slackbot.NewClient(
+		userFrontend,
+		logger,          // Pass the structured logger
+		mcpClients,      // Pass the map of initialized clients
+		discoveredTools, // Pass the map of tool information
+		cfg,             // Pass the whole config object
+	)
 	if err != nil {
 		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
 	// Start listening for Slack events in a separate goroutine
 	go func() {
-		if err := slackClient.Run(); err != nil {
+		if err := client.Run(); err != nil {
 			logger.Fatal("Slack client error: %v", err)
 		}
 	}()
@@ -964,31 +970,4 @@ func executeMigrationScript(inputFile, outputFile string) error {
 	cmd.Stderr = os.Stderr
 
 	return cmd.Run()
-}
-
-// createSlackClient creates the appropriate Slack client based on security configuration
-// This factory function improves type safety and reduces coupling in startSlackClient
-func createSlackClient(userFrontend slackbot.UserFrontend, logger *logging.Logger,
-	mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo,
-	cfg *config.Config) (slackbot.SlackRunner, error) {
-
-	if cfg.Security.Enabled {
-		logger.Info("Security is enabled - using secure Slack client")
-		return slackbot.NewSecureClient(
-			userFrontend,
-			logger,          // Pass the structured logger
-			mcpClients,      // Pass the map of initialized clients
-			discoveredTools, // Pass the map of tool information
-			cfg,             // Pass the unified config
-		)
-	}
-
-	logger.Info("Security is disabled - using regular Slack client")
-	return slackbot.NewClient(
-		userFrontend,
-		logger,          // Pass the structured logger
-		mcpClients,      // Pass the map of initialized clients
-		discoveredTools, // Pass the map of tool information
-		cfg,             // Pass the whole config object
-	)
 }
