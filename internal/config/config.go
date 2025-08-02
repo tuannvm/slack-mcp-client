@@ -62,6 +62,7 @@ type MCPServerConfig struct {
 	URL                      string            `json:"url,omitempty"`
 	Transport                string            `json:"transport,omitempty"`
 	Env                      map[string]string `json:"env,omitempty"`
+	HTTPHeaders              map[string]string `json:"httpHeaders,omitempty"`
 	Disabled                 bool              `json:"disabled,omitempty"`
 	InitializeTimeoutSeconds *int              `json:"initializeTimeoutSeconds,omitempty"`
 	Tools                    MCPToolsConfig    `json:"tools,omitempty"`
