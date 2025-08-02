@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -39,7 +40,7 @@ type Client struct {
 // NewClient creates a new MCP client handler.
 // For stdio mode, addressOrCommand should be the command path, and args should be provided.
 // For http/sse modes, addressOrCommand is the URL, and args is ignored.
-func NewClient(transport, addressOrCommand string, serverName string, args []string, env map[string]string, stdLogger *logging.Logger) (*Client, error) {
+func NewClient(transport, addressOrCommand string, serverName string, args []string, env map[string]string, resolvedHeaders map[string]string, stdLogger *logging.Logger) (*Client, error) {
 	// Determine log level from environment variable
 	logLevel := logging.LevelInfo // Default to INFO
 	if envLevel := os.Getenv("LOG_LEVEL"); envLevel != "" {
@@ -78,7 +79,12 @@ func NewClient(transport, addressOrCommand string, serverName string, args []str
 			return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 		}
 	case "sse":
-		mcpClient, err = NewSSEMCPClientWithRetry(addressOrCommand, mcpLogger)
+// Convert resolvedHeaders map to http.Header
+	hdr := make(http.Header)
+	for k, v := range resolvedHeaders {
+		hdr.Set(k, v)
+	}
+	mcpClient, err = NewSSEMCPClientWithRetry(addressOrCommand, hdr, mcpLogger)
 		if err != nil {
 			return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 		}

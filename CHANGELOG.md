@@ -78,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Initial setup of CI/CD pipeline
 - Basic project structure
+- Support for `httpHeaders` field for authentication
 
 ## [0.1.0] - YYYY-MM-DD
 ### Added
