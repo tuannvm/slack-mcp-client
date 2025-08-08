@@ -8,9 +8,11 @@ import (
 	"os"
 	"strings"
 	"time"
+	"encoding/json"
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+	// "google.golang.org/api/tracing/v2"
 
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
@@ -20,6 +22,7 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/handlers"
 	"github.com/tuannvm/slack-mcp-client/internal/llm"
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/internal/observability"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
 )
 
@@ -34,6 +37,7 @@ type Client struct {
 	messageHistory  map[string][]Message
 	historyLimit    int
 	discoveredTools map[string]mcp.ToolInfo
+	tracingHandler  *observability.TracingHandler
 }
 
 // Message represents a message in the conversation history
@@ -46,6 +50,13 @@ type Message struct {
 	RealName       string
 	Email          string
 }
+
+// func truncateString(s string, maxLen int) string {
+//     if len(s) <= maxLen {
+//         return s
+//     }
+//     return s[:maxLen] + "..."
+// }
 
 // NewClient creates a new Slack client instance.
 func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients map[string]*mcp.Client,
@@ -183,6 +194,9 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 	)
 	clientLogger.InfoKV("LLM-MCP bridge initialized", "clients", len(mcpClients), "tools", len(discoveredTools))
 
+	// Initialize observability
+	tracingHandler := observability.NewTracingHandler(cfg, clientLogger)
+
 	// --- Create and return Client instance ---
 	return &Client{
 		logger:          clientLogger,
@@ -194,6 +208,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		messageHistory:  make(map[string][]Message),
 		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
 		discoveredTools: discoveredTools,
+		tracingHandler:  tracingHandler,
 	}, nil
 }
 
@@ -357,6 +372,16 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", c.cfg.LLM.Provider)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
+	ctx, span := c.tracingHandler.StartTrace(context.Background(), "slack-user-interaction", userPrompt, map[string]string{
+		"channel_id": channelID,
+		"thread_ts":  threadTS,
+		"user_id":   profile.userId,
+		"user_email": profile.email,
+		"llm_provider": c.cfg.LLM.Provider,
+		"use_agent": fmt.Sprintf("%t", c.cfg.LLM.UseAgent),
+	})
+	defer span.End()
+
 	// Fetch thread replies from slack
 	replies, err := c.userFrontend.GetThreadReplies(channelID, threadTS)
 	if err != nil {
@@ -407,24 +432,74 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 			finalPrompt = userPrompt
 		}
 
+		llmCtx, llmSpan := c.tracingHandler.StartLLMSpan(ctx, "llm-call", c.cfg.LLM.Providers[c.cfg.LLM.Provider].Model, finalPrompt, map[string]interface{}{
+			"temperature": c.cfg.LLM.Providers[c.cfg.LLM.Provider].Temperature,
+			"max_tokens":  c.cfg.LLM.Providers[c.cfg.LLM.Provider].MaxTokens,
+		})
+
+		startTime := time.Now()
+
 		// Call LLM using the integrated logic with system instruction
 		llmResponse, err := c.llmMCPBridge.CallLLM(finalPrompt, contextHistory)
+
+		duration := time.Since(startTime)
+
+		// Set duration and handle response
+		c.tracingHandler.SetDuration(llmSpan, duration)
+
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
 			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
+			c.tracingHandler.RecordError(llmSpan, err, "ERROR")
+			llmSpan.End()
 			return
 		}
 
+		// set output and token usage
+		c.tracingHandler.SetOutput(llmSpan, llmResponse.Content)
+
+		// Extract and set token usage details
+		usageDetails := map[string]int{
+            "prompt_tokens":     getIntFromMap(llmResponse.GenerationInfo, "PromptTokens"),
+            "completion_tokens": getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
+            "total_tokens":      getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
+        }
+
+        if usageDetails["total_tokens"] > 0 {
+            c.tracingHandler.SetTokenUsage(llmSpan, usageDetails["prompt_tokens"], usageDetails["completion_tokens"], usageDetails["total_tokens"])
+        }
+
 		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse.Content))
+		c.tracingHandler.RecordSuccess(llmSpan, "LLM call succeeded")
+        llmSpan.End()
 
 		// Process the LLM response through the MCP pipeline
-		c.processLLMResponseAndReply(llmResponse, userPrompt, channelID, threadTS)
+		c.processLLMResponseAndReply(llmCtx, llmResponse, userPrompt, channelID, threadTS)
 	} else {
+		// Agent path with enhanced tracing
+		agentCtx, agentSpan := c.tracingHandler.StartSpan(ctx, "llm-agent-call", "generation", userPrompt, map[string]string{
+			"provider":    c.cfg.LLM.Provider,
+			"is_agent":    "true",
+			"channel_id":  channelID,
+			"thread_ts":   threadTS,
+			"user_id":     profile.userId,
+		})
 		sendMsg := func(msg string) {
+			// Trace each messages sent by the agent
+			_, msgSpan := c.tracingHandler.StartSpan(agentCtx, "agent-message-send", "event", msg, map[string]string{
+				"channel_id": channelID,
+				"thread_ts":  threadTS,
+				"message_type": "agent_intermediate",
+				"message_length": fmt.Sprintf("%d", len(msg)),
+			})
+
 			c.addToHistory(channelID, threadTS, "", "assistant", msg, "", "", "") // Original LLM response (tool call JSON)
 			c.userFrontend.SendMessage(channelID, threadTS, msg)
+			c.tracingHandler.RecordSuccess(msgSpan, "Agent message sent successfully")
+			msgSpan.End()
 		}
 
+		startTime := time.Now()
 		llmResponse, err := c.llmMCPBridge.CallLLMAgent(
 			profile.realName,
 			c.cfg.LLM.CustomPrompt,
@@ -434,22 +509,73 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 				callbacks.SimpleHandler{},
 				sendMsg,
 			})
+		duration := time.Since(startTime)
+
+		// Set duration
+		c.tracingHandler.SetDuration(agentSpan, duration)
+
 		if err != nil {
 			c.logger.ErrorKV("Error from LLM provider", "provider", c.cfg.LLM.Provider, "error", err)
 			c.userFrontend.SendMessage(channelID, threadTS, fmt.Sprintf("Sorry, I encountered an error with the LLM provider ('%s'): %v", c.cfg.LLM.Provider, err))
+			c.tracingHandler.RecordError(agentSpan, err, "ERROR")
+			agentSpan.End()
 			return
 		}
 		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse))
+
+		// Set Output
+		c.tracingHandler.SetOutput(agentSpan, llmResponse)
+
 		// Send the final response back to Slack
 		if llmResponse == "" {
 			c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
+			c.tracingHandler.RecordError(agentSpan, fmt.Errorf("LLM returned an empty response"), "ERROR")
+
+		} else {
+			c.tracingHandler.RecordSuccess(agentSpan, "LLM agent call succeeded")
+		}
+		agentSpan.End()
+	}
+}
+
+// getIntFromMap safely extracts an int value from a map[string]interface{} by key.
+func getIntFromMap(m map[string]interface{}, key string) int {
+	if m == nil {
+		return 0
+	}
+	if val, ok := m[key]; ok {
+		switch v := val.(type) {
+		case int:
+			return v
+		case float64:
+			return int(v)
+		case float32:
+			return int(v)
+		case json.Number:
+			i, _ := v.Int64()
+			return int(i)
+		case string:
+			var i int
+			_, err := fmt.Sscanf(v, "%d", &i)
+			if err == nil {
+				return i
+			}
 		}
 	}
+	return 0
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 // Incorporates logic previously in LLMClient.ProcessToolResponse.
-func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
+func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
+	// Start tool processing span
+    ctx, span := c.tracingHandler.StartSpan(traceCtx, "tool-processing", "span", llmResponse.Content, map[string]string{
+        "channel_id":      channelID,
+        "thread_ts":       threadTS,
+        "original_prompt": userPrompt,
+        "response_length": fmt.Sprintf("%d", len(llmResponse.Content)),
+    })
+	defer span.End()
 	// Log the raw LLM response for debugging
 	c.logger.DebugKV("Raw LLM response", "response", logging.TruncateForLog(fmt.Sprintf("%v", llmResponse), 500))
 	extraArgs := map[string]interface{}{
@@ -459,7 +585,7 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
 	// Create a context with timeout for tool processing
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	toolCtx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
 
 	// --- Process Tool Response (Logic from LLMClient.ProcessToolResponse) ---
@@ -474,27 +600,40 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		toolProcessingErr = nil
 		c.logger.Warn("LLMMCPBridge is nil, skipping tool processing")
 	} else {
+		// Start tool execution span
+        _, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "event", "", map[string]string{
+            "bridge_available": "true",
+            "response_type":    "processing",
+        })
+
 		// Process the response through the bridge
-		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(ctx, llmResponse, userPrompt, extraArgs)
+		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(toolCtx, llmResponse, userPrompt, extraArgs)
 		if err != nil {
 			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
 			isToolResult = false
 			toolProcessingErr = err // Store the error
+			c.tracingHandler.RecordError(toolExecSpan, err, "ERROR")
 		} else {
 			// If the processed response is different from the original, a tool was executed
 			if processedResponse != llmResponse.Content {
 				finalResponse = processedResponse
 				isToolResult = true
+				c.tracingHandler.SetOutput(toolExecSpan, processedResponse)
+                c.tracingHandler.RecordSuccess(toolExecSpan, "Tool executed successfully")
 			} else {
 				// No tool was executed
 				finalResponse = llmResponse.Content
 				isToolResult = false
+				c.tracingHandler.SetOutput(toolExecSpan, "No tool execution required")
+                c.tracingHandler.RecordSuccess(toolExecSpan, "No tool processing needed")
 			}
 		}
+		toolExecSpan.End()
 	}
 	// --- End of Process Tool Response Logic ---
 
 	if toolProcessingErr != nil {
+		c.tracingHandler.RecordError(span, toolProcessingErr, "ERROR")
 		c.logger.ErrorKV("Tool processing error", "error", toolProcessingErr)
 		c.userFrontend.SendMessage(channelID, threadTS, finalResponse) // Post the error message
 		return
@@ -503,6 +642,18 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 	if isToolResult {
 		c.logger.Debug("Tool executed. Re-prompting LLM with tool result.")
 		c.logger.DebugKV("Tool result", "result", logging.TruncateForLog(finalResponse, 500))
+
+		 // Start re-prompt span
+        _, repromptSpan := c.tracingHandler.StartLLMSpan(ctx, "llm-reprompt",
+            c.cfg.LLM.Providers[c.cfg.LLM.Provider].Model,
+            userPrompt,
+            map[string]interface{}{
+                "is_reprompt":        true,
+                "tool_result_length": len(finalResponse),
+                "temperature":        c.cfg.LLM.Providers[c.cfg.LLM.Provider].Temperature,
+                "max_tokens":         c.cfg.LLM.Providers[c.cfg.LLM.Provider].MaxTokens,
+            })
+
 
 		// Always re-prompt LLM with tool results for synthesis
 		// Construct a new prompt incorporating the original prompt and the tool result
@@ -526,24 +677,52 @@ func (c *Client) processLLMResponseAndReply(llmResponse *llms.ContentChoice, use
 		} else {
 			finalRePrompt = rePrompt
 		}
+		startTime := time.Now()
 
 		finalResStruct, repromptErr := c.llmMCPBridge.CallLLM(finalRePrompt, c.getContextFromHistory(channelID, threadTS))
+
+		duration := time.Since(startTime)
+		// Set duration
+        c.tracingHandler.SetDuration(repromptSpan, duration)
+
 		if repromptErr != nil {
+			c.tracingHandler.RecordError(repromptSpan, repromptErr, "ERROR")
 			c.logger.ErrorKV("Error during LLM re-prompt", "error", repromptErr)
 			// Fallback: Show the tool result and the error
 			finalResponse = fmt.Sprintf("Tool Result:\n```%s```\n\n(Error generating final response: %v)", finalResponse, repromptErr)
+			c.tracingHandler.RecordError(span, repromptErr, "ERROR")
 		} else {
+			c.logger.DebugKV("LLM re-prompt successful", "response", logging.TruncateForLog(fmt.Sprintf("%v", finalResStruct), 500))
 			finalResponse = finalResStruct.Content
+			c.tracingHandler.SetOutput(repromptSpan, finalResStruct.Content)
+			c.tracingHandler.RecordSuccess(repromptSpan, "LLM re-prompt successful")
+
 		}
+		repromptSpan.End()
 	} else {
 		// No tool was executed, add assistant response to history
 		c.addToHistory(channelID, threadTS, "", "assistant", finalResponse, "", "", "")
 	}
 
+	// Start message sending span
+    _, msgSpan := c.tracingHandler.StartSpan(ctx, "slack-message-send", "event", finalResponse, map[string]string{
+        "channel_id":            channelID,
+        "thread_ts":            threadTS,
+        "final_response_length": fmt.Sprintf("%d", len(finalResponse)),
+        "is_empty_response":     fmt.Sprintf("%t", finalResponse == ""),
+        "had_tool_execution":    fmt.Sprintf("%t", isToolResult),
+    })
 	// Send the final response back to Slack
 	if finalResponse == "" {
 		c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
+		c.tracingHandler.RecordError(msgSpan, fmt.Errorf("LLM returned an empty response"), "ERROR")
+
 	} else {
 		c.userFrontend.SendMessage(channelID, threadTS, finalResponse)
+		c.tracingHandler.RecordSuccess(msgSpan, "Slack message sent successfully")
 	}
+	msgSpan.End()
+	// Set final trace output
+    c.tracingHandler.SetOutput(span, finalResponse)
+    c.tracingHandler.RecordSuccess(span, "Tool processing completed")
 }

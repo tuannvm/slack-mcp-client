@@ -24,6 +24,7 @@ type Config struct {
 	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry      RetryConfig                `json:"retry,omitempty"`
 	Reload     ReloadConfig               `json:"reload,omitempty"`
+	Observability ObservabilityConfig     `json:"observability,omitempty"`
 }
 
 // SlackConfig contains Slack-specific configuration
@@ -153,6 +154,16 @@ type ReloadConfig struct {
 	Interval string `json:"interval,omitempty"` // Reload interval (default: "30m")
 }
 
+type ObservabilityConfig struct {
+	Enabled  bool   `json:"enabled,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Endpoint string `json:"endpoint,omitempty"`
+	PublicKey string `json:"publicKey,omitempty"`
+	SecretKey string `json:"secretKey,omitempty"`
+	ServiceName string `json:"serviceName,omitempty"`
+	ServiceVersion string `json:"serviceVersion,omitempty"`
+}
+
 // ApplyDefaults applies default values to the configuration
 func (c *Config) ApplyDefaults() {
 	c.applyVersionDefaults()
@@ -163,6 +174,7 @@ func (c *Config) ApplyDefaults() {
 	c.applyRetryDefaults()
 	c.applyMonitoringDefaults()
 	c.applyMCPDefaults()
+	c.applyObservabilityDefaults()
 }
 
 // applyVersionDefaults sets default version if not specified
@@ -297,6 +309,29 @@ func (c *Config) applyMonitoringDefaults() {
 	}
 }
 
+// applyObservabilityDefaults sets default observability configuration
+func (c *Config) applyObservabilityDefaults() {
+    // Default to disabled
+    if !c.Observability.Enabled {
+        c.Observability.Enabled = false
+    }
+
+    // Default provider to simple when enabled
+    if c.Observability.Provider == "" {
+        c.Observability.Provider = "simple"
+    }
+
+    // Default service name
+    if c.Observability.ServiceName == "" {
+        c.Observability.ServiceName = "slack-mcp-client"
+    }
+
+    // Default service version
+    if c.Observability.ServiceVersion == "" {
+        c.Observability.ServiceVersion = "1.0.0"
+    }
+}
+
 // applyMCPDefaults initializes MCP servers map if nil
 func (c *Config) applyMCPDefaults() {
 	if c.MCPServers == nil {
@@ -367,5 +402,27 @@ func (c *Config) ApplyEnvironmentVariables() {
 			ollamaConfig.Model = model
 		}
 		c.LLM.Providers[ProviderOllama] = ollamaConfig
+	}
+	// Observability overrides
+    if enabled := os.Getenv("OBSERVABILITY_ENABLED"); enabled != "" {
+		if val, err := strconv.ParseBool(enabled); err == nil {
+			c.Observability.Enabled = val
+		}
+	}
+
+	if provider := os.Getenv("OBSERVABILITY_PROVIDER"); provider != "" {
+		c.Observability.Provider = provider
+	}
+	if endpoint := os.Getenv("OBSERVABILITY_ENDPOINT"); endpoint != "" {
+		c.Observability.Endpoint = endpoint
+	}
+	if publicKey := os.Getenv("LANGFUSE_PUBLIC_KEY"); publicKey != "" {
+		c.Observability.PublicKey = publicKey
+	}
+	if secretKey := os.Getenv("LANGFUSE_SECRET_KEY"); secretKey != "" {
+		c.Observability.SecretKey = secretKey
+	}
+	if serviceName := os.Getenv("OBSERVABILITY_SERVICE_NAME"); serviceName != "" {
+		c.Observability.ServiceName = serviceName
 	}
 }
