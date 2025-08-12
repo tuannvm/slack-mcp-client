@@ -15,16 +15,16 @@ const (
 
 // Config represents the main application configuration
 type Config struct {
-	Version    string                     `json:"version"`
-	Slack      SlackConfig                `json:"slack"`
-	LLM        LLMConfig                  `json:"llm"`
-	MCPServers map[string]MCPServerConfig `json:"mcpServers"`
-	RAG        RAGConfig                  `json:"rag,omitempty"`
-	Monitoring MonitoringConfig           `json:"monitoring,omitempty"`
-	Timeouts   TimeoutConfig              `json:"timeouts,omitempty"`
-	Retry      RetryConfig                `json:"retry,omitempty"`
-	Reload     ReloadConfig               `json:"reload,omitempty"`
-	Observability ObservabilityConfig     `json:"observability,omitempty"`
+	Version       string                     `json:"version"`
+	Slack         SlackConfig                `json:"slack"`
+	LLM           LLMConfig                  `json:"llm"`
+	MCPServers    map[string]MCPServerConfig `json:"mcpServers"`
+	RAG           RAGConfig                  `json:"rag,omitempty"`
+	Monitoring    MonitoringConfig           `json:"monitoring,omitempty"`
+	Timeouts      TimeoutConfig              `json:"timeouts,omitempty"`
+	Retry         RetryConfig                `json:"retry,omitempty"`
+	Reload        ReloadConfig               `json:"reload,omitempty"`
+	Observability ObservabilityConfig        `json:"observability,omitempty"`
 }
 
 // SlackConfig contains Slack-specific configuration
@@ -155,12 +155,12 @@ type ReloadConfig struct {
 }
 
 type ObservabilityConfig struct {
-	Enabled  bool   `json:"enabled,omitempty"`
-	Provider string `json:"provider,omitempty"`
-	Endpoint string `json:"endpoint,omitempty"`
-	PublicKey string `json:"publicKey,omitempty"`
-	SecretKey string `json:"secretKey,omitempty"`
-	ServiceName string `json:"serviceName,omitempty"`
+	Enabled        bool   `json:"enabled,omitempty"`
+	Provider       string `json:"provider,omitempty"`
+	Endpoint       string `json:"endpoint,omitempty"`
+	PublicKey      string `json:"publicKey,omitempty"`
+	SecretKey      string `json:"secretKey,omitempty"`
+	ServiceName    string `json:"serviceName,omitempty"`
 	ServiceVersion string `json:"serviceVersion,omitempty"`
 }
 
@@ -312,20 +312,20 @@ func (c *Config) applyMonitoringDefaults() {
 // applyObservabilityDefaults sets default observability configuration
 func (c *Config) applyObservabilityDefaults() {
 
-    // Default provider to simple-otel when enabled
-    if c.Observability.Provider == "" {
-        c.Observability.Provider = "simple-otel"
-    }
+	// Default provider to simple-otel when enabled
+	if c.Observability.Provider == "" {
+		c.Observability.Provider = "simple-otel"
+	}
 
-    // Default service name
-    if c.Observability.ServiceName == "" {
-        c.Observability.ServiceName = "slack-mcp-client"
-    }
+	// Default service name
+	if c.Observability.ServiceName == "" {
+		c.Observability.ServiceName = "slack-mcp-client"
+	}
 
-    // Default service version
-    if c.Observability.ServiceVersion == "" {
-        c.Observability.ServiceVersion = "1.0.0"
-    }
+	// Default service version
+	if c.Observability.ServiceVersion == "" {
+		c.Observability.ServiceVersion = "1.0.0"
+	}
 }
 
 // applyMCPDefaults initializes MCP servers map if nil
@@ -400,7 +400,7 @@ func (c *Config) ApplyEnvironmentVariables() {
 		c.LLM.Providers[ProviderOllama] = ollamaConfig
 	}
 	// Observability overrides
-    if enabled := os.Getenv("OBSERVABILITY_ENABLED"); enabled != "" {
+	if enabled := os.Getenv("OBSERVABILITY_ENABLED"); enabled != "" {
 		if val, err := strconv.ParseBool(enabled); err == nil {
 			c.Observability.Enabled = val
 		}

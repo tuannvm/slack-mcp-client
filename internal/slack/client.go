@@ -4,11 +4,11 @@ package slackbot
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 	"time"
-	"encoding/json"
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
@@ -373,10 +373,10 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
 	ctx, span := c.tracingHandler.StartTrace(context.Background(), "slack-user-interaction", userPrompt, map[string]string{
-		"session_id": fmt.Sprintf("%s-%s", channelID, threadTS),
-		"user_email": profile.email,
+		"session_id":   fmt.Sprintf("%s-%s", channelID, threadTS),
+		"user_email":   profile.email,
 		"llm_provider": c.cfg.LLM.Provider,
-		"use_agent": fmt.Sprintf("%t", c.cfg.LLM.UseAgent),
+		"use_agent":    fmt.Sprintf("%t", c.cfg.LLM.UseAgent),
 	})
 	defer span.End()
 
@@ -458,34 +458,34 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 
 		// Extract and set token usage details
 		usageDetails := map[string]int{
-            "prompt_tokens":  getIntFromMap(llmResponse.GenerationInfo, "PromptTokens"),
-            "output_tokens": getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
-            "total_tokens":  getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
-            "reasoning_tokens":  getIntFromMap(llmResponse.GenerationInfo, "ReasoningTokens"),
-        }
+			"prompt_tokens":    getIntFromMap(llmResponse.GenerationInfo, "PromptTokens"),
+			"output_tokens":    getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
+			"total_tokens":     getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
+			"reasoning_tokens": getIntFromMap(llmResponse.GenerationInfo, "ReasoningTokens"),
+		}
 
-        if usageDetails["total_tokens"] > 0 {
-            c.tracingHandler.SetTokenUsage(llmSpan, usageDetails["prompt_tokens"], usageDetails["output_tokens"], usageDetails["reasoning_tokens"], usageDetails["total_tokens"])
-        }
+		if usageDetails["total_tokens"] > 0 {
+			c.tracingHandler.SetTokenUsage(llmSpan, usageDetails["prompt_tokens"], usageDetails["output_tokens"], usageDetails["reasoning_tokens"], usageDetails["total_tokens"])
+		}
 
 		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse.Content))
 		c.tracingHandler.RecordSuccess(llmSpan, "LLM call succeeded")
-        llmSpan.End()
+		llmSpan.End()
 
 		// Process the LLM response through the MCP pipeline
 		c.processLLMResponseAndReply(llmCtx, llmResponse, userPrompt, channelID, threadTS)
 	} else {
 		// Agent path with enhanced tracing
 		agentCtx, agentSpan := c.tracingHandler.StartSpan(ctx, "llm-agent-call", "generation", userPrompt, map[string]string{
-			"provider":    c.cfg.LLM.Provider,
-			"is_agent":    "true",
+			"provider": c.cfg.LLM.Provider,
+			"is_agent": "true",
 		})
 		sendMsg := func(msg string) {
 			// Trace each messages sent by the agent
 			_, msgSpan := c.tracingHandler.StartSpan(agentCtx, "agent-message-send", "event", msg, map[string]string{
-				"channel_id": channelID,
-				"thread_ts":  threadTS,
-				"message_type": "agent_intermediate",
+				"channel_id":     channelID,
+				"thread_ts":      threadTS,
+				"message_type":   "agent_intermediate",
 				"message_length": fmt.Sprintf("%d", len(msg)),
 			})
 
@@ -523,14 +523,14 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 		c.tracingHandler.SetOutput(agentSpan, llmResponse)
 		// Set token usage
 		// usageDetails := map[string]int{
-        //     "prompt_tokens":     getIntFromMap(llmRespons, "PromptTokens"),
-        //     "completion_tokens": getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
-        //     "total_tokens":      getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
-        // }
+		//     "prompt_tokens":     getIntFromMap(llmRespons, "PromptTokens"),
+		//     "completion_tokens": getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
+		//     "total_tokens":      getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
+		// }
 
-        // if usageDetails["total_tokens"] > 0 {
-        //     c.tracingHandler.SetTokenUsage(agentSpan, usageDetails["prompt_tokens"], usageDetails["completion_tokens"], usageDetails["total_tokens"])
-        // }
+		// if usageDetails["total_tokens"] > 0 {
+		//     c.tracingHandler.SetTokenUsage(agentSpan, usageDetails["prompt_tokens"], usageDetails["completion_tokens"], usageDetails["total_tokens"])
+		// }
 
 		// Send the final response back to Slack
 		if llmResponse == "" {
@@ -572,68 +572,68 @@ func getIntFromMap(m map[string]interface{}, key string) int {
 }
 
 func (c *Client) extractToolNameFromResponse(response string) string {
-    // Try to parse JSON to extract tool name
-    var toolCall struct {
-        Tool string `json:"tool"`
-    }
+	// Try to parse JSON to extract tool name
+	var toolCall struct {
+		Tool string `json:"tool"`
+	}
 
-    if err := json.Unmarshal([]byte(response), &toolCall); err == nil && toolCall.Tool != "" {
-        return toolCall.Tool
-    }
+	if err := json.Unmarshal([]byte(response), &toolCall); err == nil && toolCall.Tool != "" {
+		return toolCall.Tool
+	}
 
-    // Fallback: look for tool names in the response text
-    for toolName := range c.discoveredTools {
-        if strings.Contains(response, toolName) {
-            return toolName
-        }
-    }
+	// Fallback: look for tool names in the response text
+	for toolName := range c.discoveredTools {
+		if strings.Contains(response, toolName) {
+			return toolName
+		}
+	}
 
-    return "unknown"
+	return "unknown"
 }
 
 func (c *Client) detectIfToolUsedLLM(toolName, response string) bool {
-    // Simple heuristics to detect if tool used LLM
-    switch {
-    case strings.Contains(strings.ToLower(toolName), "rag"):
-        return true
-    case strings.Contains(strings.ToLower(toolName), "search"):
-        return len(response) > 500 // Long responses likely used LLM for synthesis
-    case strings.Contains(strings.ToLower(toolName), "summarize"):
-        return true
-    default:
-        return false
-    }
+	// Simple heuristics to detect if tool used LLM
+	switch {
+	case strings.Contains(strings.ToLower(toolName), "rag"):
+		return true
+	case strings.Contains(strings.ToLower(toolName), "search"):
+		return len(response) > 500 // Long responses likely used LLM for synthesis
+	case strings.Contains(strings.ToLower(toolName), "summarize"):
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) estimateToolTokenUsage(toolName, prompt, response string) int {
-    // Rough token estimation (1 token ≈ 4 characters)
-    if !c.detectIfToolUsedLLM(toolName, response) {
-        return 0 // Tool doesn't use LLM
-    }
+	// Rough token estimation (1 token ≈ 4 characters)
+	if !c.detectIfToolUsedLLM(toolName, response) {
+		return 0 // Tool doesn't use LLM
+	}
 
-    // Estimate based on tool type
-    switch {
-    case strings.Contains(strings.ToLower(toolName), "rag"):
-        // RAG typically uses prompt + retrieved context + generation
-        return (len(prompt) + len(response) + 1000) / 4 // +1000 for retrieved context
-    case strings.Contains(strings.ToLower(toolName), "search"):
-        // Search + summarization
-        return (len(prompt) + len(response) + 500) / 4 // +500 for search results
-    default:
-        return (len(prompt) + len(response)) / 4
-    }
+	// Estimate based on tool type
+	switch {
+	case strings.Contains(strings.ToLower(toolName), "rag"):
+		// RAG typically uses prompt + retrieved context + generation
+		return (len(prompt) + len(response) + 1000) / 4 // +1000 for retrieved context
+	case strings.Contains(strings.ToLower(toolName), "search"):
+		// Search + summarization
+		return (len(prompt) + len(response) + 500) / 4 // +500 for search results
+	default:
+		return (len(prompt) + len(response)) / 4
+	}
 }
 
 // processLLMResponseAndReply processes the LLM response, handles tool results with re-prompting, and sends the final reply.
 // Incorporates logic previously in LLMClient.ProcessToolResponse.
 func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmResponse *llms.ContentChoice, userPrompt, channelID, threadTS string) {
 	// Start tool processing span
-    ctx, span := c.tracingHandler.StartSpan(traceCtx, "tool-processing", "span", userPrompt, map[string]string{
-        "channel_id":      channelID,
-        "thread_ts":       threadTS,
-        "original_prompt": userPrompt,
-        "response_length": fmt.Sprintf("%d", len(llmResponse.Content)),
-    })
+	ctx, span := c.tracingHandler.StartSpan(traceCtx, "tool-processing", "span", userPrompt, map[string]string{
+		"channel_id":      channelID,
+		"thread_ts":       threadTS,
+		"original_prompt": userPrompt,
+		"response_length": fmt.Sprintf("%d", len(llmResponse.Content)),
+	})
 	defer span.End()
 	// Log the raw LLM response for debugging
 	c.logger.DebugKV("Raw LLM response", "response", logging.TruncateForLog(fmt.Sprintf("%v", llmResponse), 500))
@@ -663,11 +663,11 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		executedToolName := c.extractToolNameFromResponse(llmResponse.Content)
 
 		// Start tool execution span
-        _, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "event", "", map[string]string{
-            "bridge_available": "true",
-            "response_type":    "processing",
+		_, toolExecSpan := c.tracingHandler.StartSpan(ctx, "tool-execution", "event", "", map[string]string{
+			"bridge_available": "true",
+			"response_type":    "processing",
 			"tool_name":        executedToolName,
-        })
+		})
 		startTime := time.Now()
 		// Process the response through the bridge
 		processedResponse, err := c.llmMCPBridge.ProcessLLMResponse(toolCtx, llmResponse, userPrompt, extraArgs)
@@ -684,13 +684,13 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 				finalResponse = processedResponse
 				isToolResult = true
 				c.tracingHandler.SetOutput(toolExecSpan, processedResponse)
-                c.tracingHandler.RecordSuccess(toolExecSpan, "Tool executed successfully")
+				c.tracingHandler.RecordSuccess(toolExecSpan, "Tool executed successfully")
 			} else {
 				// No tool was executed
 				finalResponse = llmResponse.Content
 				isToolResult = false
 				c.tracingHandler.SetOutput(toolExecSpan, "No tool execution required")
-                c.tracingHandler.RecordSuccess(toolExecSpan, "No tool processing needed")
+				c.tracingHandler.RecordSuccess(toolExecSpan, "No tool processing needed")
 			}
 		}
 		toolExecSpan.End()
@@ -712,17 +712,17 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		// Construct a new prompt incorporating the original prompt and the tool result
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
-		 // Start re-prompt span
-		 // Extract tool name before execution
+		// Start re-prompt span
+		// Extract tool name before execution
 		executedToolName := c.extractToolNameFromResponse(llmResponse.Content)
-        _, repromptSpan := c.tracingHandler.StartLLMSpan(ctx, "llm-reprompt",
-            c.cfg.LLM.Providers[c.cfg.LLM.Provider].Model,
-            rePrompt,
-            map[string]interface{}{
-                "is_reprompt":        true,
-                "tool_name":          executedToolName,  // Add this
-                "tool_estimated_tokens": c.estimateToolTokenUsage(executedToolName, userPrompt, finalResponse),  // Add this
-            })
+		_, repromptSpan := c.tracingHandler.StartLLMSpan(ctx, "llm-reprompt",
+			c.cfg.LLM.Providers[c.cfg.LLM.Provider].Model,
+			rePrompt,
+			map[string]interface{}{
+				"is_reprompt":           true,
+				"tool_name":             executedToolName,                                                      // Add this
+				"tool_estimated_tokens": c.estimateToolTokenUsage(executedToolName, userPrompt, finalResponse), // Add this
+			})
 
 		// Add history
 		c.addToHistory(channelID, threadTS, "", "assistant", llmResponse.Content, "", "", "") // Original LLM response (tool call JSON)
@@ -748,7 +748,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 
 		duration := time.Since(startTime)
 		// Set duration
-        c.tracingHandler.SetDuration(repromptSpan, duration)
+		c.tracingHandler.SetDuration(repromptSpan, duration)
 
 		if repromptErr != nil {
 			c.tracingHandler.RecordError(repromptSpan, repromptErr, "ERROR")
@@ -782,13 +782,13 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 	}
 
 	// Start message sending span
-    _, msgSpan := c.tracingHandler.StartSpan(ctx, "slack-message-send", "event", userPrompt, map[string]string{
-        "channel_id":            channelID,
-        "thread_ts":            threadTS,
-        "final_response_length": fmt.Sprintf("%d", len(finalResponse)),
-        "is_empty_response":     fmt.Sprintf("%t", finalResponse == ""),
-        "had_tool_execution":    fmt.Sprintf("%t", isToolResult),
-    })
+	_, msgSpan := c.tracingHandler.StartSpan(ctx, "slack-message-send", "event", userPrompt, map[string]string{
+		"channel_id":            channelID,
+		"thread_ts":             threadTS,
+		"final_response_length": fmt.Sprintf("%d", len(finalResponse)),
+		"is_empty_response":     fmt.Sprintf("%t", finalResponse == ""),
+		"had_tool_execution":    fmt.Sprintf("%t", isToolResult),
+	})
 	// Send the final response back to Slack
 	if finalResponse == "" {
 		c.userFrontend.SendMessage(channelID, threadTS, "(LLM returned an empty response)")
@@ -800,6 +800,6 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 	}
 	msgSpan.End()
 	// Set final trace output
-    c.tracingHandler.SetOutput(span, finalResponse)
-    c.tracingHandler.RecordSuccess(span, "Tool processing completed")
+	c.tracingHandler.SetOutput(span, finalResponse)
+	c.tracingHandler.RecordSuccess(span, "Tool processing completed")
 }

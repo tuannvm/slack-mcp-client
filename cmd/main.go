@@ -972,4 +972,3 @@ func executeMigrationScript(inputFile, outputFile string) error {
 
 	return cmd.Run()
 }
-
