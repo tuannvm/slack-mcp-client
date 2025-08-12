@@ -458,13 +458,14 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 
 		// Extract and set token usage details
 		usageDetails := map[string]int{
-            "input":  getIntFromMap(llmResponse.GenerationInfo, "PromptTokens"),
-            "output": getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
-            "total":  getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
+            "prompt_tokens":  getIntFromMap(llmResponse.GenerationInfo, "PromptTokens"),
+            "output_tokens": getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
+            "total_tokens":  getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
+            "reasoning_tokens":  getIntFromMap(llmResponse.GenerationInfo, "ReasoningTokens"),
         }
 
-        if usageDetails["total"] > 0 {
-            c.tracingHandler.SetTokenUsage(llmSpan, usageDetails["input"], usageDetails["output"], usageDetails["total"])
+        if usageDetails["total_tokens"] > 0 {
+            c.tracingHandler.SetTokenUsage(llmSpan, usageDetails["prompt_tokens"], usageDetails["output_tokens"], usageDetails["reasoning_tokens"], usageDetails["total_tokens"])
         }
 
 		c.logger.InfoKV("Received response from LLM", "provider", c.cfg.LLM.Provider, "length", len(llmResponse.Content))
@@ -761,12 +762,14 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 			repromptUsageDetails := map[string]int{
 				"prompt_tokens":     getIntFromMap(finalResStruct.GenerationInfo, "PromptTokens"),
 				"completion_tokens": getIntFromMap(finalResStruct.GenerationInfo, "CompletionTokens"),
+				"reasoning_tokens":  getIntFromMap(finalResStruct.GenerationInfo, "ReasoningTokens"),
 				"total_tokens":      getIntFromMap(finalResStruct.GenerationInfo, "TotalTokens"),
 			}
 			if repromptUsageDetails["total_tokens"] > 0 {
 				c.tracingHandler.SetTokenUsage(repromptSpan,
 					repromptUsageDetails["prompt_tokens"],
 					repromptUsageDetails["completion_tokens"],
+					repromptUsageDetails["reasoning_tokens"],
 					repromptUsageDetails["total_tokens"])
 			}
 			c.tracingHandler.SetOutput(repromptSpan, finalResponse)

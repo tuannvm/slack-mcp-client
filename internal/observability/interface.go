@@ -26,7 +26,7 @@ type TracingHandler interface {
 
     // Span attribute setters
     SetOutput(span trace.Span, output string)
-    SetTokenUsage(span trace.Span, promptTokens, completionTokens, totalTokens int)
+    SetTokenUsage(span trace.Span, promptTokens, completionTokens, reasoningTokens, totalTokens int)
     SetDuration(span trace.Span, duration time.Duration)
 
     // Status and error handling
@@ -56,7 +56,7 @@ func (n noOpHandler) StartLLMSpan(ctx context.Context, name string, model string
 
 func (n noOpHandler) SetOutput(span trace.Span, output string) {}
 
-func (n noOpHandler) SetTokenUsage(span trace.Span, promptTokens, completionTokens, totalTokens int) {}
+func (n noOpHandler) SetTokenUsage(span trace.Span, promptTokens, completionTokens, reasoningTokens, totalTokens int) {}
 
 func (n noOpHandler) SetDuration(span trace.Span, duration time.Duration) {}
 

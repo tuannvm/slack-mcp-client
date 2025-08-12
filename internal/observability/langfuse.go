@@ -210,12 +210,13 @@ func (p *LangfuseProvider) SetOutput(span OtelTrace.Span, output string) {
     )
 }
 
-func (p *LangfuseProvider) SetTokenUsage(span OtelTrace.Span, promptTokens, completionTokens, totalTokens int) {
+func (p *LangfuseProvider) SetTokenUsage(span OtelTrace.Span, promptTokens, completionTokens, reasoningTokens, totalTokens int) {
     // Langfuse usage format
     usageDetails := map[string]int{
         "prompt_tokens": promptTokens,
         "completion_tokens": completionTokens,
         "total_tokens": totalTokens,
+        "reasoning_tokens": reasoningTokens,
     }
 
     if usageJSON, err := json.Marshal(usageDetails); err == nil {
@@ -224,6 +225,7 @@ func (p *LangfuseProvider) SetTokenUsage(span OtelTrace.Span, promptTokens, comp
             attribute.Int("llm.token_count.prompt_tokens", promptTokens),
             attribute.Int("llm.token_count.completion_tokens", completionTokens),
             attribute.Int("llm.token_count.total_tokens", totalTokens),
+            attribute.Int("llm.token_count.reasoning_tokens", reasoningTokens),
         )
     }
 }

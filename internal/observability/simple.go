@@ -185,13 +185,15 @@ func (p *SimpleProvider) SetOutput(span trace.Span, output string) {
     )
 }
 
-func (p *SimpleProvider) SetTokenUsage(span trace.Span, promptTokens, completionTokens, totalTokens int) {
+func (p *SimpleProvider) SetTokenUsage(span trace.Span, promptTokens, completionTokens, reasoningTokens, totalTokens int) {
     span.SetAttributes(
         attribute.Int("llm.usage.prompt_tokens", promptTokens),
         attribute.Int("llm.usage.completion_tokens", completionTokens),
+        attribute.Int("llm.usage.reasoning_tokens", reasoningTokens),
         attribute.Int("llm.usage.total_tokens", totalTokens),
         attribute.Int("tokens.prompt", promptTokens),
         attribute.Int("tokens.completion", completionTokens),
+        attribute.Int("tokens.reasoning", reasoningTokens),
         attribute.Int("tokens.total", totalTokens),
     )
 }
