@@ -311,14 +311,10 @@ func (c *Config) applyMonitoringDefaults() {
 
 // applyObservabilityDefaults sets default observability configuration
 func (c *Config) applyObservabilityDefaults() {
-    // Default to disabled
-    if !c.Observability.Enabled {
-        c.Observability.Enabled = false
-    }
 
-    // Default provider to simple when enabled
+    // Default provider to simple-otel when enabled
     if c.Observability.Provider == "" {
-        c.Observability.Provider = "simple"
+        c.Observability.Provider = "simple-otel"
     }
 
     // Default service name
@@ -424,5 +420,8 @@ func (c *Config) ApplyEnvironmentVariables() {
 	}
 	if serviceName := os.Getenv("OBSERVABILITY_SERVICE_NAME"); serviceName != "" {
 		c.Observability.ServiceName = serviceName
+	}
+	if serviceVersion := os.Getenv("OBSERVABILITY_SERVICE_VERSION"); serviceVersion != "" {
+		c.Observability.ServiceVersion = serviceVersion
 	}
 }

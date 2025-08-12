@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"encoding/base64"
 	"flag"
 	"fmt"
 	"log"
@@ -25,11 +24,6 @@ import (
 	"github.com/tuannvm/slack-mcp-client/internal/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
 	"github.com/tuannvm/slack-mcp-client/internal/rag"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/sdk/resource"
-	"go.opentelemetry.io/otel/sdk/trace"
 
 	slackbot "github.com/tuannvm/slack-mcp-client/internal/slack"
 )
@@ -64,55 +58,8 @@ func init() {
 	monitoring.RegisterMetrics()
 }
 
-func setupTracing() func() {
-	ctx := context.Background()
-	endpoint := os.Getenv("LANGFUSE_OTLP_ENDPOINT")
-	publicKey := os.Getenv("LANGFUSE_PUBLIC_KEY")
-    secretKey := os.Getenv("LANGFUSE_SECRET_KEY")
-
-	if endpoint == "" || publicKey == "" || secretKey == "" {
-		log.Printf("OpenTelemetry tracing disabled: LANGFUSE_OTLP_ENDPOINT, LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not set")
-        return func() {} // No-op cleanup function
-    }
-
-	// Create Basic Auth string: base64(publicKey:secretKey)
-    authString := fmt.Sprintf("%s:%s", publicKey, secretKey)
-    encodedAuth := base64.StdEncoding.EncodeToString([]byte(authString))
-
-	// Create OTLP trace exporter
-	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(endpoint),
-		otlptracehttp.WithHeaders(map[string]string{
-			"Authorization": fmt.Sprintf("Basic %s", encodedAuth),
-		}),
-	)
-	if err != nil {
-		log.Fatalf("Failed to create OTLP trace exporter: %v", err)
-	}
-
-	// Create a tracer provider with the exporter and resource attributes
-	tracerProvider := trace.NewTracerProvider(
-		trace.WithBatcher(exporter),
-		trace.WithResource(resource.NewWithAttributes("",
-			attribute.String("service.name", "slack-mcp-client"),
-		)),
-	)
-
-	otel.SetTracerProvider(tracerProvider)
-	log.Printf("OpenTelemetry tracing initialized with endpoint: %s", endpoint)
-
-	return func() {
-		if err := tracerProvider.Shutdown(ctx); err != nil {
-            log.Printf("Error shutting down tracer provider: %v", err)
-        }
-	}
-}
-
 func main() {
 	flag.Parse()
-
-	// Setup OpenTelemetry tracing
-	cleanup := setupTracing()
-	defer cleanup()
 
 	// Validate configuration and exit if requested
 	if *configValidate {

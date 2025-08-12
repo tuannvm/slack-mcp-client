@@ -16,8 +16,9 @@ const (
 	ProviderDisabled  TracingProvider = "disabled"
 )
 
-// Provider defines the interface that all tracing providers must implement
-type Provider interface {
+const TracerName = "slack-mcp-client"
+
+type TracingHandler interface {
     // Core span operations
     StartTrace(ctx context.Context, name string, input string, metadata map[string]string) (context.Context, trace.Span)
     StartSpan(ctx context.Context, name string, spanType string, input string, metadata map[string]string) (context.Context, trace.Span)
@@ -33,13 +34,8 @@ type Provider interface {
     RecordSuccess(span trace.Span, message string)
 
     // Provider info
-    GetProviderType() TracingProvider
+    GetProvider() TracingProvider
     IsEnabled() bool
-}
-
-// TracingHandler is the main handler that delegates to specific providers
-type TracingHandler struct {
-    provider Provider
 }
 
 // noOpHandler is an embedded struct that provides no-op implementations
@@ -68,7 +64,7 @@ func (n noOpHandler) RecordError(span trace.Span, err error, level string) {}
 
 func (n noOpHandler) RecordSuccess(span trace.Span, message string) {}
 
-func (n noOpHandler) GetProviderType() TracingProvider {
+func (n noOpHandler) GetProvider() TracingProvider {
     return ProviderDisabled
 }
 
@@ -82,65 +78,39 @@ type disabledHandler struct {
 }
 
 // NewTracingHandler creates a new tracing handler based on config
-func NewTracingHandler(cfg *config.Config, logger *logging.Logger) *TracingHandler {
-
-    // Determine which provider to use
+func NewTracingHandler(cfg *config.Config, logger *logging.Logger) TracingHandler {
+    // Check if observability is disabled
     if cfg == nil || !cfg.Observability.Enabled {
         logger.Info("Observability disabled")
-        return &TracingHandler{provider: &disabledHandler{}}
+        return &disabledHandler{}
     }
-    // Create the appropriate provider
+
+    // Create the appropriate provider with failure handling
     switch cfg.Observability.Provider {
     case "langfuse-otel":
+        provider := NewLangfuseProvider(cfg, logger)
+        if !provider.IsEnabled() {
+            logger.Warn("Langfuse provider failed to initialize, falling back to disabled")
+            return &disabledHandler{}
+        }
         logger.InfoKV("Tracing provider initialized", "type", "langfuse-otel", "enabled", true)
-        return &TracingHandler{provider: NewLangfuseProvider(cfg, logger)}
+        return provider
     case "simple-otel":
+        provider := NewSimpleProvider(cfg, logger)
+        if !provider.IsEnabled() {
+            logger.Warn("Simple provider failed to initialize, falling back to disabled")
+            return &disabledHandler{}
+        }
         logger.InfoKV("Tracing provider initialized", "type", "simple-otel", "enabled", true)
-        return &TracingHandler{provider: NewSimpleProvider(cfg, logger)}
+        return provider
     default:
         logger.WarnKV("Unknown provider, defaulting to simple-otel", "provider", cfg.Observability.Provider)
+        provider := NewSimpleProvider(cfg, logger)
+        if !provider.IsEnabled() {
+            logger.Warn("Simple provider failed to initialize, falling back to disabled")
+            return &disabledHandler{}
+        }
         logger.InfoKV("Tracing provider initialized", "type", "simple-otel", "enabled", true)
-        return &TracingHandler{provider: NewSimpleProvider(cfg, logger)}
+        return provider
     }
-}
-
-// Delegate all methods to the underlying provider
-func (h *TracingHandler) StartTrace(ctx context.Context, name string, input string, metadata map[string]string) (context.Context, trace.Span) {
-    return h.provider.StartTrace(ctx, name, input, metadata)
-}
-
-func (h *TracingHandler) StartSpan(ctx context.Context, name string, spanType string, input string, metadata map[string]string) (context.Context, trace.Span) {
-    return h.provider.StartSpan(ctx, name, spanType, input, metadata)
-}
-
-func (h *TracingHandler) StartLLMSpan(ctx context.Context, name string, model string, input string, parameters map[string]interface{}) (context.Context, trace.Span) {
-    return h.provider.StartLLMSpan(ctx, name, model, input, parameters)
-}
-
-func (h *TracingHandler) SetOutput(span trace.Span, output string) {
-    h.provider.SetOutput(span, output)
-}
-
-func (h *TracingHandler) SetTokenUsage(span trace.Span, promptTokens, completionTokens, totalTokens int) {
-    h.provider.SetTokenUsage(span, promptTokens, completionTokens, totalTokens)
-}
-
-func (h *TracingHandler) SetDuration(span trace.Span, duration time.Duration) {
-    h.provider.SetDuration(span, duration)
-}
-
-func (h *TracingHandler) RecordError(span trace.Span, err error, level string) {
-    h.provider.RecordError(span, err, level)
-}
-
-func (h *TracingHandler) RecordSuccess(span trace.Span, message string) {
-    h.provider.RecordSuccess(span, message)
-}
-
-func (h *TracingHandler) IsEnabled() bool {
-    return h.provider.IsEnabled()
-}
-
-func (h *TracingHandler) GetProvider() TracingProvider {
-    return h.provider.GetProviderType()
 }

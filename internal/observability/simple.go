@@ -10,31 +10,90 @@ import (
     "go.opentelemetry.io/otel/attribute"
     "go.opentelemetry.io/otel/codes"
     "go.opentelemetry.io/otel/trace"
+    "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+    "go.opentelemetry.io/otel/sdk/resource"
+    sdktrace "go.opentelemetry.io/otel/sdk/trace"
     "github.com/tuannvm/slack-mcp-client/internal/common/logging"
     "github.com/tuannvm/slack-mcp-client/internal/config"
 )
 
-const TracerName = "slack-mcp-client"
-
 // SimpleProvider provides basic OpenTelemetry tracing
 type SimpleProvider struct {
-    tracer  trace.Tracer
-    logger  *logging.Logger
-    config  *config.ObservabilityConfig
-    enabled bool
+    tracer         trace.Tracer
+    logger         *logging.Logger
+    config         *config.ObservabilityConfig
+    tracerProvider *sdktrace.TracerProvider
+    cleanup        func()
+    enabled        bool
 }
 
 // NewSimpleProvider creates a new simple OpenTelemetry provider
 func NewSimpleProvider(cfg *config.Config, logger *logging.Logger) *SimpleProvider {
-    return &SimpleProvider{
-        tracer:  otel.Tracer(TracerName),
+    provider := &SimpleProvider{
         logger:  logger,
         config:  &cfg.Observability,
-        enabled: cfg.Observability.Enabled,
-	}
+        enabled: false,
+    }
+
+    // Setup OpenTelemetry SDK (same as Langfuse but without auth)
+    cleanup := provider.setupOpenTelemetry()
+    provider.cleanup = cleanup
+
+    if provider.tracerProvider != nil {
+        provider.tracer = otel.Tracer(TracerName)
+        provider.enabled = true
+        logger.Info("Simple provider initialized successfully")
+    } else {
+        logger.Warn("Simple provider initialization failed")
+    }
+
+    return provider
 }
 
+// setupOpenTelemetry configures OpenTelemetry (same as Langfuse but without auth)
+func (p *SimpleProvider) setupOpenTelemetry() func() {
+    ctx := context.Background()
+
+    // Get endpoint from config (same as Langfuse)
+    endpoint := p.config.Endpoint
+    if endpoint == "" {
+        return func() {}
+    }
+
+    // Create OTLP HTTP exporter (same as Langfuse but no auth headers)
+    exporter, err := otlptracehttp.New(ctx,
+        otlptracehttp.WithEndpointURL(endpoint),
+        // No authorization headers for simple provider
+    )
+    if err != nil {
+        p.logger.ErrorKV("Failed to create OTLP trace exporter", "error", err)
+        return func() {}
+    }
+
+    p.tracerProvider = sdktrace.NewTracerProvider(
+        sdktrace.WithBatcher(exporter),
+        sdktrace.WithResource(resource.NewWithAttributes("",
+            attribute.String("service.name", p.getServiceName()),
+            attribute.String("service.version", p.getServiceVersion()),
+        )),
+    )
+
+    otel.SetTracerProvider(p.tracerProvider)
+    p.logger.InfoKV("Simple OpenTelemetry initialized", "endpoint", endpoint)
+
+    return func() {
+        if err := p.tracerProvider.Shutdown(ctx); err != nil {
+            p.logger.ErrorKV("Error shutting down tracer provider", "error", err)
+        }
+    }
+}
+
+
+
 func (p *SimpleProvider) StartTrace(ctx context.Context, name string, input string, metadata map[string]string) (context.Context, trace.Span) {
+    if p.tracer == nil {
+        return ctx, trace.SpanFromContext(ctx)
+    }
     spanCtx, span := p.tracer.Start(ctx, name)
 
     // Apply basic attributes
@@ -58,6 +117,9 @@ func (p *SimpleProvider) StartTrace(ctx context.Context, name string, input stri
 }
 
 func (p *SimpleProvider) StartSpan(ctx context.Context, name string, spanType string, input string, metadata map[string]string) (context.Context, trace.Span) {
+    if p.tracer == nil {
+        return ctx, trace.SpanFromContext(ctx)
+    }
     spanCtx, span := p.tracer.Start(ctx, name)
 
     // Apply basic attributes
@@ -85,6 +147,9 @@ func (p *SimpleProvider) StartSpan(ctx context.Context, name string, spanType st
 }
 
 func (p *SimpleProvider) StartLLMSpan(ctx context.Context, name string, model string, input string, parameters map[string]interface{}) (context.Context, trace.Span) {
+    if p.tracer == nil {
+        return ctx, trace.SpanFromContext(ctx)
+    }
     spanCtx, span := p.tracer.Start(ctx, name)
 
     // Apply LLM-specific attributes
@@ -164,7 +229,7 @@ func (p *SimpleProvider) RecordSuccess(span trace.Span, message string) {
     span.SetStatus(codes.Ok, message)
 }
 
-func (p *SimpleProvider) GetProviderType() TracingProvider {
+func (p *SimpleProvider) GetProvider() TracingProvider {
     return ProviderSimple
 }
 
