@@ -470,8 +470,8 @@ func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, 
 		// Resolve HTTPHeaders environment variables
 		resolvedHeaders := resolveHTTPHeaders(serverConf.HTTPHeaders, logger)
 
-// Create the MCP client
-logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env, "headers", resolvedHeaders)
+		// Create the MCP client
+		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env, "headers", resolvedHeaders)
 		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverName, serverConf.Args, env, resolvedHeaders, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client: %v", createErr)

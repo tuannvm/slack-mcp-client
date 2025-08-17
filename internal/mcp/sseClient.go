@@ -45,7 +45,7 @@ func NewSSEMCPClientWithRetry(serverAddr string, hdr http.Header, log *logging.L
 			headerMap[key] = values[0] // Use the first value for each header
 		}
 	}
-	
+
 	sseClient, err := client.NewSSEMCPClient(serverAddr, client.WithHeaders(headerMap))
 	if err != nil {
 		return nil, err

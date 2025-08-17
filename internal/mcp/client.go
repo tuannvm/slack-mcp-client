@@ -79,12 +79,12 @@ func NewClient(transport, addressOrCommand string, serverName string, args []str
 			return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 		}
 	case "sse":
-// Convert resolvedHeaders map to http.Header
-	hdr := make(http.Header)
-	for k, v := range resolvedHeaders {
-		hdr.Set(k, v)
-	}
-	mcpClient, err = NewSSEMCPClientWithRetry(addressOrCommand, hdr, mcpLogger)
+		// Convert resolvedHeaders map to http.Header
+		hdr := make(http.Header)
+		for k, v := range resolvedHeaders {
+			hdr.Set(k, v)
+		}
+		mcpClient, err = NewSSEMCPClientWithRetry(addressOrCommand, hdr, mcpLogger)
 		if err != nil {
 			return nil, customErrors.WrapMCPError(err, "client_creation", fmt.Sprintf("Failed to create MCP client for %s", addressOrCommand))
 		}
