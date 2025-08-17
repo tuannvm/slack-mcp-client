@@ -206,6 +206,11 @@
           "enum": ["stdio", "sse", "http"],
           "description": "Transport protocol (auto-detected if not specified)"
         },
+        "httpHeaders": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Optional HTTP headers with env-var substitution"
+        },
         "env": {
           "type": "object",
           "patternProperties": {

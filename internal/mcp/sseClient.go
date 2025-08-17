@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/mark3labs/mcp-go/client/transport"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 )
@@ -22,6 +23,7 @@ type SSEMCPClientWithRetry struct {
 	*client.Client
 
 	serverAddr string
+	headers    http.Header
 	log        *logging.Logger
 
 	ctx    context.Context
@@ -35,8 +37,16 @@ type SSEMCPClientWithRetry struct {
 	reconnectDoneCh       chan struct{}
 }
 
-func NewSSEMCPClientWithRetry(serverAddr string, log *logging.Logger) (*SSEMCPClientWithRetry, error) {
-	sseClient, err := client.NewSSEMCPClient(serverAddr)
+func NewSSEMCPClientWithRetry(serverAddr string, hdr http.Header, log *logging.Logger) (*SSEMCPClientWithRetry, error) {
+	// Convert http.Header to map[string]string for the client library
+	headerMap := make(map[string]string)
+	for key, values := range hdr {
+		if len(values) > 0 {
+			headerMap[key] = values[0] // Use the first value for each header
+		}
+	}
+
+	sseClient, err := client.NewSSEMCPClient(serverAddr, client.WithHeaders(headerMap))
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +56,7 @@ func NewSSEMCPClientWithRetry(serverAddr string, log *logging.Logger) (*SSEMCPCl
 	c := &SSEMCPClientWithRetry{
 		Client:     sseClient,
 		serverAddr: serverAddr,
+		headers:    hdr,
 		log:        log,
 		ctx:        ctx,
 		cancel:     cancel,
@@ -116,7 +127,15 @@ func (c *SSEMCPClientWithRetry) connect() error {
 		}
 	}
 
-	sseClient, err := client.NewSSEMCPClient(c.serverAddr)
+	// Convert http.Header to map[string]string for the client library
+	headerMap := make(map[string]string)
+	for key, values := range c.headers {
+		if len(values) > 0 {
+			headerMap[key] = values[0] // Use the first value for each header
+		}
+	}
+
+	sseClient, err := client.NewSSEMCPClient(c.serverAddr, client.WithHeaders(headerMap))
 	if err != nil {
 		return err
 	}
