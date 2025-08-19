@@ -19,14 +19,6 @@ import (
 	OtelTrace "go.opentelemetry.io/otel/trace"
 )
 
-// LangfuseProvider provides Langfuse-optimized tracing
-// type LangfuseProvider struct {
-//     tracer  trace.Tracer
-//     logger  *logging.Logger
-//     config  *config.ObservabilityConfig
-//     enabled bool
-// }
-
 type LangfuseProvider struct {
 	tracer         OtelTrace.Tracer
 	logger         *logging.Logger
@@ -37,15 +29,6 @@ type LangfuseProvider struct {
 }
 
 // NewLangfuseProvider creates a new Langfuse provider
-//
-//	func NewLangfuseProvider(cfg *config.Config, logger *logging.Logger) *LangfuseProvider {
-//	    return &LangfuseProvider{
-//	        tracer:  otel.Tracer(TracerName),
-//	        logger:  logger,
-//	        config:  &cfg.Observability,
-//	        enabled: cfg.Observability.Enabled,
-//	    }
-//	}
 func NewLangfuseProvider(cfg *config.Config, logger *logging.Logger) *LangfuseProvider {
 	provider := &LangfuseProvider{
 		logger:  logger,
@@ -110,15 +93,18 @@ func (p *LangfuseProvider) setupOpenTelemetry() func() {
 	p.logger.InfoKV("Langfuse OpenTelemetry initialized", "endpoint", endpoint)
 
 	return func() {
-		if err := p.tracerProvider.Shutdown(ctx); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := p.tracerProvider.Shutdown(shutdownCtx); err != nil {
 			p.logger.ErrorKV("Error shutting down tracer provider", "error", err)
+		} else {
+			p.logger.Info("Langfuse provider shutdown successfully")
 		}
 	}
 }
 
 func (p *LangfuseProvider) StartTrace(ctx context.Context, name string, input string, metadata map[string]string) (context.Context, OtelTrace.Span) {
 	if p.tracer == nil {
-		p.logger.Warn("Langfuse tracing is disabled")
 		return ctx, OtelTrace.SpanFromContext(ctx)
 	}
 	spanCtx, span := p.tracer.Start(ctx, name)
@@ -262,6 +248,18 @@ func (p *LangfuseProvider) RecordSuccess(span OtelTrace.Span, message string) {
 		attribute.String("langfuse.observation.status_message", message),
 	)
 	span.SetStatus(codes.Ok, message)
+}
+
+func (p *LangfuseProvider) Shutdown(ctx context.Context) error {
+	if p.cleanup != nil {
+		p.cleanup()
+		p.cleanup = nil // Prevent double cleanup
+	}
+	return nil
+}
+
+func (p *LangfuseProvider) Close() error {
+	return p.Shutdown(context.Background())
 }
 
 func (p *LangfuseProvider) GetProvider() TracingProvider {

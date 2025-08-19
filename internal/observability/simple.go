@@ -82,8 +82,12 @@ func (p *SimpleProvider) setupOpenTelemetry() func() {
 	p.logger.InfoKV("Simple OpenTelemetry initialized", "endpoint", endpoint)
 
 	return func() {
-		if err := p.tracerProvider.Shutdown(ctx); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := p.tracerProvider.Shutdown(shutdownCtx); err != nil {
 			p.logger.ErrorKV("Error shutting down tracer provider", "error", err)
+		} else {
+			p.logger.Info("Simple provider shutdown successfully")
 		}
 	}
 }
@@ -229,6 +233,18 @@ func (p *SimpleProvider) RecordSuccess(span trace.Span, message string) {
 	span.SetStatus(codes.Ok, message)
 }
 
+func (p *SimpleProvider) Shutdown(ctx context.Context) error {
+	if p.cleanup != nil {
+		p.cleanup()
+		p.cleanup = nil
+	}
+	return nil
+}
+
+func (p *SimpleProvider) Close() error {
+	return p.Shutdown(context.Background())
+}
+
 func (p *SimpleProvider) GetProvider() TracingProvider {
 	return ProviderSimple
 }
@@ -248,6 +264,9 @@ func (p *SimpleProvider) getServiceName() string {
 func (p *SimpleProvider) getServiceVersion() string {
 	if p.config != nil && p.config.ServiceVersion != "" {
 		return p.config.ServiceVersion
+	}
+	if version := os.Getenv("SERVICE_VERSION"); version != "" {
+		return version
 	}
 	return "1.0.0"
 }

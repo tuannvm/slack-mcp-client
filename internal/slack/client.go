@@ -12,7 +12,6 @@ import (
 
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
-	// "google.golang.org/api/tracing/v2"
 
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
@@ -50,13 +49,6 @@ type Message struct {
 	RealName       string
 	Email          string
 }
-
-// func truncateString(s string, maxLen int) string {
-//     if len(s) <= maxLen {
-//         return s
-//     }
-//     return s[:maxLen] + "..."
-// }
 
 // NewClient creates a new Slack client instance.
 func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients map[string]*mcp.Client,
@@ -521,16 +513,6 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 
 		// Set Output
 		c.tracingHandler.SetOutput(agentSpan, llmResponse)
-		// Set token usage
-		// usageDetails := map[string]int{
-		//     "prompt_tokens":     getIntFromMap(llmRespons, "PromptTokens"),
-		//     "completion_tokens": getIntFromMap(llmResponse.GenerationInfo, "CompletionTokens"),
-		//     "total_tokens":      getIntFromMap(llmResponse.GenerationInfo, "TotalTokens"),
-		// }
-
-		// if usageDetails["total_tokens"] > 0 {
-		//     c.tracingHandler.SetTokenUsage(agentSpan, usageDetails["prompt_tokens"], usageDetails["completion_tokens"], usageDetails["total_tokens"])
-		// }
 
 		// Send the final response back to Slack
 		if llmResponse == "" {
@@ -644,7 +626,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
 	// Create a context with timeout for tool processing
-	toolCtx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	toolCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
 	defer cancel()
 
 	// --- Process Tool Response (Logic from LLMClient.ProcessToolResponse) ---
@@ -713,7 +695,6 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		rePrompt := fmt.Sprintf("The user asked: '%s'\n\nI searched the knowledge base and found the following relevant information:\n```\n%s\n```\n\nPlease analyze and synthesize this retrieved information to provide a comprehensive response to the user's request. Use the detailed information from the search results according to your system instructions.", userPrompt, finalResponse)
 
 		// Start re-prompt span
-		// Extract tool name before execution
 		executedToolName := c.extractToolNameFromResponse(llmResponse.Content)
 		_, repromptSpan := c.tracingHandler.StartLLMSpan(ctx, "llm-reprompt",
 			c.cfg.LLM.Providers[c.cfg.LLM.Provider].Model,

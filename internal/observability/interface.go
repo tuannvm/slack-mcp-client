@@ -33,6 +33,9 @@ type TracingHandler interface {
 	RecordError(span trace.Span, err error, level string)
 	RecordSuccess(span trace.Span, message string)
 
+	// Lifecycle
+	Shutdown(ctx context.Context) error
+
 	// Provider info
 	GetProvider() TracingProvider
 	IsEnabled() bool
@@ -65,6 +68,10 @@ func (n noOpHandler) RecordError(span trace.Span, err error, level string) {}
 
 func (n noOpHandler) RecordSuccess(span trace.Span, message string) {}
 
+func (n noOpHandler) Shutdown(ctx context.Context) error {
+	return nil
+}
+
 func (n noOpHandler) GetProvider() TracingProvider {
 	return ProviderDisabled
 }
@@ -88,21 +95,21 @@ func NewTracingHandler(cfg *config.Config, logger *logging.Logger) TracingHandle
 
 	// Create the appropriate provider with failure handling
 	switch cfg.Observability.Provider {
-	case "langfuse-otel":
+	case string(ProviderLangfuse):
 		provider := NewLangfuseProvider(cfg, logger)
 		if !provider.IsEnabled() {
 			logger.Warn("Langfuse provider failed to initialize, falling back to disabled")
 			return &disabledHandler{}
 		}
-		logger.InfoKV("Tracing provider initialized", "type", "langfuse-otel", "enabled", true)
+		logger.InfoKV("Tracing provider initialized", "type", string(ProviderLangfuse), "enabled", true)
 		return provider
-	case "simple-otel":
+	case string(ProviderSimple):
 		provider := NewSimpleProvider(cfg, logger)
 		if !provider.IsEnabled() {
 			logger.Warn("Simple provider failed to initialize, falling back to disabled")
 			return &disabledHandler{}
 		}
-		logger.InfoKV("Tracing provider initialized", "type", "simple-otel", "enabled", true)
+		logger.InfoKV("Tracing provider initialized", "type", string(ProviderSimple), "enabled", true)
 		return provider
 	default:
 		logger.WarnKV("Unknown provider, defaulting to simple-otel", "provider", cfg.Observability.Provider)
@@ -111,7 +118,7 @@ func NewTracingHandler(cfg *config.Config, logger *logging.Logger) TracingHandle
 			logger.Warn("Simple provider failed to initialize, falling back to disabled")
 			return &disabledHandler{}
 		}
-		logger.InfoKV("Tracing provider initialized", "type", "simple-otel", "enabled", true)
+		logger.InfoKV("Tracing provider initialized", "type", string(ProviderSimple), "enabled", true)
 		return provider
 	}
 }

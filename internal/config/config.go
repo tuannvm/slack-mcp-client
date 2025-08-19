@@ -13,6 +13,13 @@ const (
 	ProviderAnthropic = "anthropic"
 )
 
+// Observability Providers
+const (
+	ObservabilityProviderSimple   = "simple-otel"
+	ObservabilityProviderLangfuse = "langfuse-otel"
+	ObservabilityProviderDisabled = "disabled"
+)
+
 // Config represents the main application configuration
 type Config struct {
 	Version       string                     `json:"version"`
@@ -310,11 +317,12 @@ func (c *Config) applyMonitoringDefaults() {
 }
 
 // applyObservabilityDefaults sets default observability configuration
+// Defaults are applied regardless of Enabled; runtime checks decide whether to initialize tracing.
 func (c *Config) applyObservabilityDefaults() {
 
 	// Default provider to simple-otel when enabled
 	if c.Observability.Provider == "" {
-		c.Observability.Provider = "simple-otel"
+		c.Observability.Provider = ObservabilityProviderSimple
 	}
 
 	// Default service name
