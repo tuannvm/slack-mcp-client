@@ -38,6 +38,7 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+  use: github
 
 # Explicitly configure GitHub Releases
 release:

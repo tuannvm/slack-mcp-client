@@ -279,15 +279,9 @@ func (o *OpenAIProvider) ListFiles(ctx context.Context, limit int) ([]FileInfo, 
 func (o *OpenAIProvider) Search(ctx context.Context, query string, options SearchOptions) ([]SearchResult, error) {
 	fmt.Printf("[RAG] OpenAI: Vector Store search for query '%s' (vector_store: %s)\n", query, o.vectorStoreID)
 
-	// Check if vector store ID is empty
-	if o.vectorStoreID == "" {
-		// Use dynamic vector store
-		fmt.Printf("[RAG] OpenAI: Using dynamic vector store\n")
-		vectorStoreID, err := o.searchVectorStore(ctx, o.config.VectorStoreNameRegex)
-		if err != nil {
-			return nil, fmt.Errorf("failed to search vector store: %w", err)
-		}
-		o.vectorStoreID = vectorStoreID
+	vectorStoreID, err := o.searchVectorStore(ctx, o.config.VectorStoreNameRegex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search vector store: %w", err)
 	}
 
 	// Set up search parameters
@@ -314,7 +308,7 @@ func (o *OpenAIProvider) Search(ctx context.Context, query string, options Searc
 		},
 	}
 
-	searchResults, err := o.client.VectorStores.Search(ctx, o.vectorStoreID, searchParams)
+	searchResults, err := o.client.VectorStores.Search(ctx, vectorStoreID, searchParams)
 	if err != nil {
 		return nil, fmt.Errorf("vector store search failed: %w", err)
 	}
@@ -428,6 +422,10 @@ func (o *OpenAIProvider) findVectorStoreByName(ctx context.Context, name string)
 }
 
 func (o *OpenAIProvider) searchVectorStore(ctx context.Context, vectorStoreNameRegex string) (string, error) {
+	if o.vectorStoreID != "" {
+		return o.vectorStoreID, nil
+	}
+
 	if vectorStoreNameRegex == "" {
 		return "", fmt.Errorf("vector store name regex cannot be empty")
 	}

@@ -95,6 +95,8 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
           sbom: true
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
 
 env:
   GO_VERSION: "1.24"

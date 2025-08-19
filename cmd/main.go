@@ -393,6 +393,27 @@ func processSingleMCPServer(
 	}
 }
 
+// resolveHTTPHeaders resolves environment variables in HTTP headers
+func resolveHTTPHeaders(headers map[string]string, logger *logging.Logger) map[string]string {
+	resolvedHeaders := make(map[string]string)
+	for k, v := range headers {
+		// Handle variable substitution from environment
+		if strings.HasPrefix(v, "${") && strings.HasSuffix(v, "}") {
+			envVar := strings.TrimSuffix(strings.TrimPrefix(v, "${"), "}")
+			if envValue := os.Getenv(envVar); envValue != "" {
+				resolvedHeaders[k] = envValue
+				logger.Debug("Substituted environment variable %s for HTTP header", envVar)
+			} else {
+				logger.Warn("Environment variable %s not found for HTTP header substitution", envVar)
+				resolvedHeaders[k] = "" // Set empty value
+			}
+		} else {
+			resolvedHeaders[k] = v
+		}
+	}
+	return resolvedHeaders
+}
+
 // createMCPClient creates an MCP client based on configuration
 // Use mcp.Client and mcp.NewClient from the internal mcp package
 func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, serverName string, _ *log.Logger) (*mcp.Client, error) {
@@ -405,8 +426,11 @@ func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, 
 		}
 		logger.InfoKV("Creating MCP client", "transport", transport, "address", serverConf.URL)
 
+		// Resolve HTTPHeaders environment variables for URL-based configurations
+		resolvedHeaders := resolveHTTPHeaders(serverConf.HTTPHeaders, logger)
+
 		// Use the imported mcp.NewClient from internal/mcp/client.go with structured logger
-		mcpClient, createErr := mcp.NewClient(transport, serverConf.URL, serverName, nil, nil, logger)
+		mcpClient, createErr := mcp.NewClient(transport, serverConf.URL, serverName, nil, nil, resolvedHeaders, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client for URL %s: %v", serverConf.URL, createErr)
 			// Create a domain-specific error with additional context
@@ -444,9 +468,12 @@ func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, 
 			}
 		}
 
+		// Resolve HTTPHeaders environment variables
+		resolvedHeaders := resolveHTTPHeaders(serverConf.HTTPHeaders, logger)
+
 		// Create the MCP client
-		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env)
-		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverName, serverConf.Args, env, logger)
+		logger.DebugKV("Executing command", "command", serverConf.Command, "args", serverConf.Args, "env", env, "headers", resolvedHeaders)
+		mcpClient, createErr := mcp.NewClient(transport, serverConf.Command, serverName, serverConf.Args, env, resolvedHeaders, logger)
 		if createErr != nil {
 			logger.Error("Failed to create MCP client: %v", createErr)
 			// Create a domain-specific error with additional context

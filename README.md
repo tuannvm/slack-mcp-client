@@ -41,6 +41,22 @@ This client enables AI models (OpenAI, Anthropic, Ollama) to interact with real 
 - **Custom MCP Servers** - Works with any MCP-compliant server
 - **Security Standards** - Implements user consent, data privacy, and tool safety requirements
 
+## Authenticating to SSE MCP Servers
+
+Authentication with Server-Sent Events (SSE) MCP servers can be achieved using the following setup:
+
+Example:
+
+```json
+{
+  "httpHeaders": {
+    "Authorization": "Bearer YOUR_TOKEN_HERE"
+  }
+}
+```
+
+Make sure to replace `YOUR_TOKEN_HERE` with your actual token for authentication.
+
 ## How It Works
 
 ![Image](https://github.com/user-attachments/assets/48a587e4-7895-4a6f-9745-61b21894c34c)
