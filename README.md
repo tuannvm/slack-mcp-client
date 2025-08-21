@@ -68,6 +68,7 @@ flowchart LR
     subgraph Infrastructure[Observability]
         Config[📋 Unified Config<br/>JSON Schema]
         Monitoring[📊 Monitoring<br/>Prometheus Metrics]
+        Tracing[🔍 OpenTelemetry Tracing<br/>Langfuse & OTLP]
         Logging[📝 Structured Logging<br/>Debug & Analytics]
     end
     
@@ -102,6 +103,7 @@ flowchart LR
     
     Config -.-> Core
     Core -.-> Monitoring
+    Core -.-> Tracing
     Core -.-> Logging
     
     style Core fill:#F8F9FA,stroke:#6C757D,stroke-width:3px
@@ -134,6 +136,7 @@ flowchart LR
 5. **Infrastructure** ensures production-ready deployment:
    - Unified JSON configuration with environment variable support
    - Prometheus metrics for observability and monitoring
+   - OpenTelemetry tracing with Langfuse and OTLP providers
    - Structured logging for debugging and analytics
 
 ## Features
@@ -178,11 +181,14 @@ flowchart LR
   - Docker container support with GHCR publishing
   - Kubernetes Helm charts with OCI registry
   - Comprehensive logging and error handling
-  - 88%+ test coverage with security scanning
+  - Test coverage with security scanning
 - ✅ **Monitoring & Observability**:
   - Prometheus metrics integration
   - Tool invocation tracking with error rates
   - LLM token usage monitoring by model and type
+  - OpenTelemetry tracing with Langfuse and simple providers
+  - Configurable observability providers with graceful fallbacks
+  - Comprehensive span tracking for LLM operations and tool calls
   - Configurable metrics endpoint and logging levels
 
 ## Installation
@@ -261,6 +267,13 @@ cat > config.json << EOL
     "enabled": true,
     "metricsPort": 8080,
     "loggingLevel": "info"
+  },
+  "observability": {
+    "enabled": true,
+    "provider": "simple-otel",
+    "endpoint": "${OTEL_EXPORTER_OTLP_ENDPOINT}",
+    "serviceName": "slack-mcp-client",
+    "serviceVersion": "1.0.0"
   }
 }
 EOL
@@ -823,24 +836,45 @@ Configure LLM providers and Slack integration using environment variables:
 | LLM_PROVIDER          | LLM provider to use (openai, anthropic, ollama) | openai     |
 | LANGCHAIN_OLLAMA_URL  | URL for Ollama when using LangChain          | http://localhost:11434 |
 | LANGCHAIN_OLLAMA_MODEL| Model name for Ollama when using LangChain   | llama3     |
+| LANGFUSE_ENDPOINT     | Langfuse API endpoint for observability      | (optional) |
+| LANGFUSE_PUBLIC_KEY   | Langfuse public key for authentication       | (optional) |
+| LANGFUSE_SECRET_KEY   | Langfuse secret key for authentication       | (optional) |
+| OTEL_EXPORTER_OTLP_ENDPOINT | OTLP endpoint for simple tracing       | (optional) |
 
-### Monitoring Configuration
+### Monitoring & Observability Configuration
 
-The client includes Prometheus metrics support for monitoring tool usage and performance:
+The client includes comprehensive monitoring capabilities with both metrics and distributed tracing:
 
+#### Prometheus Metrics
 - **Metrics Endpoint**: Accessible at `/metrics` on the configured port
 - **Default Port**: 8080 (configurable via `--metrics-port` flag)
 - **Metrics Available**:
   - `slackmcp_tool_invocations_total`: Counter for tool invocations with labels for tool name, server, and error status
   - `slackmcp_llm_tokens`: Histogram for LLM token usage by type and model
 
-Example metrics access:
+#### OpenTelemetry Tracing
+- **Supported Providers**:
+  - `simple-otel`: Basic OpenTelemetry tracing to OTLP endpoints (requires endpoint configuration)
+  - `langfuse-otel`: Advanced LLM observability with Langfuse integration (requires endpoint and auth)
+  - `disabled`: No tracing (default when no endpoint configured)
+- **Automatic Fallbacks**: Failed providers automatically fall back to disabled state
+- **Comprehensive Tracking**: Spans for LLM operations, tool calls, and user interactions with detailed attributes
+
+Example configuration and usage:
 ```bash
 # Access metrics endpoint
 curl http://localhost:8080/metrics
 
 # Run with custom metrics port
 slack-mcp-client --metrics-port 9090
+
+# Enable Langfuse tracing (example)
+export LANGFUSE_ENDPOINT="https://cloud.langfuse.com"
+export LANGFUSE_PUBLIC_KEY="pk-your-public-key"  
+export LANGFUSE_SECRET_KEY="sk-your-secret-key"
+
+# Enable simple OTLP tracing (example)
+export OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4318"
 ```
 
 ### Unified Configuration Format
@@ -919,6 +953,15 @@ All configuration is now managed through a single `config.json` file with compre
     "enabled": true,
     "metricsPort": 8080,
     "loggingLevel": "info"
+  },
+  "observability": {
+    "enabled": true,
+    "provider": "langfuse-otel",
+    "endpoint": "${LANGFUSE_ENDPOINT}",
+    "publicKey": "${LANGFUSE_PUBLIC_KEY}",
+    "secretKey": "${LANGFUSE_SECRET_KEY}",
+    "serviceName": "slack-mcp-client",
+    "serviceVersion": "1.0.0"
   }
 }
 ```
