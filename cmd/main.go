@@ -60,6 +60,7 @@ func init() {
 
 func main() {
 	flag.Parse()
+
 	// Validate configuration and exit if requested
 	if *configValidate {
 		// Load and validate config (runtime validation and strict JSON parsing)

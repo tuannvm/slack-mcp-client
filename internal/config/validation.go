@@ -42,6 +42,21 @@ func (c *Config) ValidateAfterDefaults() error {
 		}
 	}
 
+	// Validate observability configuration
+	if c.Observability.Enabled {
+		if c.Observability.Provider == ObservabilityProviderLangfuse {
+			if c.Observability.Endpoint == "" || strings.HasPrefix(c.Observability.Endpoint, "${") {
+				return fmt.Errorf("OBSERVABILITY_ENDPOINT environment variable not set for Langfuse")
+			}
+			if c.Observability.PublicKey == "" || strings.HasPrefix(c.Observability.PublicKey, "${") {
+				return fmt.Errorf("LANGFUSE_PUBLIC_KEY environment variable not set")
+			}
+			if c.Observability.SecretKey == "" || strings.HasPrefix(c.Observability.SecretKey, "${") {
+				return fmt.Errorf("LANGFUSE_SECRET_KEY environment variable not set")
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -169,6 +184,14 @@ func (c *Config) SubstituteEnvironmentVariables() {
 		provider.BaseURL = substituteEnvVars(provider.BaseURL)
 		c.LLM.Providers[name] = provider
 	}
+
+	// Substitute in Observability configuration
+	c.Observability.Endpoint = substituteEnvVars(c.Observability.Endpoint)
+	c.Observability.PublicKey = substituteEnvVars(c.Observability.PublicKey)
+	c.Observability.SecretKey = substituteEnvVars(c.Observability.SecretKey)
+	c.Observability.ServiceName = substituteEnvVars(c.Observability.ServiceName)
+	c.Observability.ServiceVersion = substituteEnvVars(c.Observability.ServiceVersion)
+
 }
 
 // substituteEnvVars replaces ${VAR_NAME} patterns with environment variable values
