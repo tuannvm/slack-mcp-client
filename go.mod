@@ -9,7 +9,7 @@ require (
 	github.com/prometheus/client_golang v1.23.0
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
 	github.com/slack-go/slack v0.16.0
-	github.com/stretchr/testify v1.11.0
+	github.com/stretchr/testify v1.11.1
 	github.com/tmc/langchaingo v0.1.13
 	go.opentelemetry.io/otel v1.37.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.37.0
