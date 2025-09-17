@@ -16,12 +16,12 @@ import (
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/tools"
-	"github.com/tuannvm/slack-mcp-client/internal/llm"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/llm"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/mcp"
 
-	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
-	"github.com/tuannvm/slack-mcp-client/internal/config"
+	customErrors "github.com/tuannvm/slack-mcp-client/v2/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/config"
 )
 
 // LLMMCPBridge provides a bridge between LLM responses and MCP tool calls.

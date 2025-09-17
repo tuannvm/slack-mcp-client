@@ -15,8 +15,8 @@ import (
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 
-	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	customErrors "github.com/tuannvm/slack-mcp-client/v2/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
 )
 
 // MCPClientInterface defines the interface for an MCP client

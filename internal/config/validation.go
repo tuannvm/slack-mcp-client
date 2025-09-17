@@ -11,7 +11,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/santhosh-tekuri/jsonschema/v5"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
 )
 
 // ValidateAfterDefaults validates configuration after defaults and env substitution
