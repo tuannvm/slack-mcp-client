@@ -47,16 +47,16 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 
 	// Clean environment
 	for key := range originalVars {
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 	}
 
 	// Restore environment after test
 	defer func() {
 		for key, value := range originalVars {
 			if value != "" {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			} else {
-				os.Unsetenv(key)
+				_ = os.Unsetenv(key)
 			}
 		}
 	}()
@@ -129,13 +129,13 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set environment variables
 			for key, value := range tt.envVars {
-				os.Setenv(key, value)
+				_ = os.Setenv(key, value)
 			}
 
 			// Clean up after each test
 			defer func() {
 				for key := range tt.envVars {
-					os.Unsetenv(key)
+					_ = os.Unsetenv(key)
 				}
 			}()
 
