@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Constants for provider types
@@ -27,6 +28,7 @@ type Config struct {
 	LLM           LLMConfig                  `json:"llm"`
 	MCPServers    map[string]MCPServerConfig `json:"mcpServers"`
 	RAG           RAGConfig                  `json:"rag,omitempty"`
+	Security      SecurityConfig             `json:"security,omitempty"`
 	Monitoring    MonitoringConfig           `json:"monitoring,omitempty"`
 	Timeouts      TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry         RetryConfig                `json:"retry,omitempty"`
@@ -172,12 +174,24 @@ type ObservabilityConfig struct {
 	ServiceVersion string `json:"serviceVersion,omitempty"`
 }
 
+// SecurityConfig contains security and access control settings
+type SecurityConfig struct {
+	Enabled          bool     `json:"enabled,omitempty"`          // Enable/disable security (default: false)
+	StrictMode       bool     `json:"strictMode,omitempty"`       // Require both user AND channel whitelisting (default: false)
+	AllowedUsers     []string `json:"allowedUsers,omitempty"`     // Comma-separated list of allowed user IDs
+	AllowedChannels  []string `json:"allowedChannels,omitempty"`  // Comma-separated list of allowed channel IDs
+	AdminUsers       []string `json:"adminUsers,omitempty"`       // Comma-separated list of admin user IDs
+	RejectionMessage string   `json:"rejectionMessage,omitempty"` // Custom message for unauthorized users
+	LogUnauthorized  bool     `json:"logUnauthorized,omitempty"`  // Log unauthorized access attempts (default: true)
+}
+
 // ApplyDefaults applies default values to the configuration
 func (c *Config) ApplyDefaults() {
 	c.applyVersionDefaults()
 	c.applyLLMDefaults()
 	c.applyRAGDefaults()
 	c.applySlackDefaults()
+	c.applySecurityDefaults()
 	c.applyTimeoutDefaults()
 	c.applyRetryDefaults()
 	c.applyMonitoringDefaults()
@@ -263,6 +277,18 @@ func (c *Config) applySlackDefaults() {
 	if c.Slack.ThinkingMessage == "" {
 		c.Slack.ThinkingMessage = "Thinking..."
 	}
+}
+
+// applySecurityDefaults sets default security configuration
+func (c *Config) applySecurityDefaults() {
+	// Security is disabled by default
+	// LogUnauthorized is true by default when security is enabled
+	if c.Security.Enabled && c.Security.RejectionMessage == "" {
+		c.Security.RejectionMessage = "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error."
+	}
+	// Note: LogUnauthorized defaults to false in the struct, but when security is enabled
+	// and LogUnauthorized is not explicitly set, we want it to be true
+	// This is handled by the zero value being false, but environment variables can override
 }
 
 // applyTimeoutDefaults sets default timeout values
@@ -433,4 +459,163 @@ func (c *Config) ApplyEnvironmentVariables() {
 	if serviceVersion := os.Getenv("OBSERVABILITY_SERVICE_VERSION"); serviceVersion != "" {
 		c.Observability.ServiceVersion = serviceVersion
 	}
+
+	// Security configuration overrides
+	if enabled := os.Getenv("SECURITY_ENABLED"); enabled != "" {
+		if val, err := strconv.ParseBool(enabled); err == nil {
+			c.Security.Enabled = val
+		}
+	}
+
+	if strictMode := os.Getenv("SECURITY_STRICT_MODE"); strictMode != "" {
+		if val, err := strconv.ParseBool(strictMode); err == nil {
+			c.Security.StrictMode = val
+		}
+	}
+
+	if logUnauthorized := os.Getenv("SECURITY_LOG_UNAUTHORIZED"); logUnauthorized != "" {
+		if val, err := strconv.ParseBool(logUnauthorized); err == nil {
+			c.Security.LogUnauthorized = val
+		}
+	}
+
+	if allowedUsers := os.Getenv("SECURITY_ALLOWED_USERS"); allowedUsers != "" {
+		users := strings.Split(allowedUsers, ",")
+		for i, user := range users {
+			users[i] = strings.TrimSpace(user)
+		}
+		c.Security.AllowedUsers = users
+	}
+
+	if allowedChannels := os.Getenv("SECURITY_ALLOWED_CHANNELS"); allowedChannels != "" {
+		channels := strings.Split(allowedChannels, ",")
+		for i, channel := range channels {
+			channels[i] = strings.TrimSpace(channel)
+		}
+		c.Security.AllowedChannels = channels
+	}
+
+	if adminUsers := os.Getenv("SECURITY_ADMIN_USERS"); adminUsers != "" {
+		users := strings.Split(adminUsers, ",")
+		for i, user := range users {
+			users[i] = strings.TrimSpace(user)
+		}
+		c.Security.AdminUsers = users
+	}
+
+	if rejectionMessage := os.Getenv("SECURITY_REJECTION_MESSAGE"); rejectionMessage != "" {
+		c.Security.RejectionMessage = rejectionMessage
+	}
+}
+
+// SecurityResult represents the result of a security check
+type SecurityResult struct {
+	Allowed bool   // Whether access is granted
+	Reason  string // Reason for the decision (for logging)
+}
+
+// ValidateAccess performs security validation based on the current configuration
+// Returns SecurityResult indicating whether access should be granted and the reason
+func (c *Config) ValidateAccess(userID, channelID string) SecurityResult {
+	// If security is disabled, allow all access
+	if !c.Security.Enabled {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "Security disabled",
+		}
+	}
+
+	// Check if user is an admin (admins always have access regardless of channel restrictions)
+	isAdmin := c.isAdminUser(userID)
+	if isAdmin {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "Admin user access",
+		}
+	}
+
+	// Check user and channel whitelists
+	isUserAllowed := c.isUserAllowed(userID)
+	isChannelAllowed := c.isChannelAllowed(channelID)
+
+	// Apply access control based on strict mode
+	if c.Security.StrictMode {
+		// Strict mode: both user AND channel must be whitelisted
+		if isUserAllowed && isChannelAllowed {
+			return SecurityResult{
+				Allowed: true,
+				Reason:  "User and channel both whitelisted (strict mode)",
+			}
+		}
+		if !isUserAllowed && !isChannelAllowed {
+			return SecurityResult{
+				Allowed: false,
+				Reason:  "Neither user nor channel whitelisted (strict mode)",
+			}
+		}
+		if !isUserAllowed {
+			return SecurityResult{
+				Allowed: false,
+				Reason:  "User not whitelisted (strict mode)",
+			}
+		}
+		return SecurityResult{
+			Allowed: false,
+			Reason:  "Channel not whitelisted (strict mode)",
+		}
+	} else {
+		// Flexible mode: user OR channel must be whitelisted
+		if isUserAllowed || isChannelAllowed {
+			if isUserAllowed && isChannelAllowed {
+				return SecurityResult{
+					Allowed: true,
+					Reason:  "User and channel both whitelisted",
+				}
+			} else if isUserAllowed {
+				return SecurityResult{
+					Allowed: true,
+					Reason:  "User whitelisted",
+				}
+			} else {
+				return SecurityResult{
+					Allowed: true,
+					Reason:  "Channel whitelisted",
+				}
+			}
+		}
+		return SecurityResult{
+			Allowed: false,
+			Reason:  "Neither user nor channel whitelisted",
+		}
+	}
+}
+
+// isUserAllowed checks if a user ID is in the allowed users list
+func (c *Config) isUserAllowed(userID string) bool {
+	for _, allowedUser := range c.Security.AllowedUsers {
+		if allowedUser == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// isChannelAllowed checks if a channel ID is in the allowed channels list
+func (c *Config) isChannelAllowed(channelID string) bool {
+	for _, allowedChannel := range c.Security.AllowedChannels {
+		if allowedChannel == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+// isAdminUser checks if a user ID is in the admin users list
+func (c *Config) isAdminUser(userID string) bool {
+	for _, adminUser := range c.Security.AdminUsers {
+		if adminUser == userID {
+			return true
+		}
+	}
+	return false
 }

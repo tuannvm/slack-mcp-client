@@ -364,6 +364,40 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	c.logger.DebugKV("Routing prompt via configured provider", "provider", c.cfg.LLM.Provider)
 	c.logger.DebugKV("User prompt", "text", userPrompt)
 
+	// Security validation check
+	securityResult := c.cfg.ValidateAccess(profile.userId, channelID)
+	if !securityResult.Allowed {
+		// Log unauthorized access attempt if enabled
+		if c.cfg.Security.LogUnauthorized {
+			c.logger.WarnKV("security: Access denied",
+				"user_id", profile.userId,
+				"channel_id", channelID,
+				"allowed", false,
+				"reason", securityResult.Reason,
+				"strict_mode", c.cfg.Security.StrictMode,
+			)
+		}
+
+		// Send rejection message if configured
+		if c.cfg.Security.RejectionMessage != "" {
+			c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Security.RejectionMessage)
+		}
+
+		// Early return - do not process the request further
+		return
+	}
+
+	// Log successful access if security is enabled
+	if c.cfg.Security.Enabled {
+		c.logger.InfoKV("security: Access granted",
+			"user_id", profile.userId,
+			"channel_id", channelID,
+			"allowed", true,
+			"reason", securityResult.Reason,
+			"strict_mode", c.cfg.Security.StrictMode,
+		)
+	}
+
 	ctx, span := c.tracingHandler.StartTrace(context.Background(), "slack-user-interaction", userPrompt, map[string]string{
 		"session_id":   fmt.Sprintf("%s-%s", channelID, threadTS),
 		"user_email":   profile.email,
