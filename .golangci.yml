@@ -1,5 +1,5 @@
 # Define the configuration version
-version: "2"
+# version: "2"  # Remove version specification to use default
 
 run:
   timeout: 5m
