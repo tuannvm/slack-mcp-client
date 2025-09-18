@@ -754,6 +754,9 @@ You can easily extend this setup to include additional MCP servers in the same n
    - `im:write`
    - `users:read`
    - `users.profile:read`
+   - `channels:history`
+   - `groups:history`
+   - `mpim:history`
 5. Enable Event Subscriptions and subscribe to:
    - `app_mention`
    - `message.im`
