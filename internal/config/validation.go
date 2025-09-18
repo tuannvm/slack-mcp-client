@@ -16,12 +16,14 @@ import (
 
 // ValidateAfterDefaults validates configuration after defaults and env substitution
 func (c *Config) ValidateAfterDefaults() error {
-	// Validate required fields after environment substitution
-	if c.Slack.BotToken == "" || strings.HasPrefix(c.Slack.BotToken, "${") {
-		return fmt.Errorf("SLACK_BOT_TOKEN environment variable not set")
-	}
-	if c.Slack.AppToken == "" || strings.HasPrefix(c.Slack.AppToken, "${") {
-		return fmt.Errorf("SLACK_APP_TOKEN environment variable not set")
+	if !c.UseStdIOClient {
+		// Validate required fields after environment substitution
+		if c.Slack.BotToken == "" || strings.HasPrefix(c.Slack.BotToken, "${") {
+			return fmt.Errorf("SLACK_BOT_TOKEN environment variable not set")
+		}
+		if c.Slack.AppToken == "" || strings.HasPrefix(c.Slack.AppToken, "${") {
+			return fmt.Errorf("SLACK_APP_TOKEN environment variable not set")
+		}
 	}
 
 	// Validate LLM provider exists

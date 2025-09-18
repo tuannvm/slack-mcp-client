@@ -630,14 +630,19 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 	var err error
 
 	var userFrontend slackbot.UserFrontend
-	userFrontend, err = slackbot.GetSlackClient(
-		cfg.Slack.BotToken,
-		cfg.Slack.AppToken,
-		logger,
-		cfg.Slack.ThinkingMessage,
-	)
-	if err != nil {
-		logger.Fatal("Failed to initialize Slack client: %v", err)
+	// Use the structured logger for the Slack client
+	if cfg.UseStdIOClient {
+		userFrontend = slackbot.NewStdioClient(logger)
+	} else {
+		userFrontend, err = slackbot.GetSlackClient(
+			cfg.Slack.BotToken,
+			cfg.Slack.AppToken,
+			logger,
+			cfg.Slack.ThinkingMessage,
+		)
+		if err != nil {
+			logger.Fatal("Failed to initialize Slack client: %v", err)
+		}
 	}
 
 	// Use the structured logger for the Slack client
