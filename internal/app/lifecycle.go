@@ -23,7 +23,7 @@ type ReloadTrigger struct {
 }
 
 // RunWithReload wraps the main application function with reload capability
-func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logging.Logger) error) error {
+func RunWithReload(logger *logging.Logger, configFile string, appFunc func(context.Context, *logging.Logger) error) error {
 	for {
 		reloadStartTime := time.Now()
 
@@ -31,7 +31,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 		reloadInterval, shouldReload, err := loadAndValidateReloadConfig(configFile, logger)
 		if err != nil || !shouldReload {
 			// Either config loading failed or reload is disabled - run normally
-			return appFunc(logger)
+			return appFunc(context.Background(), logger)
 		}
 
 		logger.InfoKV("Reload enabled", "interval", reloadInterval)
@@ -43,7 +43,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 		appDone := make(chan error, 1)
 		go func() {
 			// Pass context to application function for graceful shutdown
-			appDone <- runAppWithContext(appCtx, logger, appFunc)
+			appDone <- appFunc(appCtx, logger)
 		}()
 
 		// Wait for reload trigger or app completion
@@ -76,6 +76,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 			logger.InfoKV("Reload triggered, shutting down current instance...", "type", trigger.Type)
 
 			// Cancel current application
+			fmt.Println("Canceling current application...")
 			appCancel()
 
 			// Wait for current app to shutdown gracefully
@@ -94,14 +95,6 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 	}
 }
 
-// runAppWithContext runs the application function with context for graceful shutdown
-// Note: The context is available but not yet fully integrated with the application.
-// Future enhancement: Modify application functions to accept context for proper cancellation.
-func runAppWithContext(ctx context.Context, logger *logging.Logger, appFunc func(*logging.Logger) error) error {
-	// Run the application function
-	// The context could be used in the future for cancellation signals
-	return appFunc(logger)
-}
 
 // awaitReloadTrigger waits for a reload trigger
 func awaitReloadTrigger(logger *logging.Logger, interval time.Duration) ReloadTrigger {

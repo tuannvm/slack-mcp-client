@@ -11,9 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -135,7 +133,7 @@ func main() {
 }
 
 // runMainApplication contains the core application logic that can be reloaded
-func runMainApplication(logger *logging.Logger) error {
+func runMainApplication(ctx context.Context, logger *logging.Logger) error {
 	// Load and prepare configuration
 	cfg := loadAndPrepareConfig(logger)
 
@@ -143,7 +141,7 @@ func runMainApplication(logger *logging.Logger) error {
 	mcpClients, discoveredTools := initializeMCPClients(logger, cfg)
 
 	// Initialize and run Slack client
-	startSlackClient(logger, mcpClients, discoveredTools, cfg)
+	startSlackClient(ctx, logger, mcpClients, discoveredTools, cfg)
 
 	return nil
 }
@@ -564,7 +562,7 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 
 // startSlackClient starts the Slack client and handles shutdown
 // Use mcp.Client from the internal mcp package
-func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
+func startSlackClient(ctx context.Context, logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
 	// Initialize RAG client if enabled and add tools to discoveredTools
@@ -659,14 +657,12 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		}
 	}()
 
-	logger.Info("Slack MCP Client is now running. Press Ctrl+C to exit.")
+	logger.Info("Slack MCP Client is now running. Waiting for shutdown signal...")
 
-	// Wait for termination signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigChan
+	// Wait for context cancellation (from reload system)
+	<-ctx.Done()
 
-	logger.Info("Received signal %v, shutting down...", sig)
+	logger.Info("Shutdown signal received, shutting down...")
 
 	// Gracefully close all MCP clients
 	logger.Info("Closing all MCP clients...")
