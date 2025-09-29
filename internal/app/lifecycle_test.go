@@ -96,7 +96,7 @@ func TestConstants(t *testing.T) {
 		t.Errorf("minReloadInterval = %v, expected 10s", minReloadInterval)
 	}
 
-	if defaultShutdownTimeout != 10*time.Second {
-		t.Errorf("defaultShutdownTimeout = %v, expected 10s", defaultShutdownTimeout)
+	if defaultShutdownTimeout != 60*time.Second {
+		t.Errorf("defaultShutdownTimeout = %v, expected 60s", defaultShutdownTimeout)
 	}
 }
