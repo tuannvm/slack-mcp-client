@@ -758,11 +758,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 			c.tracingHandler.RecordSuccess(repromptSpan, "LLM re-prompt successful")
 		}
 		repromptSpan.End()
-	} else {
-		// No tool was executed, add assistant response to history
-		c.addToHistory(channelID, threadTS, "", "assistant", finalResponse, "", "", "")
 	}
-
 	// Start message sending span
 	_, msgSpan := c.tracingHandler.StartSpan(ctx, "slack-message-send", "event", userPrompt, map[string]string{
 		"channel_id":            channelID,
