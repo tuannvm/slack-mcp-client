@@ -5,6 +5,13 @@
 
 This document outlines potential improvements enabled by new features and bug fixes in the latest versions of our core dependencies.
 
+**Recent Updates**:
+- Reprioritized Session Management from P0 to P1 due to high complexity and risk
+- Adjusted effort estimates upward by 1.5-2.5x for complex tasks
+- Added testing strategies for all improvements
+- Reordered roadmap to prioritize observability before session management
+- Enhanced risk assessment with upstream dependencies and performance degradation risks
+
 ---
 
 ## Priority Matrix
@@ -60,11 +67,10 @@ type TokenMetrics struct {
 - Monitor prompt caching effectiveness
 
 **Complexity**: Medium
-**Estimated Effort**: 4-6 hours
 
 ---
 
-### P0-2: Session-Specific Resource Management
+### P1-2: Session-Specific Resource Management
 
 **Enabled By**: mcp-go v0.42.0 - Session-specific resources support
 
@@ -108,8 +114,13 @@ type Session struct {
 - Better multi-tenancy support
 - Cleaner resource lifecycle
 
+**Testing Strategy**:
+- Unit tests for SessionManager concurrency safety
+- Integration tests for session isolation verification
+- Security tests to ensure no cross-session data leaks
+- Load tests for session cleanup and memory management
+
 **Complexity**: High
-**Estimated Effort**: 12-16 hours
 
 ---
 
@@ -151,12 +162,17 @@ type StreamingResponse struct {
 - Lower perceived latency
 - Users can see progress on long-running operations
 
+**Testing Strategy**:
+- Unit tests for streaming message accumulation and updates
+- Integration tests with mock LLM streaming responses
+- End-to-end tests for Slack message editing
+- Graceful degradation tests when streaming fails
+
 **Complexity**: Medium-High
-**Estimated Effort**: 8-12 hours
 
 ---
 
-### P1-2: Resource Middleware for Observability
+### P1-3: Resource Middleware for Observability
 
 **Enabled By**: mcp-go v0.42.0 - Resource middleware extensions
 
@@ -195,8 +211,13 @@ type ResourceMiddleware interface {
 - Security auditing
 - Resource access analytics
 
+**Testing Strategy**:
+- Unit tests for each middleware component
+- Integration tests for middleware chain execution
+- Performance tests for caching effectiveness
+- Audit log verification tests
+
 **Complexity**: Medium
-**Estimated Effort**: 8-10 hours
 
 ---
 
@@ -241,8 +262,12 @@ type SafeError struct {
 - Improved user experience
 - Easier debugging
 
+**Testing Strategy**:
+- Unit tests for sanitization functions
+- Security tests to verify no sensitive data in user-facing messages
+- Integration tests for error propagation through stack
+
 **Complexity**: Low-Medium
-**Estimated Effort**: 4-6 hours
 
 ---
 
@@ -279,8 +304,12 @@ type DynamicTool struct {
 - Easier experimentation
 - Per-tenant customization
 
+**Testing Strategy**:
+- Unit tests for dynamic property loading
+- Integration tests for runtime tool reconfiguration
+- Validation tests for tool property schemas
+
 **Complexity**: Medium
-**Estimated Effort**: 6-8 hours
 
 ---
 
@@ -321,8 +350,13 @@ type HTTPSampler struct {
 - Better issue reproduction
 - Performance analysis
 
+**Testing Strategy**:
+- Unit tests for sampling rate logic
+- Integration tests for sample capture and export
+- Performance tests to measure sampling overhead
+- Privacy tests to ensure sensitive data handling
+
 **Complexity**: Medium
-**Estimated Effort**: 6-8 hours
 
 ---
 
@@ -362,8 +396,13 @@ type ToolOrchestrator struct {
 - Better resource utilization
 - More robust agent behavior
 
-**Complexity**: High
-**Estimated Effort**: 12-16 hours
+**Testing Strategy**:
+- Unit tests for dependency graph construction
+- Integration tests for parallel execution scenarios
+- Failure recovery and retry mechanism tests
+- Performance benchmarks for parallel vs sequential execution
+
+**Complexity**: High (requires design spike first)
 
 ---
 
@@ -392,7 +431,6 @@ func (c *Client) CallTool(ctx context.Context, req ToolRequest) {
 
 **Benefit**: Optimized performance for different request types
 **Complexity**: Low
-**Estimated Effort**: 2-4 hours
 
 ---
 
@@ -423,7 +461,6 @@ type AdaptiveReconnection struct {
 
 **Benefit**: More reliable connections, faster recovery
 **Complexity**: Medium
-**Estimated Effort**: 6-8 hours
 
 ---
 
@@ -456,7 +493,6 @@ type AnnotatedResult struct {
 
 **Benefit**: Better result presentation, more context
 **Complexity**: Medium
-**Estimated Effort**: 6-8 hours
 
 ---
 
@@ -486,7 +522,6 @@ type CallbackChain struct {
 
 **Benefit**: Better observability, flexible monitoring
 **Complexity**: Low-Medium
-**Estimated Effort**: 4-6 hours
 
 ---
 
@@ -498,20 +533,23 @@ type CallbackChain struct {
 - P0-1: Enhanced Token Usage Monitoring
 - P2-1: Enhanced Error Context
 
-### Phase 2: Core Features (Sprint 2)
+### Phase 2: UX & Observability (Sprint 2)
 - P1-1: Improved Streaming Reliability
-- P0-2: Session-Specific Resource Management (start)
+- P1-3: Resource Middleware for Observability (start)
 
-### Phase 3: Observability (Sprint 3)
-- P1-2: Resource Middleware for Observability
+### Phase 3: Core Architecture (Sprint 3)
+- P1-3: Resource Middleware for Observability (complete)
+- P1-2: Session-Specific Resource Management (start)
 - P2-3: HTTP Sampling for Debugging
-- P0-2: Session-Specific Resource Management (complete)
 
-### Phase 4: Optimization (Sprint 4)
+### Phase 4: Core Architecture Completion (Sprint 4)
+- P1-2: Session-Specific Resource Management (complete and test)
+
+### Phase 5: Optimization (Sprint 5)
 - P2-2: Flexible Tool Properties
-- P2-4: Improved Agent Multi-Tool Orchestration
+- P2-4: Improved Agent Multi-Tool Orchestration (requires design spike)
 
-### Phase 5: Polish (Sprint 5)
+### Phase 6: Polish (Sprint 6)
 - P3 items as capacity allows
 - Documentation updates
 - Performance testing
@@ -528,11 +566,11 @@ type CallbackChain struct {
 - **Target**: 90% of responses use streaming
 - **KPI**: 50% reduction in perceived latency
 
-### Session Management (P0-2)
+### Session Management (P1-2)
 - **Target**: Thread-isolated resources for 100% of conversations
 - **KPI**: Zero cross-thread resource leaks
 
-### Observability (P1-2, P2-3)
+### Observability (P1-3, P2-3)
 - **Target**: 95% of issues debuggable from metrics alone
 - **KPI**: 30% reduction in MTTR (Mean Time To Resolution)
 
@@ -544,11 +582,14 @@ type CallbackChain struct {
 1. **Testing Infrastructure**: Integration tests for streaming, sessions
 2. **Monitoring Stack**: Prometheus + Grafana for new metrics
 3. **Documentation**: Update architecture docs with new patterns
+4. **Configuration Management**: Strategy for managing new feature flags, middleware toggles, sampling rates, and session timeouts
+5. **Performance Baseline**: Establish current performance metrics before adding new features
 
 ### Nice to Have
 - Staging environment for feature validation
 - Load testing capabilities
 - Automated performance benchmarks
+- Centralized feature flagging system for gradual rollouts
 
 ---
 
@@ -557,11 +598,13 @@ type CallbackChain struct {
 | Improvement | Risk Level | Mitigation |
 |-------------|------------|------------|
 | P0-1: Token Monitoring | Low | Additive only, no behavior changes |
-| P0-2: Session Management | High | Feature flag, gradual rollout |
-| P1-1: Streaming | Medium | Fallback to non-streaming |
-| P1-2: Resource Middleware | Medium | Disable individual middlewares |
+| P1-1: Streaming | Medium | Fallback to non-streaming, graceful degradation |
+| P1-2: Session Management | **Critical** | Feature flag, gradual rollout, extensive security testing to prevent cross-session data leaks |
+| P1-3: Resource Middleware | Medium | Disable individual middlewares, performance monitoring |
 | P2-1: Error Context | Low | Extensive testing for leaks |
-| P2-4: Multi-Tool Orchestration | High | Start with opt-in agent mode |
+| P2-4: Multi-Tool Orchestration | High | Design spike first, start with opt-in agent mode |
+| **Upstream Dependencies** | **Medium** | Monitor for bugs in new langchaingo/mcp-go features, maintain rollback capability |
+| **Performance Degradation** | **Medium** | Establish performance baselines, continuous load testing, add performance regression tests |
 
 ---
 
@@ -569,12 +612,12 @@ type CallbackChain struct {
 
 ### High ROI Improvements
 1. **P0-1 (Token Monitoring)**: Low cost, high benefit for cost optimization
-2. **P1-1 (Streaming)**: Medium cost, high UX improvement
+2. **P1-1 (Streaming)**: Medium cost, high UX improvement - delivers immediate user value
 3. **P2-1 (Error Context)**: Low cost, immediate security benefit
 
 ### Strategic Investments
-1. **P0-2 (Session Management)**: High cost, enables multi-tenancy
-2. **P1-2 (Resource Middleware)**: Medium cost, foundational for observability
+1. **P1-3 (Resource Middleware)**: Medium cost, foundational for observability - enables safer rollout of complex features
+2. **P1-2 (Session Management)**: High cost, enables multi-tenancy and privacy - requires extensive testing and careful rollout
 
 ### Future Considerations
 - P3 items provide incremental improvements
