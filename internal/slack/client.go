@@ -15,14 +15,14 @@ import (
 
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tmc/langchaingo/llms"
-	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
-	"github.com/tuannvm/slack-mcp-client/internal/config"
-	"github.com/tuannvm/slack-mcp-client/internal/handlers"
-	"github.com/tuannvm/slack-mcp-client/internal/llm"
-	"github.com/tuannvm/slack-mcp-client/internal/mcp"
-	"github.com/tuannvm/slack-mcp-client/internal/observability"
-	"github.com/tuannvm/slack-mcp-client/internal/rag"
+	customErrors "github.com/tuannvm/slack-mcp-client/v2/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/config"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/handlers"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/llm"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/mcp"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/observability"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/rag"
 )
 
 // Client represents the Slack client application.

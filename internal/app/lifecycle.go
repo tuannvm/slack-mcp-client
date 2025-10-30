@@ -6,9 +6,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
-	"github.com/tuannvm/slack-mcp-client/internal/config"
-	"github.com/tuannvm/slack-mcp-client/internal/monitoring"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/config"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/monitoring"
 )
 
 const (

@@ -10,9 +10,9 @@ import (
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 
-	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
-	"github.com/tuannvm/slack-mcp-client/internal/slack/formatter"
+	customErrors "github.com/tuannvm/slack-mcp-client/v2/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/slack/formatter"
 )
 
 type UserFrontend interface {

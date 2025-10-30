@@ -5,7 +5,7 @@ import (
 	"context"
 
 	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
 )
 
 // ToolHandler defines the interface for all MCP tool handlers

@@ -3,8 +3,8 @@ package llm
 import (
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/anthropic"
-	customErrors "github.com/tuannvm/slack-mcp-client/internal/common/errors"
-	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
+	customErrors "github.com/tuannvm/slack-mcp-client/v2/internal/common/errors"
+	"github.com/tuannvm/slack-mcp-client/v2/internal/common/logging"
 )
 
 // AnthropicModelFactory creates Anthropic LangChain model instances

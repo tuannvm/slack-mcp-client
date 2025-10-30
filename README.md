@@ -130,7 +130,7 @@ flowchart LR
    - OpenAI Vector Store for semantic search and enterprise-grade RAG
 4. **Tool Ecosystem** connects to diverse external systems:
    - Filesystem operations for file management
-   - Git integration for repository interactions  
+   - Git integration for repository interactions
    - Kubernetes cluster management and monitoring
    - Custom tools via HTTP, SSE, or stdio protocols
 5. **Infrastructure** ensures production-ready deployment:
@@ -141,11 +141,11 @@ flowchart LR
 
 ## Features
 
-- ✅ **Multi-Mode MCP Client**: 
+- ✅ **Multi-Mode MCP Client**:
   - Server-Sent Events (SSE) for real-time communication with automatic retry
   - HTTP transport for JSON-RPC
   - stdio for local development and testing
-- ✅ **Slack Integration**: 
+- ✅ **Slack Integration**:
   - Uses Socket Mode for secure, firewall-friendly communication
   - Works with both channels and direct messages
   - Rich message formatting with Markdown and Block Kit
@@ -154,7 +154,7 @@ flowchart LR
   - Customizable bot behavior and message history
 - ✅ **Multi-Provider LLM Support**:
   - OpenAI (GPT-4, GPT-4o, etc.)
-  - Anthropic (Claude 3.5 Sonnet, etc.) 
+  - Anthropic (Claude 3.5 Sonnet, etc.)
   - Ollama (Local LLMs like Llama, Mistral, etc.)
   - Native tool calling and agent mode support
   - LangChain gateway for unified API
@@ -164,7 +164,7 @@ flowchart LR
   - Configurable agent iterations and behavior
   - Streaming responses with real-time updates
   - Advanced prompt engineering capabilities
-- ✅ **RAG (Retrieval-Augmented Generation)**: 
+- ✅ **RAG (Retrieval-Augmented Generation)**:
   - Multiple providers: Simple JSON storage, OpenAI Vector Store
   - Reusable vector stores with `vectorStoreId` support
   - Configurable search parameters and similarity metrics
@@ -199,7 +199,7 @@ Download the latest binary from the [GitHub releases page](https://github.com/tu
 
 ```bash
 # Install latest version using Go
-go install github.com/tuannvm/slack-mcp-client@latest
+go install github.com/tuannvm/slack-mcp-client/v2@latest
 
 # Or build from source
 git clone https://github.com/tuannvm/slack-mcp-client.git
@@ -508,7 +508,11 @@ Enable Agent Mode in your configuration file:
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/path/to/project"
+      ]
     },
     "github": {
       "command": "github-mcp-server",
