@@ -32,7 +32,7 @@
      - **stdio:** For local development with command-line tools
    - Dynamic initialization with proper command line argument parsing
    - Runtime discovery of available tools from MCP servers
-   - Uses mcp-go v0.31.0 with unified transport interface
+   - Uses mcp-go v0.42.0 with enhanced HTTP transport and session management
 
 4. **LLM Provider System (`internal/llm/`)**
    - Factory pattern for provider registration and initialization

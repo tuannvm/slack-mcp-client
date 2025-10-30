@@ -46,16 +46,21 @@ This document tracks major dependencies and their versions for the Slack MCP Cli
 
 ### Model Context Protocol (MCP)
 
+**Current Version**: v0.42.0 (Upgraded: 2025-10-29)
+
 **Purpose**: Standardized protocol for AI model-tool communication
 
 **Transports Supported**:
-- HTTP with JSON-RPC 2.0
-- Server-Sent Events (SSE) with automatic retry
+- HTTP with JSON-RPC 2.0 and improved sampling
+- Server-Sent Events (SSE) with automatic retry and session management
 - stdio for local development
 
 **Specification**: MCP 2025-06-18
 
-**Documentation**: [modelcontextprotocol.io](https://modelcontextprotocol.io)
+**Recent Updates**:
+- **v0.42.0 (2025-10-29)**: HTTP sampling improvements, session-specific resources, enhanced streaming control, bug fixes for transport initialization and session reuse
+
+**Documentation**: [github.com/mark3labs/mcp-go](https://github.com/mark3labs/mcp-go)
 
 ---
 
@@ -138,6 +143,13 @@ Follow the [Upgrade Template](./UPGRADE_TEMPLATE.md) for consistent upgrade docu
 |---------|------|---------|--------|
 | v0.1.14 | 2025-10-29 | Streaming fixes, agent improvements, security enhancements | [Report](./v0.1.14-upgrade-plan.md) |
 | v0.1.13 | Previous | Initial version in use | - |
+
+### mcp-go
+
+| Version | Date | Changes | Notes |
+|---------|------|---------|-------|
+| v0.42.0 | 2025-10-29 | HTTP sampling improvements, session-specific resources, streaming control, transport bug fixes | No breaking changes |
+| v0.37.0 | Previous | Previous version in use | - |
 
 ---
 
