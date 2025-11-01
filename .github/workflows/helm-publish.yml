@@ -63,6 +63,7 @@ jobs:
 
           # Push using Helm OCI
           echo "Pushing to OCI registry..."
-          helm push $PACKAGE_NAME oci://ghcr.io/${{ github.repository_owner }}/charts
+          REPO_OWNER_LOWER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          helm push $PACKAGE_NAME oci://ghcr.io/$REPO_OWNER_LOWER/charts
 
-          echo "Helm chart published to ghcr.io/${{ github.repository_owner }}/charts/slack-mcp-client:$PACKAGE_VERSION"
+          echo "Helm chart published to ghcr.io/$REPO_OWNER_LOWER/charts/slack-mcp-client:$PACKAGE_VERSION"

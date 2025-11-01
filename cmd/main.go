@@ -135,7 +135,7 @@ func main() {
 }
 
 // runMainApplication contains the core application logic that can be reloaded
-func runMainApplication(logger *logging.Logger) error {
+func runMainApplication(ctx context.Context, logger *logging.Logger) error {
 	// Load and prepare configuration
 	cfg := loadAndPrepareConfig(logger)
 
@@ -143,7 +143,7 @@ func runMainApplication(logger *logging.Logger) error {
 	mcpClients, discoveredTools := initializeMCPClients(logger, cfg)
 
 	// Initialize and run Slack client
-	startSlackClient(logger, mcpClients, discoveredTools, cfg)
+	startSlackClient(ctx, logger, mcpClients, discoveredTools, cfg)
 
 	return nil
 }
@@ -564,7 +564,7 @@ func logLLMSettings(logger *logging.Logger, cfg *config.Config) {
 
 // startSlackClient starts the Slack client and handles shutdown
 // Use mcp.Client from the internal mcp package
-func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
+func startSlackClient(ctx context.Context, logger *logging.Logger, mcpClients map[string]*mcp.Client, discoveredTools map[string]mcp.ToolInfo, cfg *config.Config) {
 	logger.Info("Starting Slack client...")
 
 	// Initialize RAG client if enabled and add tools to discoveredTools
@@ -630,14 +630,19 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 	var err error
 
 	var userFrontend slackbot.UserFrontend
-	userFrontend, err = slackbot.GetSlackClient(
-		cfg.Slack.BotToken,
-		cfg.Slack.AppToken,
-		logger,
-		cfg.Slack.ThinkingMessage,
-	)
-	if err != nil {
-		logger.Fatal("Failed to initialize Slack client: %v", err)
+	// Use the structured logger for the Slack client
+	if cfg.UseStdIOClient {
+		userFrontend = slackbot.NewStdioClient(logger)
+	} else {
+		userFrontend, err = slackbot.GetSlackClient(
+			cfg.Slack.BotToken,
+			cfg.Slack.AppToken,
+			logger,
+			cfg.Slack.ThinkingMessage,
+		)
+		if err != nil {
+			logger.Fatal("Failed to initialize Slack client: %v", err)
+		}
 	}
 
 	// Use the structured logger for the Slack client
@@ -652,21 +657,52 @@ func startSlackClient(logger *logging.Logger, mcpClients map[string]*mcp.Client,
 		logger.Fatal("Failed to initialize Slack client: %v", err)
 	}
 
+	// Create a channel to signal when Slack client exits
+	slackDone := make(chan error, 1)
+
 	// Start listening for Slack events in a separate goroutine
 	go func() {
+		defer close(slackDone)
 		if err := client.Run(); err != nil {
-			logger.Fatal("Slack client error: %v", err)
+			logger.ErrorKV("Slack client error", "error", err)
+			slackDone <- err
 		}
 	}()
 
-	logger.Info("Slack MCP Client is now running. Press Ctrl+C to exit.")
+	logger.Info("Slack MCP Client is now running. Waiting for shutdown signal...")
 
-	// Wait for termination signal
+	// Wait for termination signal or context cancellation
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigChan
+	defer signal.Stop(sigChan)
 
-	logger.Info("Received signal %v, shutting down...", sig)
+	select {
+	case sig := <-sigChan:
+		logger.Info("Received signal %v, shutting down...", sig)
+	case <-ctx.Done():
+		logger.Info("Context cancelled, shutting down...")
+	case err := <-slackDone:
+		if err != nil {
+			logger.ErrorKV("Slack client exited with error", "error", err)
+		} else {
+			logger.Info("Slack client exited normally")
+		}
+		return // Exit the function if Slack client stopped
+	}
+
+	// Try to close Slack client gracefully (if Close method is available)
+	logger.Info("Stopping Slack client...")
+	if closeErr := client.Close(); closeErr != nil {
+		logger.ErrorKV("Failed to close Slack client gracefully", "error", closeErr)
+	}
+
+	// Wait for Slack client goroutine to finish with a timeout
+	select {
+	case <-slackDone:
+		logger.Info("Slack client stopped")
+	case <-time.After(5 * time.Second):
+		logger.Warn("Slack client stop timed out")
+	}
 
 	// Gracefully close all MCP clients
 	logger.Info("Closing all MCP clients...")

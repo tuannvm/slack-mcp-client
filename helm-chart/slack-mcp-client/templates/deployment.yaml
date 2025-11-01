@@ -27,6 +27,47 @@ spec:
       {{- if and .Values.serviceAccount.create .Values.serviceAccount.clusterRoleName }}
       serviceAccountName: {{ include "slack-mcp-client.fullname" . }}
       {{- end }}
+      {{- if .Values.initContainers }}
+      initContainers:
+        {{- range .Values.initContainers }}
+        - name: {{ .name }}
+          image: {{ .image }}
+          {{- if .imagePullPolicy }}
+          imagePullPolicy: {{ .imagePullPolicy }}
+          {{- end }}
+          {{- if .command }}
+          command:
+            {{- toYaml .command | nindent 12 }}
+          {{- end }}
+          {{- if .args }}
+          args:
+            {{- toYaml .args | nindent 12 }}
+          {{- end }}
+          {{- if .env }}
+          env:
+            {{- range $key, $value := .env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if .envFrom }}
+          envFrom:
+            {{- toYaml .envFrom | nindent 12 }}
+          {{- end }}
+          {{- if .resources }}
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+          {{- end }}
+          {{- if .securityContext }}
+          securityContext:
+            {{- toYaml .securityContext | nindent 12 }}
+          {{- end }}
+          {{- if .volumeMounts }}
+          volumeMounts:
+            {{- toYaml .volumeMounts | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -49,14 +90,74 @@ spec:
             {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or .Values.configMap.create .Values.configMap.name }}
+          {{- if or .Values.configMap.create .Values.configMap.name .Values.volumeMounts }}
           volumeMounts:
+            {{- if or .Values.configMap.create .Values.configMap.name }}
             - name: config-volume
               mountPath: /app/config
               readOnly: true
+            {{- end }}
+            {{- if .Values.volumeMounts }}
+            {{- toYaml .Values.volumeMounts | nindent 12 }}
+            {{- end }}
           {{- end }}
-      {{- if or .Values.configMap.create .Values.configMap.name }}
+        {{- range .Values.sidecars }}
+        - name: {{ .name }}
+          image: {{ .image }}
+          {{- if .imagePullPolicy }}
+          imagePullPolicy: {{ .imagePullPolicy }}
+          {{- end }}
+          {{- if .command }}
+          command:
+            {{- toYaml .command | nindent 12 }}
+          {{- end }}
+          {{- if .args }}
+          args:
+            {{- toYaml .args | nindent 12 }}
+          {{- end }}
+          {{- if .env }}
+          env:
+            {{- range $key, $value := .env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          {{- end }}
+          {{- if .envFrom }}
+          envFrom:
+            {{- toYaml .envFrom | nindent 12 }}
+          {{- end }}
+          {{- if .ports }}
+          ports:
+            {{- toYaml .ports | nindent 12 }}
+          {{- end }}
+          {{- if .resources }}
+          resources:
+            {{- toYaml .resources | nindent 12 }}
+          {{- end }}
+          {{- if .securityContext }}
+          securityContext:
+            {{- toYaml .securityContext | nindent 12 }}
+          {{- end }}
+          {{- if .volumeMounts }}
+          volumeMounts:
+            {{- toYaml .volumeMounts | nindent 12 }}
+          {{- end }}
+          {{- if .livenessProbe }}
+          livenessProbe:
+            {{- toYaml .livenessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .readinessProbe }}
+          readinessProbe:
+            {{- toYaml .readinessProbe | nindent 12 }}
+          {{- end }}
+          {{- if .startupProbe }}
+          startupProbe:
+            {{- toYaml .startupProbe | nindent 12 }}
+          {{- end }}
+        {{- end }}
+      {{- if or .Values.configMap.create .Values.configMap.name .Values.volumes }}
       volumes:
+        {{- if or .Values.configMap.create .Values.configMap.name }}
         - name: config-volume
           configMap:
             {{- if .Values.configMap.create }}
@@ -64,6 +165,10 @@ spec:
             {{- else }}
             name: {{ .Values.configMap.name }}
             {{- end }}
+        {{- end }}
+        {{- if .Values.volumes }}
+        {{- toYaml .Values.volumes | nindent 8 }}
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
