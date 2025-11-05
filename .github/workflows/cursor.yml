@@ -3,6 +3,8 @@ name: Cursor Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
 
 permissions:
   pull-requests: write
@@ -12,41 +14,71 @@ permissions:
 jobs:
   code-review:
     runs-on: ubuntu-latest
-    # Skip automated code review for draft PRs
-    if: github.event.pull_request.draft == false
+    # Auto-review: own repo PRs (non-draft, non-fork, non-Dependabot)
+    # Manual-review: fork PRs or Dependabot when maintainer comments "@cursor review"
+    if: |
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor != 'dependabot[bot]') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@cursor review') &&
+       (github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'))
     steps:
+      - name: Get PR Number
+        id: pr
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "head_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+            echo "base_sha=${{ github.event.pull_request.base.sha }}" >> $GITHUB_OUTPUT
+            echo "is_fork=false" >> $GITHUB_OUTPUT
+          else
+            echo "number=${{ github.event.issue.number }}" >> $GITHUB_OUTPUT
+            PR_DATA=$(gh api /repos/${{ github.repository }}/pulls/${{ github.event.issue.number }})
+            echo "head_sha=$(echo "$PR_DATA" | jq -r .head.sha)" >> $GITHUB_OUTPUT
+            echo "base_sha=$(echo "$PR_DATA" | jq -r .base.sha)" >> $GITHUB_OUTPUT
+            IS_FORK=$(echo "$PR_DATA" | jq -r 'if .head.repo == null then true else .head.repo.full_name != .base.repo.full_name end')
+            echo "is_fork=$IS_FORK" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Checkout repository
+        if: steps.pr.outputs.is_fork == 'false'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ steps.pr.outputs.head_sha }}
 
       - name: Install Cursor CLI
         run: |
           curl https://cursor.com/install -fsS | bash
           echo "$HOME/.cursor/bin" >> $GITHUB_PATH
 
-      - name: Configure git identity
-        run: |
-          git config user.name "Cursor Agent"
-          git config user.email "cursoragent@cursor.com"
-
       - name: Perform automated code review
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           MODEL: gpt-5-codex
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           BLOCKING_REVIEW: ${{ vars.BLOCKING_REVIEW || 'false' }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          PR_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PR_BASE_SHA: ${{ steps.pr.outputs.base_sha }}
         run: |
-          PROMPT=$(cat <<'EOF'
+          PROMPT=$(cat <<EOF
           You are operating in a GitHub Actions runner performing automated code review. The gh CLI is available and authenticated via GH_TOKEN. You may comment on pull requests.
 
           Context:
-          - Repo: ${{ github.repository }}
-          - PR Number: ${{ github.event.pull_request.number }}
-          - PR Head SHA: ${{ github.event.pull_request.head.sha }}
-          - PR Base SHA: ${{ github.event.pull_request.base.sha }}
-          - Blocking Review: ${{ env.BLOCKING_REVIEW }}
+          - Repo: ${GH_REPO}
+          - PR Number: ${PR_NUMBER}
+          - PR Head SHA: ${PR_HEAD_SHA}
+          - PR Base SHA: ${PR_BASE_SHA}
+          - Blocking Review: ${BLOCKING_REVIEW}
 
           Objectives:
           1) Re-check existing review comments and reply resolved when addressed.
@@ -55,9 +87,9 @@ jobs:
           4) Leave very short inline comments (1-2 sentences) on changed lines only and a brief summary at the end.
 
           Procedure:
-          - Get existing comments: gh pr view --json comments
-          - Get diff: gh pr diff
-          - Get changed files with patches to compute inline positions: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files --paginate --jq '.[] | {filename,patch}'
+          - Get existing comments: gh pr view ${PR_NUMBER} --json comments
+          - Get diff: gh pr diff ${PR_NUMBER}
+          - Get changed files with patches to compute inline positions: gh api repos/${GH_REPO}/pulls/${PR_NUMBER}/files --paginate --jq '.[] | {filename,patch}'
           - IMPORTANT: When reviewing files that specify versions (go.mod, package.json, requirements.txt, Dockerfile, GitHub Actions workflows, etc.), MUST search the web for:
             - Latest stable versions of languages (Go, Node.js, Python, etc.)
             - Latest versions of libraries/dependencies
@@ -68,7 +100,7 @@ jobs:
           - Detect prior top-level "no issues" style comments authored by this bot (match bodies like: "✅ no issues", "No issues found", "LGTM").
           - If CURRENT run finds issues and any prior "no issues" comments exist:
             - Prefer to remove them to avoid confusion:
-              - Try deleting top-level issue comments via: gh api -X DELETE repos/${{ github.repository }}/issues/comments/<comment_id>
+              - Try deleting top-level issue comments via: gh api -X DELETE repos/${GH_REPO}/issues/comments/<comment_id>
               - If deletion isn't possible, minimize them via GraphQL (minimizeComment) or edit to prefix "[Superseded by new findings]".
             - If neither delete nor minimize is possible, reply to that comment: "⚠️ Superseded: issues were found in newer commits".
           - If a previously reported issue appears fixed by nearby changes, reply: ✅ This issue appears to be resolved by the recent changes
@@ -98,7 +130,7 @@ jobs:
           - If there ARE issues to report and a prior "no issues" comment exists, ensure that prior comment is deleted/minimized/marked as superseded before submitting the new review.
           - If there ARE issues to report, submit ONE review containing ONLY inline comments plus an optional concise summary body. Use the GitHub Reviews API to ensure comments are inline:
             - Build a JSON array of comments like: [{ "path": "<file>", "position": <diff_position>, "body": "..." }]
-            - Submit via: gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews -f event=COMMENT -f body="$SUMMARY" -f comments='[$COMMENTS_JSON]'
+            - Submit via: gh api repos/${GH_REPO}/pulls/${PR_NUMBER}/reviews -f event=COMMENT -f body="$SUMMARY" -f comments='[$COMMENTS_JSON]'
           - Do NOT use: gh pr review --approve or --request-changes
 
           Blocking behavior:
