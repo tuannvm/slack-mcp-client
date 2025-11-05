@@ -86,3 +86,181 @@ configMap:
 secret:
   enabled: false
   name: ""
+
+# Init containers configuration
+# Users can define multiple init containers that run before the main container starts
+initContainers: []
+# Example init container configurations:
+# initContainers:
+#   - name: wait-for-database
+#     image: busybox:1.35
+#     command: ['sh', '-c']
+#     args:
+#       - |
+#         until nc -z database-service 5432; do
+#           echo "Waiting for database..."
+#           sleep 2
+#         done
+#         echo "Database is ready!"
+#     resources:
+#       limits:
+#         cpu: 50m
+#         memory: 64Mi
+#       requests:
+#         cpu: 10m
+#         memory: 32Mi
+#
+#   - name: migrate-database
+#     image: migrate/migrate:v4.16.2
+#     command: ["migrate"]
+#     args: ["-path", "/migrations", "-database", "postgres://user:pass@database:5432/dbname?sslmode=disable", "up"]
+#     env:
+#       DB_HOST: "database-service"
+#       DB_PORT: "5432"
+#     volumeMounts:
+#       - name: migrations-volume
+#         mountPath: /migrations
+#         readOnly: true
+#     resources:
+#       limits:
+#         cpu: 100m
+#         memory: 128Mi
+#       requests:
+#         cpu: 50m
+#         memory: 64Mi
+#
+#   - name: download-config
+#     image: curlimages/curl:8.4.0
+#     command: ["sh", "-c"]
+#     args:
+#       - |
+#         curl -o /shared/config.json https://config-server/api/config
+#         echo "Config downloaded successfully"
+#     volumeMounts:
+#       - name: shared-config
+#         mountPath: /shared
+#     resources:
+#       limits:
+#         cpu: 50m
+#         memory: 64Mi
+#       requests:
+#         cpu: 10m
+#         memory: 32Mi
+#     securityContext:
+#       runAsNonRoot: true
+#       runAsUser: 65534
+
+# Sidecar containers configuration
+# Users can define multiple sidecar containers with different configurations
+sidecars: []
+# Example sidecar configurations:
+# sidecars:
+#   - name: prometheus-exporter
+#     image: "prom/node-exporter:latest"
+#     imagePullPolicy: IfNotPresent
+#     ports:
+#       - name: metrics
+#         containerPort: 9100
+#         protocol: TCP
+#     resources:
+#       limits:
+#         cpu: 100m
+#         memory: 50Mi
+#       requests:
+#         cpu: 10m
+#         memory: 20Mi
+#     securityContext:
+#       runAsNonRoot: true
+#       runAsUser: 65534
+#   
+#   - name: log-forwarder
+#     image: "fluent/fluent-bit:2.1.10"
+#     imagePullPolicy: IfNotPresent
+#     command: ["/fluent-bit/bin/fluent-bit"]
+#     args: ["--config=/fluent-bit/etc/fluent-bit.conf"]
+#     env:
+#       LOG_LEVEL: "info"
+#       OUTPUT_HOST: "elasticsearch.logging.svc.cluster.local"
+#       OUTPUT_PORT: "9200"
+#     resources:
+#       limits:
+#         cpu: 100m
+#         memory: 128Mi
+#       requests:
+#         cpu: 20m
+#         memory: 64Mi
+#     volumeMounts:
+#       - name: fluent-bit-config
+#         mountPath: /fluent-bit/etc
+#       - name: varlog
+#         mountPath: /var/log
+#         readOnly: true
+#   
+#   - name: redis-cache
+#     image: "redis:7-alpine"
+#     imagePullPolicy: IfNotPresent
+#     ports:
+#       - name: redis
+#         containerPort: 6379
+#         protocol: TCP
+#     resources:
+#       limits:
+#         cpu: 200m
+#         memory: 256Mi
+#       requests:
+#         cpu: 50m
+#         memory: 128Mi
+#     livenessProbe:
+#       tcpSocket:
+#         port: 6379
+#       initialDelaySeconds: 30
+#       periodSeconds: 10
+#     readinessProbe:
+#       tcpSocket:
+#         port: 6379
+#       initialDelaySeconds: 5
+#       periodSeconds: 5
+
+# Additional volume mounts for the main container
+volumeMounts: []
+# Example volume mount configurations:
+# volumeMounts:
+#   - name: data-storage
+#     mountPath: /app/data
+#     readOnly: false
+#   - name: logs-volume
+#     mountPath: /var/log/app
+#     readOnly: false
+#   - name: cache-volume
+#     mountPath: /tmp/cache
+#     readOnly: false
+#   - name: shared-data
+#     mountPath: /app/shared
+#     readOnly: false
+#   - name: secrets-volume
+#     mountPath: /app/secrets
+#     readOnly: true
+
+# Additional volumes that can be used by main container or sidecars
+volumes: []
+# Example volume configurations:
+# volumes:
+#   - name: data-storage
+#     persistentVolumeClaim:
+#       claimName: data-pvc
+#   - name: logs-volume
+#     emptyDir: {}
+#   - name: fluent-bit-config
+#     configMap:
+#       name: fluent-bit-config
+#   - name: varlog
+#     hostPath:
+#       path: /var/log
+#   - name: shared-data
+#     emptyDir: {}
+#   - name: cache-volume
+#     persistentVolumeClaim:
+#       claimName: cache-pvc
+#   - name: secrets-volume
+#     secret:
+#       secretName: app-secrets

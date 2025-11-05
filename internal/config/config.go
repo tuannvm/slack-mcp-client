@@ -23,17 +23,18 @@ const (
 
 // Config represents the main application configuration
 type Config struct {
-	Version       string                     `json:"version"`
-	Slack         SlackConfig                `json:"slack"`
-	LLM           LLMConfig                  `json:"llm"`
-	MCPServers    map[string]MCPServerConfig `json:"mcpServers"`
-	RAG           RAGConfig                  `json:"rag,omitempty"`
-	Security      SecurityConfig             `json:"security,omitempty"`
-	Monitoring    MonitoringConfig           `json:"monitoring,omitempty"`
-	Timeouts      TimeoutConfig              `json:"timeouts,omitempty"`
-	Retry         RetryConfig                `json:"retry,omitempty"`
-	Reload        ReloadConfig               `json:"reload,omitempty"`
-	Observability ObservabilityConfig        `json:"observability,omitempty"`
+	Version        string                     `json:"version"`
+	Slack          SlackConfig                `json:"slack"`
+	LLM            LLMConfig                  `json:"llm"`
+	MCPServers     map[string]MCPServerConfig `json:"mcpServers"`
+	RAG            RAGConfig                  `json:"rag,omitempty"`
+	Security       SecurityConfig             `json:"security,omitempty"`
+	Monitoring     MonitoringConfig           `json:"monitoring,omitempty"`
+	Timeouts       TimeoutConfig              `json:"timeouts,omitempty"`
+	Retry          RetryConfig                `json:"retry,omitempty"`
+	Reload         ReloadConfig               `json:"reload,omitempty"`
+	Observability  ObservabilityConfig        `json:"observability,omitempty"`
+	UseStdIOClient bool                       `json:"useStdIOClient,omitempty"` // Use terminal client instead of a real slack bot, for local development
 }
 
 // SlackConfig contains Slack-specific configuration

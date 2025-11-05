@@ -2,7 +2,7 @@
 
 **A production-ready bridge between Slack and AI models with full MCP compatibility.**
 
-This client enables AI models (OpenAI, Anthropic, Ollama) to interact with real tools and systems through Slack conversations. Built on the industry-standard Model Context Protocol (MCP), it provides secure access to filesystems, databases, Kubernetes clusters, Git repositories, and custom tools.
+This client enables AI models (OpenAI GPT-4.1, Anthropic Claude 4.5, Ollama local models) to interact with real tools and systems through Slack conversations. Built on the industry-standard Model Context Protocol (MCP), it provides secure access to filesystems, databases, Kubernetes clusters, Git repositories, and custom tools.
 
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/tuannvm/slack-mcp-client/build.yml?branch=main&label=CI%2FCD&logo=github)](https://github.com/tuannvm/slack-mcp-client/actions/workflows/build.yml)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/tuannvm/slack-mcp-client?logo=go)](https://github.com/tuannvm/slack-mcp-client/blob/main/go.mod)
@@ -13,10 +13,14 @@ This client enables AI models (OpenAI, Anthropic, Ollama) to interact with real 
 
 > **Compatible with MCP Specification 2025-06-18** - Compliant with the latest Model Context Protocol standards
 
+## Recent Updates
+
+**Oct 2025**: langchaingo v0.1.14 with streaming fixes, enhanced agent parsing, and API key sanitization.
+
 ## Key Features
 
 - **Universal MCP Compatibility** - Supports all transport methods (HTTP, SSE, stdio)
-- **Multi-Provider LLM Support** - OpenAI GPT-4o, Anthropic Claude, Ollama local models
+- **Multi-Provider LLM Support** - OpenAI GPT-4.1/4o, Anthropic Claude 4.5, Ollama (Llama 3.3, Qwen, Mistral, DeepSeek)
 - **Agent Mode** - Multi-step reasoning with LangChain for complex workflows
 - **RAG Integration** - Knowledge base with semantic search capabilities
 - **Thread-Aware Context** - Maintains separate conversation history per Slack thread
@@ -153,16 +157,16 @@ flowchart LR
   - User context caching for personalized interactions
   - Customizable bot behavior and message history
 - ✅ **Multi-Provider LLM Support**:
-  - OpenAI (GPT-4, GPT-4o, etc.)
-  - Anthropic (Claude 3.5 Sonnet, etc.) 
-  - Ollama (Local LLMs like Llama, Mistral, etc.)
-  - Native tool calling and agent mode support
-  - LangChain gateway for unified API
+  - OpenAI (GPT-4.1, GPT-4o, o3-pro)
+  - Anthropic (Claude Sonnet 4.5, Opus 4.1)
+  - Ollama (Llama 3.3, Qwen2.5, Mistral, DeepSeek)
+  - Native tool calling and unified LangChain gateway
 - ✅ **Agent Mode**:
-  - Autonomous AI agents powered by LangChain
-  - Multi-step reasoning and tool orchestration
+  - Autonomous AI agents powered by LangChain (langchaingo v0.1.14)
+  - Enhanced multi-step reasoning and tool orchestration
+  - Improved parsing for complex multi-line tool calls
   - Configurable agent iterations and behavior
-  - Streaming responses with real-time updates
+  - Reliable streaming responses with memory leak fixes
   - Advanced prompt engineering capabilities
 - ✅ **RAG (Retrieval-Augmented Generation)**: 
   - Multiple providers: Simple JSON storage, OpenAI Vector Store
@@ -219,7 +223,7 @@ After installing the binary, you can run it locally with the following steps:
 export SLACK_BOT_TOKEN="xoxb-your-bot-token"
 export SLACK_APP_TOKEN="xapp-your-app-token"
 export OPENAI_API_KEY="sk-your-openai-key"
-export OPENAI_MODEL="gpt-4o"
+export OPENAI_MODEL="gpt-4.1"  # or gpt-4o, o3-pro
 export LOG_LEVEL="info"
 
 # Or create a .env file and source it
@@ -445,7 +449,7 @@ Define prompts in your configuration:
     "customPrompt": "You are a helpful DevOps assistant specializing in Kubernetes and cloud infrastructure.",
     "providers": {
       "openai": {
-        "model": "gpt-4o",
+        "model": "gpt-4.1",
         "apiKey": "${OPENAI_API_KEY}",
         "temperature": 0.7
       }
@@ -499,7 +503,7 @@ Enable Agent Mode in your configuration file:
     "maxAgentIterations": 20,
     "providers": {
       "openai": {
-        "model": "gpt-4o",
+        "model": "gpt-4.1",
         "apiKey": "${OPENAI_API_KEY}",
         "temperature": 0.7
       }
@@ -754,6 +758,9 @@ You can easily extend this setup to include additional MCP servers in the same n
    - `im:write`
    - `users:read`
    - `users.profile:read`
+   - `channels:history`
+   - `groups:history`
+   - `mpim:history`
 5. Enable Event Subscriptions and subscribe to:
    - `app_mention`
    - `message.im`
@@ -788,17 +795,17 @@ LLM providers can be configured via environment variables or command-line flags:
 ```bash
 # Set OpenAI as the provider (default)
 export LLM_PROVIDER="openai"
-export OPENAI_MODEL="gpt-4o"
+export OPENAI_MODEL="gpt-4.1"  # or gpt-4o, o3-pro
 
 # Use Anthropic
 export LLM_PROVIDER="anthropic"
 export ANTHROPIC_API_KEY="your-anthropic-api-key"
-export ANTHROPIC_MODEL="claude-3-5-sonnet-20241022"
+export ANTHROPIC_MODEL="claude-sonnet-4.5"  # or claude-opus-4.1
 
 # Or use Ollama
 export LLM_PROVIDER="ollama"
 export LANGCHAIN_OLLAMA_URL="http://localhost:11434"
-export LANGCHAIN_OLLAMA_MODEL="llama3"
+export LANGCHAIN_OLLAMA_MODEL="llama3.3"  # or qwen2.5-coder, mistral-small-3, deepseek-r1
 ```
 
 ### Switching Between Providers
@@ -829,13 +836,13 @@ Configure LLM providers and Slack integration using environment variables:
 | SLACK_BOT_TOKEN       | Bot token for Slack API                      | (required) |
 | SLACK_APP_TOKEN       | App-level token for Socket Mode              | (required) |
 | OPENAI_API_KEY        | API key for OpenAI authentication            | (required) |
-| OPENAI_MODEL          | OpenAI model to use                          | gpt-4o     |
+| OPENAI_MODEL          | OpenAI model to use                          | gpt-4.1    |
 | ANTHROPIC_API_KEY     | API key for Anthropic authentication         | (required for Anthropic) |
-| ANTHROPIC_MODEL       | Anthropic model to use                       | claude-3-5-sonnet-20241022 |
+| ANTHROPIC_MODEL       | Anthropic model to use                       | claude-sonnet-4.5 |
 | LOG_LEVEL             | Logging level (debug, info, warn, error)     | info       |
 | LLM_PROVIDER          | LLM provider to use (openai, anthropic, ollama) | openai     |
 | LANGCHAIN_OLLAMA_URL  | URL for Ollama when using LangChain          | http://localhost:11434 |
-| LANGCHAIN_OLLAMA_MODEL| Model name for Ollama when using LangChain   | llama3     |
+| LANGCHAIN_OLLAMA_MODEL| Model name for Ollama when using LangChain   | llama3.3   |
 | LANGFUSE_ENDPOINT     | Langfuse API endpoint for observability      | (optional) |
 | LANGFUSE_PUBLIC_KEY   | Langfuse public key for authentication       | (optional) |
 | LANGFUSE_SECRET_KEY   | Langfuse secret key for authentication       | (optional) |
@@ -905,7 +912,7 @@ All configuration is now managed through a single `config.json` file with compre
         "maxTokens": 2000
       },
       "anthropic": {
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-sonnet-4.5",
         "apiKey": "${ANTHROPIC_API_KEY}",
         "temperature": 0.7
       }
@@ -1072,6 +1079,7 @@ Comprehensive documentation is available in the `docs/` directory:
 - **Development**: Check the [Implementation Notes](docs/implementation.md) for technical details
 - **Testing**: Use the [Testing Guide](docs/test.md) for testing procedures and debugging
 - **Monitoring**: See the metrics configuration section above for Prometheus integration
+- **Dependencies**: Review [Dependencies](docs/DEPENDENCIES.md) for version tracking and upgrade history
 
 ## Contributing
 

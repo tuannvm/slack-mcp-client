@@ -13,7 +13,7 @@ import (
 
 const (
 	minReloadInterval      = 10 * time.Second
-	defaultShutdownTimeout = 10 * time.Second
+	defaultShutdownTimeout = 60 * time.Second
 )
 
 // ReloadTrigger represents the type of trigger that caused a reload
@@ -23,7 +23,7 @@ type ReloadTrigger struct {
 }
 
 // RunWithReload wraps the main application function with reload capability
-func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logging.Logger) error) error {
+func RunWithReload(logger *logging.Logger, configFile string, appFunc func(context.Context, *logging.Logger) error) error {
 	for {
 		reloadStartTime := time.Now()
 
@@ -31,7 +31,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 		reloadInterval, shouldReload, err := loadAndValidateReloadConfig(configFile, logger)
 		if err != nil || !shouldReload {
 			// Either config loading failed or reload is disabled - run normally
-			return appFunc(logger)
+			return appFunc(context.Background(), logger)
 		}
 
 		logger.InfoKV("Reload enabled", "interval", reloadInterval)
@@ -43,7 +43,7 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 		appDone := make(chan error, 1)
 		go func() {
 			// Pass context to application function for graceful shutdown
-			appDone <- runAppWithContext(appCtx, logger, appFunc)
+			appDone <- appFunc(appCtx, logger)
 		}()
 
 		// Wait for reload trigger or app completion
@@ -68,7 +68,8 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 				case <-appDone:
 					logger.Info("Application shutdown completed")
 				case <-time.After(defaultShutdownTimeout):
-					logger.WarnKV("Application shutdown timed out", "timeout", defaultShutdownTimeout)
+					logger.WarnKV("Application shutdown timed out, terminating gracefully", "timeout", defaultShutdownTimeout)
+					os.Exit(1)
 				}
 				return nil
 			}
@@ -83,7 +84,8 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 			case <-appDone:
 				logger.Info("Current application instance shut down, reinitializing...")
 			case <-time.After(defaultShutdownTimeout):
-				logger.WarnKV("Application shutdown timed out, forcing restart", "timeout", defaultShutdownTimeout)
+				logger.WarnKV("Application shutdown timed out, terminating gracefully", "timeout", defaultShutdownTimeout)
+				return fmt.Errorf("application shutdown timeout after %s", defaultShutdownTimeout)
 			}
 
 			// Record reload metrics
@@ -92,15 +94,6 @@ func RunWithReload(logger *logging.Logger, configFile string, appFunc func(*logg
 			// Continue the loop to reinitialize
 		}
 	}
-}
-
-// runAppWithContext runs the application function with context for graceful shutdown
-// Note: The context is available but not yet fully integrated with the application.
-// Future enhancement: Modify application functions to accept context for proper cancellation.
-func runAppWithContext(ctx context.Context, logger *logging.Logger, appFunc func(*logging.Logger) error) error {
-	// Run the application function
-	// The context could be used in the future for cancellation signals
-	return appFunc(logger)
 }
 
 // awaitReloadTrigger waits for a reload trigger

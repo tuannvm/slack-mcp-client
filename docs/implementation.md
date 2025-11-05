@@ -6,7 +6,7 @@
 2. **Architecture:** See `README.md` for the high-level design. The core components are the Slack integration, the Go application (`slack-mcp-client`), and external MCP servers.
 3. **Slack Integration:** Full-featured Slack client using `slack-go/slack` with Socket Mode for secure communication, supporting mentions, direct messages, and rich Block Kit formatting.
 4. **MCP Client Configuration:** Uses a flexible configuration approach for multiple MCP servers through `mcp-servers.json` following the schema defined in `mcp-schema.json`.
-5. **LLM Integration:** Multi-provider LLM support through a factory pattern with LangChain as the gateway, supporting OpenAI, Anthropic, and Ollama providers.
+5. **LLM Integration:** Multi-provider LLM support through a factory pattern with LangChain (v0.1.14) as the gateway, supporting OpenAI, Anthropic, and Ollama providers.
 
 ## Architecture & Implementation
 
@@ -32,14 +32,16 @@
      - **stdio:** For local development with command-line tools
    - Dynamic initialization with proper command line argument parsing
    - Runtime discovery of available tools from MCP servers
-   - Uses mcp-go v0.31.0 with unified transport interface
+   - Uses mcp-go v0.42.0 with enhanced HTTP transport and session management
 
 4. **LLM Provider System (`internal/llm/`)**
    - Factory pattern for provider registration and initialization
    - Registry system for managing multiple LLM providers
    - Configuration-driven provider setup
-   - LangChain as the unified gateway for all providers
-   - Support for OpenAI, Anthropic, and Ollama providers
+   - LangChain (v0.1.14) as the unified gateway for all providers
+   - Support for OpenAI, Anthropic, and Ollama providers with enhanced stability
+   - Streaming memory and goroutine leak fixes (v0.1.14)
+   - Improved agent parsing and error handling
    - Availability checking and fallback mechanisms
 
 5. **Handler System (`internal/handlers/`)**
@@ -99,15 +101,15 @@ llm_provider: "openai" # Which provider to use
 llm_providers:
   openai:
     type: "openai"
-    model: "gpt-4o"
+    model: "gpt-4.1"  # Latest: 21.4% improvement in coding (Oct 2025)
     # api_key loaded from OPENAI_API_KEY env var
   ollama:
     type: "ollama"
-    model: "llama3"
+    model: "llama3.3"  # Latest: 70B state-of-the-art (2025)
     base_url: "http://localhost:11434"
   anthropic:
     type: "anthropic"
-    model: "claude-3-5-sonnet-20241022"
+    model: "claude-sonnet-4.5"  # Latest: Best for coding and agents (Sept 2025)
     # api_key loaded from ANTHROPIC_API_KEY env var
 ```
 
@@ -124,11 +126,12 @@ llm_providers:
 2. **Message Processing:**
    - Receive messages from Slack (mentions or DMs)
    - Forward messages to configured LLM provider through registry
-   - Process LLM response through LLM-MCP Bridge
+   - Process LLM response through LLM-MCP Bridge with enhanced parsing (v0.1.14)
    - If tool invocation is detected:
      - Execute appropriate MCP tool call
      - Format tool results with Slack-compatible formatting
    - Return final response to Slack with Block Kit formatting
+   - Streaming responses now have memory and goroutine leak protection (v0.1.14)
 
 3. **Tool Detection & Execution:**
    - JSON pattern matching for structured tool invocations

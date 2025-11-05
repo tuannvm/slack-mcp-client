@@ -211,6 +211,14 @@ func (c *Client) Run() error {
 	return c.userFrontend.Run()
 }
 
+// Close gracefully closes the Slack client
+func (c *Client) Close() error {
+	c.logger.Info("Closing Slack client...")
+	// Note: socketmode.Client doesn't have a public Close method
+	// The client will stop when the context is cancelled or when there's a connection error
+	return nil
+}
+
 // handleEvents listens for incoming events and dispatches them.
 func (c *Client) handleEvents() {
 	for evt := range c.userFrontend.GetEventChannel() {
