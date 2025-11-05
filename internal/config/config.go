@@ -507,6 +507,11 @@ func (c *Config) ApplyEnvironmentVariables() {
 	if rejectionMessage := os.Getenv("SECURITY_REJECTION_MESSAGE"); rejectionMessage != "" {
 		c.Security.RejectionMessage = rejectionMessage
 	}
+
+	// Re-apply security defaults after environment variables have been processed
+	// This ensures default values (like rejection message) are set when security
+	// is enabled via environment variables without JSON configuration
+	c.applySecurityDefaults()
 }
 
 // SecurityResult represents the result of a security check

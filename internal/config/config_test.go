@@ -67,12 +67,13 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 		expected SecurityConfig
 	}{
 		{
-			name: "Basic security enabled",
+			name: "Basic security enabled - should set default rejection message",
 			envVars: map[string]string{
 				"SECURITY_ENABLED": "true",
 			},
 			expected: SecurityConfig{
-				Enabled: true,
+				Enabled:          true,
+				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
 		{
@@ -82,8 +83,9 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 				"SECURITY_STRICT_MODE": "true",
 			},
 			expected: SecurityConfig{
-				Enabled:    true,
-				StrictMode: true,
+				Enabled:          true,
+				StrictMode:       true,
+				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
 		{
@@ -93,8 +95,9 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 				"SECURITY_LOG_UNAUTHORIZED": "true",
 			},
 			expected: SecurityConfig{
-				Enabled:         true,
-				LogUnauthorized: true,
+				Enabled:          true,
+				LogUnauthorized:  true,
+				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
 		{
@@ -106,10 +109,11 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 				"SECURITY_ADMIN_USERS":      " A123456789 , A987654321",
 			},
 			expected: SecurityConfig{
-				Enabled:         true,
-				AllowedUsers:    []string{"U123456789", "U987654321", "U555555555"},
-				AllowedChannels: []string{"C123456789", "C987654321", "C555555555"},
-				AdminUsers:      []string{"A123456789", "A987654321"},
+				Enabled:          true,
+				AllowedUsers:     []string{"U123456789", "U987654321", "U555555555"},
+				AllowedChannels:  []string{"C123456789", "C987654321", "C555555555"},
+				AdminUsers:       []string{"A123456789", "A987654321"},
+				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
 		{
