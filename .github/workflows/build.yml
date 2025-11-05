@@ -59,15 +59,13 @@ jobs:
           fi
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v7
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.0
+          version: latest
           args: --timeout=5m
           only-new-issues: true
           install-mode: binary
           skip-cache: false
-          skip-pkg-cache: true
-          skip-build-cache: true
 
       - name: Check formatting
         run: |
