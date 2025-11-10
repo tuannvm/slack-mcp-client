@@ -184,6 +184,33 @@ type SecurityConfig struct {
 	AdminUsers       []string `json:"adminUsers,omitempty"`       // List of admin user IDs
 	RejectionMessage string   `json:"rejectionMessage,omitempty"` // Custom message for unauthorized users
 	LogUnauthorized  *bool    `json:"logUnauthorized,omitempty"`  // Log unauthorized access attempts (default: true when security enabled; nil = use default)
+
+	// Internal maps for O(1) lookups (not serialized to JSON)
+	allowedUsersMap    map[string]struct{} `json:"-"`
+	allowedChannelsMap map[string]struct{} `json:"-"`
+	adminUsersMap      map[string]struct{} `json:"-"`
+}
+
+// buildLookupMaps builds internal maps from slices for O(1) lookups
+// This improves performance from O(n) to O(1) for access checks
+func (s *SecurityConfig) buildLookupMaps() {
+	// Build allowed users map
+	s.allowedUsersMap = make(map[string]struct{}, len(s.AllowedUsers))
+	for _, user := range s.AllowedUsers {
+		s.allowedUsersMap[user] = struct{}{}
+	}
+
+	// Build allowed channels map
+	s.allowedChannelsMap = make(map[string]struct{}, len(s.AllowedChannels))
+	for _, channel := range s.AllowedChannels {
+		s.allowedChannelsMap[channel] = struct{}{}
+	}
+
+	// Build admin users map
+	s.adminUsersMap = make(map[string]struct{}, len(s.AdminUsers))
+	for _, admin := range s.AdminUsers {
+		s.adminUsersMap[admin] = struct{}{}
+	}
 }
 
 // ApplyDefaults applies default values to the configuration
@@ -296,6 +323,9 @@ func (c *Config) applySecurityDefaults() {
 			trueVal := true
 			c.Security.LogUnauthorized = &trueVal
 		}
+
+		// Build lookup maps for O(1) performance
+		c.Security.buildLookupMaps()
 	}
 }
 
@@ -617,6 +647,12 @@ func (c *Config) ValidateAccess(userID, channelID string) SecurityResult {
 
 // isUserAllowed checks if a user ID is in the allowed users list
 func (c *Config) isUserAllowed(userID string) bool {
+	// Use map lookup if available (O(1)), otherwise fall back to slice iteration (O(n))
+	if c.Security.allowedUsersMap != nil {
+		_, exists := c.Security.allowedUsersMap[userID]
+		return exists
+	}
+	// Fallback for tests or edge cases where maps weren't built
 	for _, allowedUser := range c.Security.AllowedUsers {
 		if allowedUser == userID {
 			return true
@@ -627,6 +663,12 @@ func (c *Config) isUserAllowed(userID string) bool {
 
 // isChannelAllowed checks if a channel ID is in the allowed channels list
 func (c *Config) isChannelAllowed(channelID string) bool {
+	// Use map lookup if available (O(1)), otherwise fall back to slice iteration (O(n))
+	if c.Security.allowedChannelsMap != nil {
+		_, exists := c.Security.allowedChannelsMap[channelID]
+		return exists
+	}
+	// Fallback for tests or edge cases where maps weren't built
 	for _, allowedChannel := range c.Security.AllowedChannels {
 		if allowedChannel == channelID {
 			return true
@@ -637,6 +679,12 @@ func (c *Config) isChannelAllowed(channelID string) bool {
 
 // isAdminUser checks if a user ID is in the admin users list
 func (c *Config) isAdminUser(userID string) bool {
+	// Use map lookup if available (O(1)), otherwise fall back to slice iteration (O(n))
+	if c.Security.adminUsersMap != nil {
+		_, exists := c.Security.adminUsersMap[userID]
+		return exists
+	}
+	// Fallback for tests or edge cases where maps weren't built
 	for _, adminUser := range c.Security.AdminUsers {
 		if adminUser == userID {
 			return true
