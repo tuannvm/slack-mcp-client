@@ -283,13 +283,20 @@ func (c *Config) applySlackDefaults() {
 // applySecurityDefaults sets default security configuration
 func (c *Config) applySecurityDefaults() {
 	// Security is disabled by default
-	// LogUnauthorized is true by default when security is enabled
-	if c.Security.Enabled && c.Security.RejectionMessage == "" {
-		c.Security.RejectionMessage = "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error."
+	if c.Security.Enabled {
+		// Set default rejection message
+		if c.Security.RejectionMessage == "" {
+			c.Security.RejectionMessage = "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error."
+		}
+
+		// LogUnauthorized defaults to true when security is enabled
+		// Note: Since LogUnauthorized is a bool (not *bool), we can't distinguish between
+		// "not set" and "explicitly set to false" in JSON config. However, environment
+		// variables (applied later) can override this default.
+		if !c.Security.LogUnauthorized {
+			c.Security.LogUnauthorized = true
+		}
 	}
-	// Note: LogUnauthorized defaults to false in the struct, but when security is enabled
-	// and LogUnauthorized is not explicitly set, we want it to be true
-	// This is handled by the zero value being false, but environment variables can override
 }
 
 // applyTimeoutDefaults sets default timeout values
@@ -474,9 +481,12 @@ func (c *Config) ApplyEnvironmentVariables() {
 		}
 	}
 
+	// Track if LogUnauthorized was explicitly set via environment variable
+	logUnauthorizedEnvSet := false
 	if logUnauthorized := os.Getenv("SECURITY_LOG_UNAUTHORIZED"); logUnauthorized != "" {
 		if val, err := strconv.ParseBool(logUnauthorized); err == nil {
 			c.Security.LogUnauthorized = val
+			logUnauthorizedEnvSet = true
 		}
 	}
 
@@ -520,10 +530,22 @@ func (c *Config) ApplyEnvironmentVariables() {
 		c.Security.RejectionMessage = rejectionMessage
 	}
 
-	// Re-apply security defaults after environment variables have been processed
-	// This ensures default values (like rejection message) are set when security
-	// is enabled via environment variables without JSON configuration
-	c.applySecurityDefaults()
+	// Apply security defaults after environment variables have been processed
+	// This ensures defaults are set when security is enabled via environment variables
+	// without JSON configuration. We don't call applySecurityDefaults() here to keep
+	// the logic explicit and avoid confusing re-application of defaults.
+	if c.Security.Enabled {
+		// Set default rejection message if not provided
+		if c.Security.RejectionMessage == "" {
+			c.Security.RejectionMessage = "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error."
+		}
+
+		// Set LogUnauthorized to true by default if not explicitly set via env var
+		// Only apply this default if the env var wasn't provided, to respect explicit false values
+		if !logUnauthorizedEnvSet && !c.Security.LogUnauthorized {
+			c.Security.LogUnauthorized = true
+		}
+	}
 }
 
 // SecurityResult represents the result of a security check

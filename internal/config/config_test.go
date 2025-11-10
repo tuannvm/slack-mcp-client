@@ -67,12 +67,13 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 		expected SecurityConfig
 	}{
 		{
-			name: "Basic security enabled - should set default rejection message",
+			name: "Basic security enabled - should set default rejection message and LogUnauthorized",
 			envVars: map[string]string{
 				"SECURITY_ENABLED": "true",
 			},
 			expected: SecurityConfig{
 				Enabled:          true,
+				LogUnauthorized:  true, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -85,6 +86,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			expected: SecurityConfig{
 				Enabled:          true,
 				StrictMode:       true,
+				LogUnauthorized:  true, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -113,6 +115,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 				AllowedUsers:     []string{"U123456789", "U987654321", "U555555555"},
 				AllowedChannels:  []string{"C123456789", "C987654321", "C555555555"},
 				AdminUsers:       []string{"A123456789", "A987654321"},
+				LogUnauthorized:  true, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -129,6 +132,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 				AllowedUsers:     []string{"U123", "U456", "U789"},
 				AllowedChannels:  []string{"C123", "C456", "C789"},
 				AdminUsers:       []string{"A123", "A456"},
+				LogUnauthorized:  true, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -140,7 +144,20 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			},
 			expected: SecurityConfig{
 				Enabled:          true,
+				LogUnauthorized:  true, // Defaults to true when security is enabled
 				RejectionMessage: "Access denied. Contact admin.",
+			},
+		},
+		{
+			name: "LogUnauthorized explicitly disabled - env var overrides default",
+			envVars: map[string]string{
+				"SECURITY_ENABLED":          "true",
+				"SECURITY_LOG_UNAUTHORIZED": "false",
+			},
+			expected: SecurityConfig{
+				Enabled:          true,
+				LogUnauthorized:  false, // Explicitly set to false via env var
+				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
 	}
@@ -160,7 +177,8 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			}()
 
 			c := &Config{}
-			c.ApplyEnvironmentVariables()
+			c.ApplyDefaults()             // Apply defaults first (real usage pattern)
+			c.ApplyEnvironmentVariables() // Then apply env vars (can override defaults)
 
 			// Check boolean fields
 			if c.Security.Enabled != tt.expected.Enabled {
