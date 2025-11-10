@@ -34,6 +34,10 @@ func TestSecurityDefaults(t *testing.T) {
 }
 
 func TestSecurityEnvironmentVariables(t *testing.T) {
+	// Helper variables for pointer comparisons
+	trueVal := true
+	falseVal := false
+
 	// Save original environment
 	originalVars := map[string]string{
 		"SECURITY_ENABLED":           os.Getenv("SECURITY_ENABLED"),
@@ -73,7 +77,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			},
 			expected: SecurityConfig{
 				Enabled:          true,
-				LogUnauthorized:  true, // Defaults to true when security is enabled
+				LogUnauthorized:  &trueVal, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -86,7 +90,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			expected: SecurityConfig{
 				Enabled:          true,
 				StrictMode:       true,
-				LogUnauthorized:  true, // Defaults to true when security is enabled
+				LogUnauthorized:  &trueVal, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -98,7 +102,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			},
 			expected: SecurityConfig{
 				Enabled:          true,
-				LogUnauthorized:  true,
+				LogUnauthorized:  &trueVal,
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -115,7 +119,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 				AllowedUsers:     []string{"U123456789", "U987654321", "U555555555"},
 				AllowedChannels:  []string{"C123456789", "C987654321", "C555555555"},
 				AdminUsers:       []string{"A123456789", "A987654321"},
-				LogUnauthorized:  true, // Defaults to true when security is enabled
+				LogUnauthorized:  &trueVal, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -132,7 +136,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 				AllowedUsers:     []string{"U123", "U456", "U789"},
 				AllowedChannels:  []string{"C123", "C456", "C789"},
 				AdminUsers:       []string{"A123", "A456"},
-				LogUnauthorized:  true, // Defaults to true when security is enabled
+				LogUnauthorized:  &trueVal, // Defaults to true when security is enabled
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -144,7 +148,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			},
 			expected: SecurityConfig{
 				Enabled:          true,
-				LogUnauthorized:  true, // Defaults to true when security is enabled
+				LogUnauthorized:  &trueVal, // Defaults to true when security is enabled
 				RejectionMessage: "Access denied. Contact admin.",
 			},
 		},
@@ -156,7 +160,7 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			},
 			expected: SecurityConfig{
 				Enabled:          true,
-				LogUnauthorized:  false, // Explicitly set to false via env var
+				LogUnauthorized:  &falseVal, // Explicitly set to false via env var
 				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
 			},
 		},
@@ -187,8 +191,13 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			if c.Security.StrictMode != tt.expected.StrictMode {
 				t.Errorf("Expected StrictMode=%v, got=%v", tt.expected.StrictMode, c.Security.StrictMode)
 			}
-			if c.Security.LogUnauthorized != tt.expected.LogUnauthorized {
-				t.Errorf("Expected LogUnauthorized=%v, got=%v", tt.expected.LogUnauthorized, c.Security.LogUnauthorized)
+			// Check LogUnauthorized pointer field
+			if (c.Security.LogUnauthorized == nil) != (tt.expected.LogUnauthorized == nil) {
+				t.Errorf("Expected LogUnauthorized nil=%v, got nil=%v", tt.expected.LogUnauthorized == nil, c.Security.LogUnauthorized == nil)
+			} else if c.Security.LogUnauthorized != nil && tt.expected.LogUnauthorized != nil {
+				if *c.Security.LogUnauthorized != *tt.expected.LogUnauthorized {
+					t.Errorf("Expected LogUnauthorized=%v, got=%v", *tt.expected.LogUnauthorized, *c.Security.LogUnauthorized)
+				}
 			}
 
 			// Check string field

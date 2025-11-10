@@ -376,7 +376,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 	securityResult := c.cfg.ValidateAccess(profile.userId, channelID)
 	if !securityResult.Allowed {
 		// Log unauthorized access attempt if enabled
-		if c.cfg.Security.LogUnauthorized {
+		if c.cfg.Security.LogUnauthorized != nil && *c.cfg.Security.LogUnauthorized {
 			c.logger.WarnKV("security: Access denied",
 				"user_id", profile.userId,
 				"channel_id", channelID,

@@ -179,11 +179,11 @@ type ObservabilityConfig struct {
 type SecurityConfig struct {
 	Enabled          bool     `json:"enabled,omitempty"`          // Enable/disable security (default: false)
 	StrictMode       bool     `json:"strictMode,omitempty"`       // Require both user AND channel whitelisting (default: false)
-	AllowedUsers     []string `json:"allowedUsers,omitempty"`     // Comma-separated list of allowed user IDs
-	AllowedChannels  []string `json:"allowedChannels,omitempty"`  // Comma-separated list of allowed channel IDs
-	AdminUsers       []string `json:"adminUsers,omitempty"`       // Comma-separated list of admin user IDs
+	AllowedUsers     []string `json:"allowedUsers,omitempty"`     // List of allowed user IDs
+	AllowedChannels  []string `json:"allowedChannels,omitempty"`  // List of allowed channel IDs
+	AdminUsers       []string `json:"adminUsers,omitempty"`       // List of admin user IDs
 	RejectionMessage string   `json:"rejectionMessage,omitempty"` // Custom message for unauthorized users
-	LogUnauthorized  bool     `json:"logUnauthorized,omitempty"`  // Log unauthorized access attempts (default: true)
+	LogUnauthorized  *bool    `json:"logUnauthorized,omitempty"`  // Log unauthorized access attempts (default: true when security enabled; nil = use default)
 }
 
 // ApplyDefaults applies default values to the configuration
@@ -290,11 +290,11 @@ func (c *Config) applySecurityDefaults() {
 		}
 
 		// LogUnauthorized defaults to true when security is enabled
-		// Note: Since LogUnauthorized is a bool (not *bool), we can't distinguish between
-		// "not set" and "explicitly set to false" in JSON config. However, environment
-		// variables (applied later) can override this default.
-		if !c.Security.LogUnauthorized {
-			c.Security.LogUnauthorized = true
+		// Only set default if not explicitly set (nil). This allows users to explicitly
+		// set false in JSON config or via environment variables.
+		if c.Security.LogUnauthorized == nil {
+			trueVal := true
+			c.Security.LogUnauthorized = &trueVal
 		}
 	}
 }
@@ -481,12 +481,9 @@ func (c *Config) ApplyEnvironmentVariables() {
 		}
 	}
 
-	// Track if LogUnauthorized was explicitly set via environment variable
-	logUnauthorizedEnvSet := false
 	if logUnauthorized := os.Getenv("SECURITY_LOG_UNAUTHORIZED"); logUnauthorized != "" {
 		if val, err := strconv.ParseBool(logUnauthorized); err == nil {
-			c.Security.LogUnauthorized = val
-			logUnauthorizedEnvSet = true
+			c.Security.LogUnauthorized = &val
 		}
 	}
 
@@ -531,21 +528,9 @@ func (c *Config) ApplyEnvironmentVariables() {
 	}
 
 	// Apply security defaults after environment variables have been processed
-	// This ensures defaults are set when security is enabled via environment variables
-	// without JSON configuration. We don't call applySecurityDefaults() here to keep
-	// the logic explicit and avoid confusing re-application of defaults.
-	if c.Security.Enabled {
-		// Set default rejection message if not provided
-		if c.Security.RejectionMessage == "" {
-			c.Security.RejectionMessage = "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error."
-		}
-
-		// Set LogUnauthorized to true by default if not explicitly set via env var
-		// Only apply this default if the env var wasn't provided, to respect explicit false values
-		if !logUnauthorizedEnvSet && !c.Security.LogUnauthorized {
-			c.Security.LogUnauthorized = true
-		}
-	}
+	// This handles cases where security is enabled via env vars without JSON config
+	// The applySecurityDefaults() method properly handles nil vs explicit false for LogUnauthorized
+	c.applySecurityDefaults()
 }
 
 // SecurityResult represents the result of a security check
