@@ -482,26 +482,38 @@ func (c *Config) ApplyEnvironmentVariables() {
 
 	if allowedUsers := os.Getenv("SECURITY_ALLOWED_USERS"); allowedUsers != "" {
 		users := strings.Split(allowedUsers, ",")
-		for i, user := range users {
-			users[i] = strings.TrimSpace(user)
+		filteredUsers := []string{}
+		for _, user := range users {
+			trimmed := strings.TrimSpace(user)
+			if trimmed != "" {
+				filteredUsers = append(filteredUsers, trimmed)
+			}
 		}
-		c.Security.AllowedUsers = users
+		c.Security.AllowedUsers = filteredUsers
 	}
 
 	if allowedChannels := os.Getenv("SECURITY_ALLOWED_CHANNELS"); allowedChannels != "" {
 		channels := strings.Split(allowedChannels, ",")
-		for i, channel := range channels {
-			channels[i] = strings.TrimSpace(channel)
+		filteredChannels := []string{}
+		for _, channel := range channels {
+			trimmed := strings.TrimSpace(channel)
+			if trimmed != "" {
+				filteredChannels = append(filteredChannels, trimmed)
+			}
 		}
-		c.Security.AllowedChannels = channels
+		c.Security.AllowedChannels = filteredChannels
 	}
 
 	if adminUsers := os.Getenv("SECURITY_ADMIN_USERS"); adminUsers != "" {
 		users := strings.Split(adminUsers, ",")
-		for i, user := range users {
-			users[i] = strings.TrimSpace(user)
+		filteredAdmins := []string{}
+		for _, user := range users {
+			trimmed := strings.TrimSpace(user)
+			if trimmed != "" {
+				filteredAdmins = append(filteredAdmins, trimmed)
+			}
 		}
-		c.Security.AdminUsers = users
+		c.Security.AdminUsers = filteredAdmins
 	}
 
 	if rejectionMessage := os.Getenv("SECURITY_REJECTION_MESSAGE"); rejectionMessage != "" {

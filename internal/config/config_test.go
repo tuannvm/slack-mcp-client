@@ -117,6 +117,22 @@ func TestSecurityEnvironmentVariables(t *testing.T) {
 			},
 		},
 		{
+			name: "Malformed input with empty strings - should filter them out",
+			envVars: map[string]string{
+				"SECURITY_ENABLED":          "true",
+				"SECURITY_ALLOWED_USERS":    "U123,,U456,  ,U789",
+				"SECURITY_ALLOWED_CHANNELS": "C123,,,C456, , ,C789",
+				"SECURITY_ADMIN_USERS":      "A123, , ,A456,,",
+			},
+			expected: SecurityConfig{
+				Enabled:          true,
+				AllowedUsers:     []string{"U123", "U456", "U789"},
+				AllowedChannels:  []string{"C123", "C456", "C789"},
+				AdminUsers:       []string{"A123", "A456"},
+				RejectionMessage: "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error.",
+			},
+		},
+		{
 			name: "Custom rejection message",
 			envVars: map[string]string{
 				"SECURITY_ENABLED":           "true",
