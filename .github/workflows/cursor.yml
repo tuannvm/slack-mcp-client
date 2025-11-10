@@ -12,11 +12,15 @@ permissions:
 jobs:
   code-review:
     runs-on: ubuntu-latest
-    # Skip automated code review for draft PRs
-    if: github.event.pull_request.draft == false
+    # Only run on own repo PRs (not forks, not Dependabot)
+    # For fork/Dependabot PRs, use Cursor Background Agent instead
+    if: |
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
