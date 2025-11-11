@@ -191,6 +191,24 @@ type SecurityConfig struct {
 	adminUsersMap      map[string]struct{} `json:"-"`
 }
 
+// parseCommaSeparatedList parses a comma-separated string into a slice of trimmed, non-empty strings
+// This helper eliminates code duplication in environment variable parsing
+func parseCommaSeparatedList(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	items := strings.Split(value, ",")
+	filtered := []string{}
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+	return filtered
+}
+
 // buildLookupMaps builds internal maps from slices for O(1) lookups
 // This improves performance from O(n) to O(1) for access checks
 func (s *SecurityConfig) buildLookupMaps() {
@@ -518,39 +536,15 @@ func (c *Config) ApplyEnvironmentVariables() {
 	}
 
 	if allowedUsers := os.Getenv("SECURITY_ALLOWED_USERS"); allowedUsers != "" {
-		users := strings.Split(allowedUsers, ",")
-		filteredUsers := []string{}
-		for _, user := range users {
-			trimmed := strings.TrimSpace(user)
-			if trimmed != "" {
-				filteredUsers = append(filteredUsers, trimmed)
-			}
-		}
-		c.Security.AllowedUsers = filteredUsers
+		c.Security.AllowedUsers = parseCommaSeparatedList(allowedUsers)
 	}
 
 	if allowedChannels := os.Getenv("SECURITY_ALLOWED_CHANNELS"); allowedChannels != "" {
-		channels := strings.Split(allowedChannels, ",")
-		filteredChannels := []string{}
-		for _, channel := range channels {
-			trimmed := strings.TrimSpace(channel)
-			if trimmed != "" {
-				filteredChannels = append(filteredChannels, trimmed)
-			}
-		}
-		c.Security.AllowedChannels = filteredChannels
+		c.Security.AllowedChannels = parseCommaSeparatedList(allowedChannels)
 	}
 
 	if adminUsers := os.Getenv("SECURITY_ADMIN_USERS"); adminUsers != "" {
-		users := strings.Split(adminUsers, ",")
-		filteredAdmins := []string{}
-		for _, user := range users {
-			trimmed := strings.TrimSpace(user)
-			if trimmed != "" {
-				filteredAdmins = append(filteredAdmins, trimmed)
-			}
-		}
-		c.Security.AdminUsers = filteredAdmins
+		c.Security.AdminUsers = parseCommaSeparatedList(adminUsers)
 	}
 
 	if rejectionMessage := os.Getenv("SECURITY_REJECTION_MESSAGE"); rejectionMessage != "" {
