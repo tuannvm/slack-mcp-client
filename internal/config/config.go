@@ -566,7 +566,7 @@ type SecurityResult struct {
 // ValidateAccess performs security validation based on the current configuration
 // Returns SecurityResult indicating whether access should be granted and the reason
 func (c *Config) ValidateAccess(userID, channelID string) SecurityResult {
-	// If security is disabled, allow all access
+	// Early return: security disabled
 	if !c.Security.Enabled {
 		return SecurityResult{
 			Allowed: true,
@@ -574,28 +574,27 @@ func (c *Config) ValidateAccess(userID, channelID string) SecurityResult {
 		}
 	}
 
-	// Check if user is an admin (admins always have access regardless of channel restrictions)
-	isAdmin := c.isAdminUser(userID)
-	if isAdmin {
+	// Early return: admin access (admins always have access regardless of channel restrictions)
+	if c.isAdminUser(userID) {
 		return SecurityResult{
 			Allowed: true,
 			Reason:  "Admin user access",
 		}
 	}
 
-	// Check user and channel whitelists
+	// Check user and channel whitelists once
 	isUserAllowed := c.isUserAllowed(userID)
 	isChannelAllowed := c.isChannelAllowed(channelID)
 
-	// Apply access control based on strict mode
+	// Strict mode: both user AND channel must be whitelisted
 	if c.Security.StrictMode {
-		// Strict mode: both user AND channel must be whitelisted
 		if isUserAllowed && isChannelAllowed {
 			return SecurityResult{
 				Allowed: true,
 				Reason:  "User and channel both whitelisted (strict mode)",
 			}
 		}
+		// Provide specific denial reason
 		if !isUserAllowed && !isChannelAllowed {
 			return SecurityResult{
 				Allowed: false,
@@ -612,30 +611,32 @@ func (c *Config) ValidateAccess(userID, channelID string) SecurityResult {
 			Allowed: false,
 			Reason:  "Channel not whitelisted (strict mode)",
 		}
-	} else {
-		// Flexible mode: user OR channel must be whitelisted
-		if isUserAllowed || isChannelAllowed {
-			if isUserAllowed && isChannelAllowed {
-				return SecurityResult{
-					Allowed: true,
-					Reason:  "User and channel both whitelisted",
-				}
-			} else if isUserAllowed {
-				return SecurityResult{
-					Allowed: true,
-					Reason:  "User whitelisted",
-				}
-			} else {
-				return SecurityResult{
-					Allowed: true,
-					Reason:  "Channel whitelisted",
-				}
-			}
-		}
+	}
+
+	// Flexible mode: user OR channel must be whitelisted
+	// Determine the appropriate reason based on what's allowed
+	if isUserAllowed && isChannelAllowed {
 		return SecurityResult{
-			Allowed: false,
-			Reason:  "Neither user nor channel whitelisted",
+			Allowed: true,
+			Reason:  "User and channel both whitelisted",
 		}
+	}
+	if isUserAllowed {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "User whitelisted",
+		}
+	}
+	if isChannelAllowed {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "Channel whitelisted",
+		}
+	}
+
+	return SecurityResult{
+		Allowed: false,
+		Reason:  "Neither user nor channel whitelisted",
 	}
 }
 
