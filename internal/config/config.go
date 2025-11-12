@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Constants for provider types
@@ -27,6 +28,7 @@ type Config struct {
 	LLM            LLMConfig                  `json:"llm"`
 	MCPServers     map[string]MCPServerConfig `json:"mcpServers"`
 	RAG            RAGConfig                  `json:"rag,omitempty"`
+	Security       SecurityConfig             `json:"security,omitempty"`
 	Monitoring     MonitoringConfig           `json:"monitoring,omitempty"`
 	Timeouts       TimeoutConfig              `json:"timeouts,omitempty"`
 	Retry          RetryConfig                `json:"retry,omitempty"`
@@ -173,12 +175,69 @@ type ObservabilityConfig struct {
 	ServiceVersion string `json:"serviceVersion,omitempty"`
 }
 
+// SecurityConfig contains security and access control settings
+type SecurityConfig struct {
+	Enabled          bool     `json:"enabled,omitempty"`          // Enable/disable security (default: false)
+	StrictMode       bool     `json:"strictMode,omitempty"`       // Require both user AND channel whitelisting (default: false)
+	AllowedUsers     []string `json:"allowedUsers,omitempty"`     // List of allowed user IDs
+	AllowedChannels  []string `json:"allowedChannels,omitempty"`  // List of allowed channel IDs
+	AdminUsers       []string `json:"adminUsers,omitempty"`       // List of admin user IDs
+	RejectionMessage string   `json:"rejectionMessage,omitempty"` // Custom message for unauthorized users
+	LogUnauthorized  *bool    `json:"logUnauthorized,omitempty"`  // Log unauthorized access attempts (default: true when security enabled; nil = use default)
+
+	// Internal maps for O(1) lookups (not serialized to JSON)
+	allowedUsersMap    map[string]struct{} `json:"-"`
+	allowedChannelsMap map[string]struct{} `json:"-"`
+	adminUsersMap      map[string]struct{} `json:"-"`
+}
+
+// parseCommaSeparatedList parses a comma-separated string into a slice of trimmed, non-empty strings
+// This helper eliminates code duplication in environment variable parsing
+func parseCommaSeparatedList(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	items := strings.Split(value, ",")
+	filtered := []string{}
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			filtered = append(filtered, trimmed)
+		}
+	}
+	return filtered
+}
+
+// buildLookupMaps builds internal maps from slices for O(1) lookups
+// This improves performance from O(n) to O(1) for access checks
+func (s *SecurityConfig) buildLookupMaps() {
+	// Build allowed users map
+	s.allowedUsersMap = make(map[string]struct{}, len(s.AllowedUsers))
+	for _, user := range s.AllowedUsers {
+		s.allowedUsersMap[user] = struct{}{}
+	}
+
+	// Build allowed channels map
+	s.allowedChannelsMap = make(map[string]struct{}, len(s.AllowedChannels))
+	for _, channel := range s.AllowedChannels {
+		s.allowedChannelsMap[channel] = struct{}{}
+	}
+
+	// Build admin users map
+	s.adminUsersMap = make(map[string]struct{}, len(s.AdminUsers))
+	for _, admin := range s.AdminUsers {
+		s.adminUsersMap[admin] = struct{}{}
+	}
+}
+
 // ApplyDefaults applies default values to the configuration
 func (c *Config) ApplyDefaults() {
 	c.applyVersionDefaults()
 	c.applyLLMDefaults()
 	c.applyRAGDefaults()
 	c.applySlackDefaults()
+	c.applySecurityDefaults()
 	c.applyTimeoutDefaults()
 	c.applyRetryDefaults()
 	c.applyMonitoringDefaults()
@@ -263,6 +322,28 @@ func (c *Config) applySlackDefaults() {
 	}
 	if c.Slack.ThinkingMessage == "" {
 		c.Slack.ThinkingMessage = "Thinking..."
+	}
+}
+
+// applySecurityDefaults sets default security configuration
+func (c *Config) applySecurityDefaults() {
+	// Security is disabled by default
+	if c.Security.Enabled {
+		// Set default rejection message
+		if c.Security.RejectionMessage == "" {
+			c.Security.RejectionMessage = "I'm sorry, but I don't have permission to respond in this context. Please contact the app administrator if you believe this is an error."
+		}
+
+		// LogUnauthorized defaults to true when security is enabled
+		// Only set default if not explicitly set (nil). This allows users to explicitly
+		// set false in JSON config or via environment variables.
+		if c.Security.LogUnauthorized == nil {
+			trueVal := true
+			c.Security.LogUnauthorized = &trueVal
+		}
+
+		// Build lookup maps for O(1) performance
+		c.Security.buildLookupMaps()
 	}
 }
 
@@ -434,4 +515,175 @@ func (c *Config) ApplyEnvironmentVariables() {
 	if serviceVersion := os.Getenv("OBSERVABILITY_SERVICE_VERSION"); serviceVersion != "" {
 		c.Observability.ServiceVersion = serviceVersion
 	}
+
+	// Security configuration overrides
+	if enabled := os.Getenv("SECURITY_ENABLED"); enabled != "" {
+		if val, err := strconv.ParseBool(enabled); err == nil {
+			c.Security.Enabled = val
+		}
+	}
+
+	if strictMode := os.Getenv("SECURITY_STRICT_MODE"); strictMode != "" {
+		if val, err := strconv.ParseBool(strictMode); err == nil {
+			c.Security.StrictMode = val
+		}
+	}
+
+	if logUnauthorized := os.Getenv("SECURITY_LOG_UNAUTHORIZED"); logUnauthorized != "" {
+		if val, err := strconv.ParseBool(logUnauthorized); err == nil {
+			c.Security.LogUnauthorized = &val
+		}
+	}
+
+	if allowedUsers := os.Getenv("SECURITY_ALLOWED_USERS"); allowedUsers != "" {
+		c.Security.AllowedUsers = parseCommaSeparatedList(allowedUsers)
+	}
+
+	if allowedChannels := os.Getenv("SECURITY_ALLOWED_CHANNELS"); allowedChannels != "" {
+		c.Security.AllowedChannels = parseCommaSeparatedList(allowedChannels)
+	}
+
+	if adminUsers := os.Getenv("SECURITY_ADMIN_USERS"); adminUsers != "" {
+		c.Security.AdminUsers = parseCommaSeparatedList(adminUsers)
+	}
+
+	if rejectionMessage := os.Getenv("SECURITY_REJECTION_MESSAGE"); rejectionMessage != "" {
+		c.Security.RejectionMessage = rejectionMessage
+	}
+
+	// Apply security defaults after environment variables have been processed
+	// This handles cases where security is enabled via env vars without JSON config
+	// The applySecurityDefaults() method properly handles nil vs explicit false for LogUnauthorized
+	c.applySecurityDefaults()
+}
+
+// SecurityResult represents the result of a security check
+type SecurityResult struct {
+	Allowed bool   // Whether access is granted
+	Reason  string // Reason for the decision (for logging)
+}
+
+// ValidateAccess performs security validation based on the current configuration
+// Returns SecurityResult indicating whether access should be granted and the reason
+func (c *Config) ValidateAccess(userID, channelID string) SecurityResult {
+	// Early return: security disabled
+	if !c.Security.Enabled {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "Security disabled",
+		}
+	}
+
+	// Early return: admin access (admins always have access regardless of channel restrictions)
+	if c.isAdminUser(userID) {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "Admin user access",
+		}
+	}
+
+	// Check user and channel whitelists once
+	isUserAllowed := c.isUserAllowed(userID)
+	isChannelAllowed := c.isChannelAllowed(channelID)
+
+	// Strict mode: both user AND channel must be whitelisted
+	if c.Security.StrictMode {
+		if isUserAllowed && isChannelAllowed {
+			return SecurityResult{
+				Allowed: true,
+				Reason:  "User and channel both whitelisted (strict mode)",
+			}
+		}
+		// Provide specific denial reason
+		if !isUserAllowed && !isChannelAllowed {
+			return SecurityResult{
+				Allowed: false,
+				Reason:  "Neither user nor channel whitelisted (strict mode)",
+			}
+		}
+		if !isUserAllowed {
+			return SecurityResult{
+				Allowed: false,
+				Reason:  "User not whitelisted (strict mode)",
+			}
+		}
+		return SecurityResult{
+			Allowed: false,
+			Reason:  "Channel not whitelisted (strict mode)",
+		}
+	}
+
+	// Flexible mode: user OR channel must be whitelisted
+	// Determine the appropriate reason based on what's allowed
+	if isUserAllowed && isChannelAllowed {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "User and channel both whitelisted",
+		}
+	}
+	if isUserAllowed {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "User whitelisted",
+		}
+	}
+	if isChannelAllowed {
+		return SecurityResult{
+			Allowed: true,
+			Reason:  "Channel whitelisted",
+		}
+	}
+
+	return SecurityResult{
+		Allowed: false,
+		Reason:  "Neither user nor channel whitelisted",
+	}
+}
+
+// isUserAllowed checks if a user ID is in the allowed users list
+func (c *Config) isUserAllowed(userID string) bool {
+	// Use map lookup if available (O(1)), otherwise fall back to slice iteration (O(n))
+	if c.Security.allowedUsersMap != nil {
+		_, exists := c.Security.allowedUsersMap[userID]
+		return exists
+	}
+	// Fallback for tests or edge cases where maps weren't built
+	for _, allowedUser := range c.Security.AllowedUsers {
+		if allowedUser == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// isChannelAllowed checks if a channel ID is in the allowed channels list
+func (c *Config) isChannelAllowed(channelID string) bool {
+	// Use map lookup if available (O(1)), otherwise fall back to slice iteration (O(n))
+	if c.Security.allowedChannelsMap != nil {
+		_, exists := c.Security.allowedChannelsMap[channelID]
+		return exists
+	}
+	// Fallback for tests or edge cases where maps weren't built
+	for _, allowedChannel := range c.Security.AllowedChannels {
+		if allowedChannel == channelID {
+			return true
+		}
+	}
+	return false
+}
+
+// isAdminUser checks if a user ID is in the admin users list
+func (c *Config) isAdminUser(userID string) bool {
+	// Use map lookup if available (O(1)), otherwise fall back to slice iteration (O(n))
+	if c.Security.adminUsersMap != nil {
+		_, exists := c.Security.adminUsersMap[userID]
+		return exists
+	}
+	// Fallback for tests or edge cases where maps weren't built
+	for _, adminUser := range c.Security.AdminUsers {
+		if adminUser == userID {
+			return true
+		}
+	}
+	return false
 }
