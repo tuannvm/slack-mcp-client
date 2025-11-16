@@ -113,9 +113,12 @@ func FormatMessage(text string, options FormatOptions) []slack.MsgOption {
 				case "divider":
 					slackBlock = slack.NewDividerBlock()
 				case "context":
-					var context slack.ContextBlock
-					if err := json.Unmarshal(blockJSON, &context); err == nil {
-						slackBlock = context
+					var contextBlock struct {
+						Elements slack.ContextElements `json:"elements"`
+					}
+
+					if err := json.Unmarshal(blockJSON, &contextBlock); err == nil {
+						slackBlock = slack.NewContextBlock("", contextBlock.Elements.Elements...)
 					}
 					// Add more block types as needed
 				}
