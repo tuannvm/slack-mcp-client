@@ -5,6 +5,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
@@ -543,6 +544,7 @@ func (b *LLMMCPBridge) CallLLMAgent(userDisplayName, systemPrompt, prompt, conte
 	// Create a context with the configured bridgeTimeout
 	bridgeTimeout, err := time.ParseDuration(b.cfg.Timeouts.BridgeOperationTimeout)
 	if err != nil {
+		b.logger.WarnKV("Invalid bridge operation timeout, using default of 3 minutes", "configured_value", b.cfg.Timeouts.BridgeOperationTimeout, "error", err)
 		bridgeTimeout = 3 * time.Minute // fallback to default if parsing fails
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
@@ -574,7 +576,7 @@ func (b *LLMMCPBridge) CallLLMAgent(userDisplayName, systemPrompt, prompt, conte
 		b.logger.ErrorKV("GenerateAgentCompletion failed", "provider", providerName, "error", err)
 		errorCode := "llm_request_failed"
 		errorMessage := fmt.Sprintf("LLM request failed for provider '%s'", providerName)
-		if strings.Contains(err.Error(), "context deadline exceeded") {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
 			// Give more specific timeout error message
 			errorCode = "bridge_operation_timeout"
 			errorMessage = "Agent completion timed out. Consider increasing the bridgeOperationTimeout."
@@ -590,6 +592,7 @@ func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoi
 	// Create a context with the configured bridgeTimeout
 	bridgeTimeout, err := time.ParseDuration(b.cfg.Timeouts.BridgeOperationTimeout)
 	if err != nil {
+		b.logger.WarnKV("Invalid bridge operation timeout, using default of 3 minutes", "configured_value", b.cfg.Timeouts.BridgeOperationTimeout, "error", err)
 		bridgeTimeout = 3 * time.Minute // fallback to default if parsing fails
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
@@ -662,7 +665,7 @@ func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoi
 		b.logger.ErrorKV("GenerateChatCompletion failed", "provider", providerName, "error", err)
 		errorCode := "llm_request_failed"
 		errorMessage := fmt.Sprintf("LLM request failed for provider '%s'", providerName)
-		if strings.Contains(err.Error(), "context deadline exceeded") {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
 			// Give more specific timeout error message
 			errorCode = "bridge_operation_timeout"
 			errorMessage = "Chat completion timed out. Consider increasing the bridgeOperationTimeout."

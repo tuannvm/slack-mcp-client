@@ -5,6 +5,7 @@ package slackbot
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -670,6 +671,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 	// Create a context with the configured timeout for tool processing
 	timeout, err := time.ParseDuration(c.cfg.Timeouts.ToolProcessingTimeout)
 	if err != nil {
+		c.logger.WarnKV("Invalid tool processing timeout, using default of 1 minute", "configured_value", c.cfg.Timeouts.ToolProcessingTimeout, "error", err)
 		timeout = 1 * time.Minute // fallback to default if parsing fails
 	}
 	toolCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -702,7 +704,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		toolDuration := time.Since(startTime)
 		c.tracingHandler.SetDuration(toolExecSpan, toolDuration)
 		if err != nil {
-			if strings.Contains(err.Error(), "context deadline exceeded") {
+			if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
 				// Give more specific timeout error message
 				finalResponse = fmt.Sprintf("Sorry, processing the tool took too long. Consider increasing the toolProcessingTimeout: %v", err)
 			} else {

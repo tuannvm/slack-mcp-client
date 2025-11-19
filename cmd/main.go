@@ -312,6 +312,8 @@ func processSingleMCPServer(
 		if err == nil {
 			// Use parsed value
 			initTimeout = mcpInitTimeout
+		} else {
+			serverLogger.WarnKV("Invalid global MCP init timeout, using default of 5 seconds", "configured_value", cfg.Timeouts.MCPInitTimeout, "error", err)
 		}
 	}
 
