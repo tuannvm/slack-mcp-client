@@ -302,7 +302,7 @@ func processSingleMCPServer(
 
 	// Initialize client
 	// Determine timeout
-	initTimeout := 	time.Duration(5) * time.Second // fallback if no configuration found
+	initTimeout := time.Duration(5) * time.Second // fallback if no configuration found
 	if serverConf.InitializeTimeoutSeconds != nil {
 		// Prefer server-specific timeout if set
 		initTimeout = time.Duration(*serverConf.InitializeTimeoutSeconds) * time.Second
@@ -314,7 +314,7 @@ func processSingleMCPServer(
 			initTimeout = mcpInitTimeout
 		}
 	}
-	
+
 	// Use mcp.Client from the internal mcp package (via mcpClient variable)
 	if err := initializeMCPClientInstance(serverLogger, mcpClient, &initTimeout); err != nil {
 		*failedServers = append(*failedServers, serverName+"(initialize failed)")

@@ -575,10 +575,10 @@ func (b *LLMMCPBridge) CallLLMAgent(userDisplayName, systemPrompt, prompt, conte
 		errorCode := "llm_request_failed"
 		errorMessage := fmt.Sprintf("LLM request failed for provider '%s'", providerName)
 		if strings.Contains(err.Error(), "context deadline exceeded") {
-				// Give more specific timeout error message
-				errorCode = "bridge_operation_timeout"
-				errorMessage = "Agent completion timed out. Consider increasing the bridgeOperationTimeout."
-			}
+			// Give more specific timeout error message
+			errorCode = "bridge_operation_timeout"
+			errorMessage = "Agent completion timed out. Consider increasing the bridgeOperationTimeout."
+		}
 		return "", customErrors.WrapSlackError(err, errorCode, errorMessage)
 	}
 
@@ -663,10 +663,10 @@ func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoi
 		errorCode := "llm_request_failed"
 		errorMessage := fmt.Sprintf("LLM request failed for provider '%s'", providerName)
 		if strings.Contains(err.Error(), "context deadline exceeded") {
-				// Give more specific timeout error message
-				errorCode = "bridge_operation_timeout"
-				errorMessage = "Chat completion timed out. Consider increasing the bridgeOperationTimeout."
-			}
+			// Give more specific timeout error message
+			errorCode = "bridge_operation_timeout"
+			errorMessage = "Chat completion timed out. Consider increasing the bridgeOperationTimeout."
+		}
 		return nil, customErrors.WrapSlackError(err, errorCode, errorMessage)
 	}
 
