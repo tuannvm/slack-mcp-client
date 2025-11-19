@@ -318,7 +318,7 @@ func processSingleMCPServer(
 	}
 
 	// Use mcp.Client from the internal mcp package (via mcpClient variable)
-	if err := initializeMCPClientInstance(serverLogger, mcpClient, &initTimeout); err != nil {
+	if err := initializeMCPClientInstance(serverLogger, mcpClient, initTimeout); err != nil {
 		*failedServers = append(*failedServers, serverName+"(initialize failed)")
 		return
 	}
@@ -513,10 +513,13 @@ func createMCPClient(logger *logging.Logger, serverConf config.MCPServerConfig, 
 
 // initializeMCPClientInstance initializes an MCP client with proper timeout
 // Use mcp.Client from the internal mcp package
-func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client, timeout *time.Duration) error {
+
+// initializeMCPClientInstance initializes an MCP client with proper timeout
+// Use mcp.Client from the internal mcp package
+func initializeMCPClientInstance(logger *logging.Logger, client *mcp.Client, timeout time.Duration) error {
 	logger.Info("Attempting to initialize MCP client (timeout: %v seconds)...", timeout.Seconds())
 	// Create a context with timeout for initialization
-	initCtx, initCancel := context.WithTimeout(context.Background(), *timeout)
+	initCtx, initCancel := context.WithTimeout(context.Background(), timeout)
 	defer initCancel()
 
 	// Try to initialize the client
