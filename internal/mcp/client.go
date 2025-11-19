@@ -215,7 +215,7 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 
 		c.logger.ErrorKV("Tool execution error", "tool", toolName, "error", errMsgText)
 		return "", customErrors.NewMCPError("tool_execution_error",
-			fmt.Sprintf("Tool '%s' returned an error", toolName)).WithData("error_message", errMsgText)
+			fmt.Sprintf("Tool '%s' returned an error: %s", toolName, errMsgText)).WithData("error_message", errMsgText)
 	}
 
 	// Extract text content from the result
