@@ -667,8 +667,12 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 	}
 	c.logger.DebugKV("Added extra arguments", "channel_id", channelID, "thread_ts", threadTS)
 
-	// Create a context with timeout for tool processing
-	toolCtx, cancel := context.WithTimeout(ctx, 1*time.Minute)
+	// Create a context with the configured timeout for tool processing
+	timeout, err := time.ParseDuration(c.cfg.Timeouts.ToolProcessingTimeout)
+	if err != nil {
+		timeout = 1 * time.Minute // fallback to default if parsing fails
+	}
+	toolCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// --- Process Tool Response (Logic from LLMClient.ProcessToolResponse) ---
@@ -698,7 +702,12 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 		toolDuration := time.Since(startTime)
 		c.tracingHandler.SetDuration(toolExecSpan, toolDuration)
 		if err != nil {
-			finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
+			if strings.Contains(err.Error(), "context deadline exceeded") {
+				// Give more specific timeout error message
+				finalResponse = fmt.Sprintf("Sorry, processing the tool took too long. Consider increasing the toolProcessingTimeout: %v", err)
+			} else {
+				finalResponse = fmt.Sprintf("Sorry, I encountered an error while trying to use a tool: %v", err)
+			}
 			isToolResult = false
 			toolProcessingErr = err // Store the error
 			c.tracingHandler.RecordError(toolExecSpan, err, "ERROR")

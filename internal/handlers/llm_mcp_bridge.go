@@ -540,8 +540,12 @@ func (b *LLMMCPBridge) extractSimpleKeyValuePairs(text string) (map[string]inter
 }
 
 func (b *LLMMCPBridge) CallLLMAgent(userDisplayName, systemPrompt, prompt, contextHistory string, callbackHandler callbacks.Handler) (string, error) {
-	// Create a context with an appropriate timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// Create a context with the configured bridgeTimeout
+	bridgeTimeout, err := time.ParseDuration(b.cfg.Timeouts.BridgeOperationTimeout)
+	if err != nil {
+		bridgeTimeout = 3 * time.Minute // fallback to default if parsing fails
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
 	defer cancel()
 
 	toolArr := make([]tools.Tool, 0, len(b.availableTools))
@@ -568,7 +572,14 @@ func (b *LLMMCPBridge) CallLLMAgent(userDisplayName, systemPrompt, prompt, conte
 	if err != nil {
 		// Error already logged by registry method potentially, but log here too for context
 		b.logger.ErrorKV("GenerateAgentCompletion failed", "provider", providerName, "error", err)
-		return "", customErrors.WrapSlackError(err, "llm_request_failed", fmt.Sprintf("LLM request failed for provider '%s'", providerName))
+		errorCode := "llm_request_failed"
+		errorMessage := fmt.Sprintf("LLM request failed for provider '%s'", providerName)
+		if strings.Contains(err.Error(), "context deadline exceeded") {
+				// Give more specific timeout error message
+				errorCode = "bridge_operation_timeout"
+				errorMessage = "Agent completion timed out. Consider increasing the bridgeOperationTimeout."
+			}
+		return "", customErrors.WrapSlackError(err, errorCode, errorMessage)
 	}
 
 	return completion, nil
@@ -576,8 +587,12 @@ func (b *LLMMCPBridge) CallLLMAgent(userDisplayName, systemPrompt, prompt, conte
 
 // CallLLM generates a text completion using the specified provider from the registry.
 func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoice, error) {
-	// Create a context with appropriate timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	// Create a context with the configured bridgeTimeout
+	bridgeTimeout, err := time.ParseDuration(b.cfg.Timeouts.BridgeOperationTimeout)
+	if err != nil {
+		bridgeTimeout = 3 * time.Minute // fallback to default if parsing fails
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
 	defer cancel()
 
 	// Get the provider name from config
@@ -645,7 +660,14 @@ func (b *LLMMCPBridge) CallLLM(prompt, contextHistory string) (*llms.ContentChoi
 	if err != nil {
 		// Error already logged by registry method potentially, but log here too for context
 		b.logger.ErrorKV("GenerateChatCompletion failed", "provider", providerName, "error", err)
-		return nil, customErrors.WrapSlackError(err, "llm_request_failed", fmt.Sprintf("LLM request failed for provider '%s'", providerName))
+		errorCode := "llm_request_failed"
+		errorMessage := fmt.Sprintf("LLM request failed for provider '%s'", providerName)
+		if strings.Contains(err.Error(), "context deadline exceeded") {
+				// Give more specific timeout error message
+				errorCode = "bridge_operation_timeout"
+				errorMessage = "Chat completion timed out. Consider increasing the bridgeOperationTimeout."
+			}
+		return nil, customErrors.WrapSlackError(err, errorCode, errorMessage)
 	}
 
 	b.logger.InfoKV("Successfully received chat completion", "provider", providerName)
