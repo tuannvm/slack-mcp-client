@@ -357,7 +357,13 @@ func (b *LLMMCPBridge) tryCodeBlockJSONParsing(response string) *ToolCall {
 // tryRegexJSONExtraction looks for tool calls using regex patterns
 func (b *LLMMCPBridge) tryRegexJSONExtraction(response string) *ToolCall {
 	b.logger.DebugKV("Searching for JSON objects in text")
-	// More lenient regex that can handle various JSON formats with the key elements we need
+	
+	// First try to find a complete JSON object with balanced braces
+	if toolCall := b.tryBalancedBraceExtraction(response); toolCall != nil {
+		return toolCall
+	}
+	
+	// Fallback to the original regex approach
 	jsonRegex := regexp.MustCompile("(?i)[\\{\\s]*[\"']?tool[\"']?\\s*[\\:\\=]\\s*[\"']([^\"']+)[\"']\\s*[\\,\\s]*[\"']?args[\"']?\\s*[\\:\\=]\\s*\\{([\\s\\S]*?)\\}[\\s\\}]*")
 	jsonMatches := jsonRegex.FindAllStringSubmatch(response, -1)
 
@@ -373,6 +379,76 @@ func (b *LLMMCPBridge) tryRegexJSONExtraction(response string) *ToolCall {
 			}
 		}
 	}
+	return nil
+}
+
+// tryBalancedBraceExtraction finds JSON objects with proper brace balancing for nested structures
+func (b *LLMMCPBridge) tryBalancedBraceExtraction(response string) *ToolCall {
+	b.logger.DebugKV("Attempting balanced brace extraction")
+	
+	// Find the start of a JSON object that looks like a tool call
+	toolPattern := regexp.MustCompile(`(?i)\{\s*["']?tool["']?\s*:\s*["']([^"']+)["']`)
+	matches := toolPattern.FindAllStringSubmatchIndex(response, -1)
+	
+	for _, match := range matches {
+		if len(match) >= 4 {
+			start := match[0]
+			toolName := response[match[2]:match[3]]
+			
+			// Find the matching closing brace by counting braces
+			braceCount := 0
+			inString := false
+			escaped := false
+			end := -1
+			
+			for i := start; i < len(response); i++ {
+				char := response[i]
+				
+				if escaped {
+					escaped = false
+					continue
+				}
+				
+				if char == '\\' {
+					escaped = true
+					continue
+				}
+				
+				if char == '"' {
+					inString = !inString
+					continue
+				}
+				
+				if !inString {
+					if char == '{' {
+						braceCount++
+					} else if char == '}' {
+						braceCount--
+						if braceCount == 0 {
+							end = i + 1
+							break
+						}
+					}
+				}
+			}
+			
+			if end > start {
+				jsonStr := response[start:end]
+				b.logger.DebugKV("Found balanced JSON object", "tool", toolName, "json", jsonStr)
+				
+				var toolCall ToolCall
+				if err := json.Unmarshal([]byte(jsonStr), &toolCall); err == nil {
+					if b.isValidToolCall(toolCall) {
+						b.logger.DebugKV("Balanced brace parsing successful", "tool", toolCall.Tool)
+						return &toolCall
+					}
+				} else {
+					b.logger.DebugKV("Balanced brace JSON parsing failed", "error", err.Error())
+				}
+			}
+		}
+	}
+	
 	return nil
 }
 
