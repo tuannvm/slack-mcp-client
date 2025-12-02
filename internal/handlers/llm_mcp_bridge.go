@@ -442,6 +442,12 @@ func (b *LLMMCPBridge) getClientForTool(toolName string) mcp.MCPClientInterface 
 // executeToolCall executes a detected tool call (using the new ToolCall struct)
 func (b *LLMMCPBridge) executeToolCall(ctx context.Context, toolCall *ToolCall, extraArgs map[string]interface{}) (string, error) {
 	for k, v := range extraArgs {
+		// Skip Slack context parameters as they're for internal tracking, not tool parameters
+		if k == "channel_id" || k == "thread_ts" {
+			b.logger.DebugKV("Skipping Slack context parameter", "key", k, "tool", toolCall.Tool)
+			continue
+		}
+
 		// Add any extra arguments to the tool call args
 		if toolCall.Args == nil {
 			toolCall.Args = make(map[string]interface{})
