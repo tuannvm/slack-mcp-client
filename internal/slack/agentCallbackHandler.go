@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/tmc/langchaingo/callbacks"
+	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"regexp"
 
 	"github.com/slack-go/slack"
@@ -14,13 +15,14 @@ type sendMessageFunc func(message string)
 type agentCallbackHandler struct {
 	callbacks.SimpleHandler
 	sendMessage sendMessageFunc
+	logger      *logging.Logger
 }
 
 func (handler *agentCallbackHandler) HandleChainEnd(_ context.Context, outputs map[string]any) {
 	if text, ok := outputs["text"]; ok {
 		if textStr, ok := text.(string); ok {
 			if isThinkingMessage(textStr) {
-				textStr = formatContextMessageBlock(textStr)
+				textStr = formatContextMessageBlock(textStr, handler.logger)
 			} else {
 				textStr = formatFinalResponse(textStr)
 			}
@@ -53,7 +55,7 @@ func formatFinalResponse(msg string) string {
 	})
 }
 
-func formatContextMessageBlock(message string) string {
+func formatContextMessageBlock(message string, logger *logging.Logger) string {
 	mrkdwnBlock := slack.NewTextBlockObject("mrkdwn", message, false, false)
 	contextBlock := slack.NewContextBlock("", []slack.MixedElement{mrkdwnBlock}...)
 	blockMessage := slack.NewBlockMessage(contextBlock)
@@ -61,6 +63,7 @@ func formatContextMessageBlock(message string) string {
 	jsonByte, err := json.Marshal(blockMessage)
 	if err != nil {
 		// Fallback to plain message if marshaling fails
+		logger.ErrorKV("Failed to marshal block message", "error", err)
 		return message
 	}
 	return string(jsonByte)

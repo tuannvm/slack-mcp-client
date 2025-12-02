@@ -538,6 +538,7 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 			&agentCallbackHandler{
 				callbacks.SimpleHandler{},
 				sendMsg,
+				c.logger,
 			})
 		duration := time.Since(startTime)
 
