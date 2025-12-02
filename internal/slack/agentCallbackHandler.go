@@ -6,6 +6,7 @@ import (
 	"github.com/tmc/langchaingo/callbacks"
 	"github.com/tuannvm/slack-mcp-client/internal/common/logging"
 	"regexp"
+	"strings"
 
 	"github.com/slack-go/slack"
 )
@@ -31,10 +32,7 @@ func (handler *agentCallbackHandler) HandleChainEnd(_ context.Context, outputs m
 	}
 }
 
-var (
-	thinkingPattern = regexp.MustCompile(`Do I need to use a tool\? Yes`)
-	cleanupPattern  = regexp.MustCompile(`(Do I need to use a tool\? No|AI:)`)
-)
+var thinkingPattern = regexp.MustCompile(`Do I need to use a tool\? Yes`)
 
 func isThinkingMessage(msg string) bool {
 	return thinkingPattern.MatchString(msg)
@@ -45,14 +43,9 @@ func isThinkingMessage(msg string) bool {
 // > Thought: Do I need to use a tool? No
 // > AI: [your response here]
 func formatFinalResponse(msg string) string {
-	maxRemoves := 2
-	return cleanupPattern.ReplaceAllStringFunc(msg, func(s string) string {
-		if maxRemoves > 0 {
-			maxRemoves--
-			return ""
-		}
-		return s
-	})
+	msg = strings.Replace(msg, "Do I need to use a tool? No", "", 1)
+	msg = strings.Replace(msg, "AI:", "", 1)
+	return strings.TrimSpace(msg)
 }
 
 func formatContextMessageBlock(message string, logger *logging.Logger) string {
