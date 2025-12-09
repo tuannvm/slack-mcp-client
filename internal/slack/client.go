@@ -428,7 +428,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 		}
 		for _, reply := range replies {
 			// replyKey := fmt.Sprintf("%s:%s", reply.User, reply.Text)
-			if !existingMessages[reply.Timestamp] {
+			// Check if this reply is already in history and not the original message
+			if !existingMessages[reply.Timestamp] && reply.Timestamp != timestamp {
 				role := "user"
 				if reply.BotID != "" {
 					role = "assistant"
@@ -799,11 +800,7 @@ func (c *Client) processLLMResponseAndReply(traceCtx context.Context, llmRespons
 			c.tracingHandler.RecordSuccess(repromptSpan, "LLM re-prompt successful")
 		}
 		repromptSpan.End()
-	} else {
-		// No tool was executed, add assistant response to history
-		c.addToHistory(channelID, threadTS, "", "assistant", finalResponse, "", "", "")
 	}
-
 	// Start message sending span
 	_, msgSpan := c.tracingHandler.StartSpan(ctx, "slack-message-send", "event", userPrompt, map[string]string{
 		"channel_id":            channelID,
