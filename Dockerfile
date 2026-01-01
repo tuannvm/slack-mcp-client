@@ -28,7 +28,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -ldflags="-w -s" -trimpath -o slack-mcp-client ./cmd/
 
 # Minimal final image
-FROM --platform=$TARGETPLATFORM alpine:3.22
+FROM --platform=$TARGETPLATFORM alpine:3.23
 
 RUN apk --no-cache add ca-certificates tzdata
 
