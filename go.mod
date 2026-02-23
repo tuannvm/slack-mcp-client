@@ -1,6 +1,6 @@
 module github.com/tuannvm/slack-mcp-client
 
-go 1.24.4
+go 1.25
 
 require (
 	github.com/joho/godotenv v1.5.1
@@ -8,8 +8,8 @@ require (
 	github.com/openai/openai-go v1.8.2
 	github.com/prometheus/client_golang v1.23.0
 	github.com/santhosh-tekuri/jsonschema/v5 v5.3.1
-	github.com/slack-go/slack v0.16.0
-	github.com/stretchr/testify v1.11.0
+	github.com/slack-go/slack v0.18.0
+	github.com/stretchr/testify v1.11.1
 	github.com/tmc/langchaingo v0.1.14
 	go.opentelemetry.io/otel v1.37.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.37.0
@@ -40,7 +40,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/gorilla/css v1.0.0 // indirect
-	github.com/gorilla/websocket v1.5.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.1 // indirect
 	github.com/huandu/xstrings v1.3.3 // indirect
 	github.com/imdario/mergo v0.3.13 // indirect
