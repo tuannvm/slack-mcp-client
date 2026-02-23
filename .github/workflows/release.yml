@@ -43,7 +43,7 @@ jobs:
           VERBOSE: true
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         if: steps.tag.outputs.new_tag != ''
         with:
           version: latest

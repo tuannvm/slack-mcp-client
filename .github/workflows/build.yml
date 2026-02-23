@@ -121,7 +121,7 @@ jobs:
           args: mod -licenses -json -output bom.json
 
       - name: Upload SBOM
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: sbom
           path: bom.json
