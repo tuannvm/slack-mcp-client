@@ -52,6 +52,7 @@ func init() {
 	RegisterLangChainModelFactory(ProviderTypeOpenAI, &OpenAIModelFactory{})
 	RegisterLangChainModelFactory(ProviderTypeOllama, &OllamaModelFactory{})
 	RegisterLangChainModelFactory(ProviderTypeAnthropic, &AnthropicModelFactory{})
+	RegisterLangChainModelFactory(ProviderTypeKimi, &OpenAIModelFactory{})
 }
 
 // RegisterLangChainModelFactory registers a new model factory for the given provider type

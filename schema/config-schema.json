@@ -33,7 +33,7 @@
       "properties": {
         "provider": {
           "type": "string",
-          "enum": ["openai", "anthropic", "ollama"],
+          "enum": ["openai", "anthropic", "ollama", "kimi"],
           "default": "openai",
           "description": "Primary LLM provider to use"
         },
@@ -70,6 +70,9 @@
               "$ref": "#/$defs/llm_provider"
             },
             "ollama": {
+              "$ref": "#/$defs/llm_provider"
+            },
+            "kimi": {
               "$ref": "#/$defs/llm_provider"
             }
           },
