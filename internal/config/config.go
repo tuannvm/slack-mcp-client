@@ -295,7 +295,7 @@ func (c *Config) applyLLMDefaults() {
 		c.LLM.Providers[ProviderKimi] = LLMProviderConfig{
 			Model:       "kimi-k2.5",
 			BaseURL:     "https://api.moonshot.cn/v1",
-			Temperature: 0.7,
+			Temperature: 1,
 		}
 	}
 }
