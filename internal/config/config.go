@@ -12,6 +12,7 @@ const (
 	ProviderOpenAI    = "openai"
 	ProviderOllama    = "ollama"
 	ProviderAnthropic = "anthropic"
+	ProviderKimi      = "kimi"
 )
 
 // Observability Providers
@@ -289,6 +290,14 @@ func (c *Config) applyLLMDefaults() {
 			Temperature: 0.7,
 		}
 	}
+
+	if _, exists := c.LLM.Providers[ProviderKimi]; !exists {
+		c.LLM.Providers[ProviderKimi] = LLMProviderConfig{
+			Model:       "kimi-k2.5",
+			BaseURL:     "https://api.moonshot.cn/v1",
+			Temperature: 0.7,
+		}
+	}
 }
 
 // applyRAGDefaults sets default RAG provider and configurations
@@ -489,6 +498,20 @@ func (c *Config) ApplyEnvironmentVariables() {
 			ollamaConfig.Model = model
 		}
 		c.LLM.Providers[ProviderOllama] = ollamaConfig
+	}
+
+	// Kimi (Moonshot AI) configuration
+	if kimiConfig, exists := c.LLM.Providers[ProviderKimi]; exists {
+		if apiKey := os.Getenv("KIMI_API_KEY"); apiKey != "" {
+			kimiConfig.APIKey = apiKey
+		}
+		if model := os.Getenv("KIMI_MODEL"); model != "" {
+			kimiConfig.Model = model
+		}
+		if baseURL := os.Getenv("KIMI_BASE_URL"); baseURL != "" {
+			kimiConfig.BaseURL = baseURL
+		}
+		c.LLM.Providers[ProviderKimi] = kimiConfig
 	}
 	// Observability overrides
 	if enabled := os.Getenv("OBSERVABILITY_ENABLED"); enabled != "" {

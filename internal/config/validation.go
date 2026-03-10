@@ -42,6 +42,10 @@ func (c *Config) ValidateAfterDefaults() error {
 		if providerConfig.APIKey == "" || strings.HasPrefix(providerConfig.APIKey, "${") {
 			return fmt.Errorf("ANTHROPIC_API_KEY environment variable not set")
 		}
+	case ProviderKimi:
+		if providerConfig.APIKey == "" || strings.HasPrefix(providerConfig.APIKey, "${") {
+			return fmt.Errorf("KIMI_API_KEY environment variable not set")
+		}
 	}
 
 	// Validate observability configuration

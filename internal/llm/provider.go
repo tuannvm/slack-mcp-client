@@ -18,6 +18,7 @@ const (
 	ProviderTypeOpenAI        = "openai"
 	ProviderTypeOllama        = "ollama"
 	ProviderTypeAnthropic     = "anthropic"
+	ProviderTypeKimi          = "kimi"
 	ProviderNameLangChain     = "langchain"
 	DefaultLLMGatewayProvider = ProviderNameLangChain
 )
