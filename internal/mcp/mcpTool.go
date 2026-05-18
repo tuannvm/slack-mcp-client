@@ -32,7 +32,9 @@ func (t *ToolInfo) Call(ctx context.Context, input string) (string, error) {
 	var args map[string]interface{}
 	err := json.Unmarshal([]byte(input), &args)
 	if err != nil {
-		return "", fmt.Errorf("failed to unmarshal input: %w", err)
+		// Return parse error as a tool result so the LLM can see what happened
+		// and retry with valid JSON, rather than crashing the agent loop.
+		return fmt.Sprintf("[Tool Error] Invalid JSON input for %s: %v. Your Action Input must be a single-line valid JSON object with no trailing text.", t.Name(), err), nil
 	}
 
 	isError := "false"
@@ -47,7 +49,10 @@ func (t *ToolInfo) Call(ctx context.Context, input string) (string, error) {
 	res, err := t.Client.CallTool(ctx, t.Name(), args)
 	if err != nil {
 		isError = "true"
-		return "", fmt.Errorf("while calling tool %s: %w", t.Name(), err)
+		// Return error as a tool result instead of a Go error so the LLM agent
+		// can see what happened and retry or use a different approach, rather
+		// than crashing the entire agent loop.
+		return fmt.Sprintf("[Tool Error] %s failed: %v", t.Name(), err), nil
 	}
 
 	return res, nil

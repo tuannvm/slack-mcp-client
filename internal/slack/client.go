@@ -6,10 +6,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/rand"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
@@ -37,6 +41,36 @@ type Client struct {
 	historyLimit    int
 	discoveredTools map[string]mcp.ToolInfo
 	tracingHandler  observability.TracingHandler
+	activeThreads   map[string]bool // channel:threadTS keys where bot has been mentioned
+}
+
+// thinkingMessages is the pool of random "working on it" indicators.
+var thinkingMessages = []string{
+	"On it...",
+	"Digging in...",
+	"One sec...",
+	"Let me check...",
+	"Pulling that up...",
+	"Looking into it...",
+	"Crunching...",
+	"Searching...",
+	"Firing up the neurons...",
+	"Brb, asking the data...",
+}
+
+// randomThinkingMessage returns a random thinking indicator.
+func randomThinkingMessage() string {
+	return thinkingMessages[rand.Intn(len(thinkingMessages))]
+}
+
+// isThinkingMessage checks if a message is any of the known thinking indicators.
+func isThinkingMessage(text string) bool {
+	for _, msg := range thinkingMessages {
+		if text == msg {
+			return true
+		}
+	}
+	return false
 }
 
 // Message represents a message in the conversation history
@@ -201,6 +235,7 @@ func NewClient(userFrontend UserFrontend, stdLogger *logging.Logger, mcpClients 
 		historyLimit:    cfg.Slack.MessageHistory, // Store configured number of messages per channel
 		discoveredTools: discoveredTools,
 		tracingHandler:  tracingHandler,
+		activeThreads:   make(map[string]bool),
 	}, nil
 }
 
@@ -229,6 +264,14 @@ func (c *Client) handleEvents() {
 			c.logger.Warn("Connection failed. Retrying...")
 		case socketmode.EventTypeConnected:
 			c.logger.Info("Connected to Slack!")
+		case socketmode.EventTypeSlashCommand:
+			cmd, ok := evt.Data.(slack.SlashCommand)
+			if !ok {
+				c.logger.WarnKV("Ignored unexpected SlashCommand event type", "type", fmt.Sprintf("%T", evt.Data))
+				continue
+			}
+			c.logger.InfoKV("Received slash command", "command", cmd.Command, "user", cmd.UserID, "channel", cmd.ChannelID)
+			go c.handleSlashCommand(cmd, evt)
 		case socketmode.EventTypeEventsAPI:
 			eventsAPIEvent, ok := evt.Data.(slackevents.EventsAPIEvent)
 			if !ok {
@@ -243,6 +286,55 @@ func (c *Client) handleEvents() {
 		}
 	}
 	c.logger.Info("Slack event channel closed.")
+}
+
+// handleSlashCommand handles incoming slash commands via Socket Mode.
+func (c *Client) handleSlashCommand(cmd slack.SlashCommand, evt socketmode.Event) {
+	switch cmd.Command {
+	case "/usage":
+		// Fetch status from the sidecar status-server running on localhost:8081
+		resp, err := http.Get("http://localhost:8081/slack/status")
+		if err != nil {
+			c.logger.ErrorKV("Failed to reach status server", "error", err)
+			c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+				"response_type": "ephemeral",
+				"text":          fmt.Sprintf("❌ Status server unreachable: %v", err),
+			})
+			return
+		}
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.logger.ErrorKV("Failed to read status response", "error", err)
+			c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+				"response_type": "ephemeral",
+				"text":          "❌ Failed to read status response",
+			})
+			return
+		}
+
+		// Parse the Block Kit JSON from the status server
+		var statusResponse map[string]interface{}
+		if err := json.Unmarshal(body, &statusResponse); err != nil {
+			c.logger.ErrorKV("Failed to parse status response", "error", err)
+			c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+				"response_type": "ephemeral",
+				"text":          "❌ Failed to parse status response",
+			})
+			return
+		}
+
+		c.logger.Info("Returning status response to Slack")
+		c.userFrontend.Ack(*evt.Request, statusResponse)
+
+	default:
+		c.logger.WarnKV("Unknown slash command", "command", cmd.Command)
+		c.userFrontend.Ack(*evt.Request, map[string]interface{}{
+			"response_type": "ephemeral",
+			"text":          fmt.Sprintf("Unknown command: %s", cmd.Command),
+		})
+	}
 }
 
 // handleEventMessage processes specific EventsAPI messages.
@@ -264,6 +356,12 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			if parentTS == "" {
 				parentTS = ev.TimeStamp // Use the original message timestamp if no thread
 			}
+
+			// Track this thread so the bot stays engaged for follow-up messages
+			threadKey := fmt.Sprintf("%s:%s", ev.Channel, parentTS)
+			c.activeThreads[threadKey] = true
+			c.logger.InfoKV("Tracking active thread", "channel", ev.Channel, "threadTS", parentTS)
+
 			// Use handleUserPrompt for app mentions too, for consistency
 			go c.handleUserPrompt(strings.TrimSpace(messageText), ev.Channel, parentTS, ev.TimeStamp, profile)
 
@@ -271,10 +369,26 @@ func (c *Client) handleEventMessage(event slackevents.EventsAPIEvent) {
 			isDirectMessage := strings.HasPrefix(ev.Channel, "D")
 			isValidUser := c.userFrontend.IsValidUser(ev.User)
 			isNotEdited := ev.SubType != "message_changed"
-			isBot := ev.BotID != "" || ev.SubType == "bot_message"
+			// Skip messages with no real user (pure bot posts) and explicit
+			// bot_message subtypes. Don't filter on BotID alone — Slack tags
+			// user-token-posted messages with the parent app's bot_id, which
+			// previously made the bot ignore legitimate user messages routed
+			// through the app (e.g. a post-deploy canary script).
+			isBot := ev.User == "" || ev.SubType == "bot_message"
 
-			if isDirectMessage && isValidUser && isNotEdited && !isBot {
-				c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
+			// Check if this is a reply in a thread the bot is already participating in
+			isActiveThread := false
+			if ev.ThreadTimeStamp != "" {
+				threadKey := fmt.Sprintf("%s:%s", ev.Channel, ev.ThreadTimeStamp)
+				isActiveThread = c.activeThreads[threadKey]
+			}
+
+			if (isDirectMessage || isActiveThread) && isValidUser && isNotEdited && !isBot {
+				if isActiveThread {
+					c.logger.InfoKV("Received thread follow-up (no @mention needed)", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
+				} else {
+					c.logger.InfoKV("Received direct message in channel", "channel", ev.Channel, "user", ev.User, "text", ev.Text, "ThreadTS", ev.ThreadTimeStamp)
+				}
 				profile, err := c.userFrontend.GetUserInfo(ev.User)
 				if err != nil {
 					c.logger.WarnKV("Failed to get user info", "user", ev.User, "error", err)
@@ -449,8 +563,8 @@ func (c *Client) handleUserPrompt(userPrompt, channelID, threadTS string, timest
 
 	c.addToHistory(channelID, threadTS, timestamp, "user", userPrompt, profile.userId, profile.realName, profile.email) // Add user message to history
 
-	// Show a temporary "typing" indicator
-	c.userFrontend.SendMessage(channelID, threadTS, c.cfg.Slack.ThinkingMessage)
+	// Show a temporary "typing" indicator (randomized)
+	c.userFrontend.SendMessage(channelID, threadTS, randomThinkingMessage())
 
 	if !c.cfg.LLM.UseAgent {
 		// Prepare the final prompt with custom prompt as system instruction

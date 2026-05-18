@@ -170,7 +170,7 @@ func (slackClient *SlackClient) SendMessage(channelID, threadTS, text string) {
 	history, err := slackClient.GetThreadReplies(channelID, threadTS)
 	if err == nil && history != nil {
 		for _, msg := range history {
-			if slackClient.IsBotUser(msg.User) && msg.Text == slackClient.thinkingMessage {
+			if slackClient.IsBotUser(msg.User) && isThinkingMessage(msg.Text) {
 				_, _, err := slackClient.DeleteMessage(channelID, msg.Timestamp)
 				if err != nil {
 					slackClient.logger.ErrorKV("Error deleting typing indicator message", "error", err)
